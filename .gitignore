@@ -1,0 +1,33 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local credentials and provider state
+.env
+.env.*
+!.env.example
+.codex/
+.claude/
+auth.json
+credentials*.json
+
+# Task data and session artifacts
+runs/
+*-runs/
+outputs/
+exports/
+transcripts/
+brief.md
+answer.md
+run.json
+result.json
+*.jsonl
+*.log
+*.sqlite*
+*.db
+session.lock
+stop.request

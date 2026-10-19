@@ -1,0 +1,6 @@
+interface:
+  display_name: "Delegation"
+  short_description: "Claude/Codex agents, Pro advice, and infographics"
+  default_prompt: "Use $delegation to assign authorized work to Claude or Codex workers, consult ChatGPT Pro for my approval, or create Extra High infographics, then verify the results."
+policy:
+  allow_implicit_invocation: true
