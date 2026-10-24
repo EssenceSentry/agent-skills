@@ -16,6 +16,7 @@ import typer
 from ax import exp as exp_module
 from ax import glue, job_follow
 from ax import jobs as jobs_module
+from ax import profile as profile_module
 from ax import runs as runs_module
 from ax import search as search_module
 from ax import sync as sync_module
@@ -939,6 +940,96 @@ def job_unfollow(key: str = typer.Argument(...)):
         typer.echo(f"{key} has no follower", err=True)
         raise typer.Exit(1)
     typer.echo(f"stopped the follower of {key}")
+
+
+profile_app = typer.Typer(no_args_is_help=True, help="One set of working rules for both tools.")
+app.add_typer(profile_app, name="profile")
+
+
+@profile_app.command("seed")
+def profile_seed():
+    """Write the starting rules into the vault's Profile/rules (never overwrites)."""
+    written = profile_module.seed(load())
+    typer.echo(
+        f"wrote {len(written)} rules" + (": " + ", ".join(r.id for r in written) if written else "")
+    )
+
+
+@profile_app.command("list")
+def profile_list(as_json: bool = _JSON):
+    """The rules, with scope, level and status."""
+    rules = profile_module.load_rules(load())
+    if as_json:
+        typer.echo(json.dumps([r.to_dict() for r in rules], indent=2))
+        return
+    for r in rules:
+        typer.echo(f"{r.id:<24} {r.scope:<18} {r.level:<7} {r.status:<9} {r.rule[:70]}")
+
+
+@profile_app.command("add")
+def profile_add(
+    rule_id: str = typer.Argument(..., help="lowercase-with-dashes"),
+    rule: str = typer.Option(..., help="The rule, as agents should read it."),
+    scope: str = typer.Option("global", help="global or repo:NAME."),
+    level: str = typer.Option("advice", help="advice, check or block."),
+    tools: str = typer.Option("claude,codex", help="Which tools get it."),
+    status: str = typer.Option("active", help="active, proposed or retired."),
+    evidence: list[str] = typer.Option([], help="Where the rule comes from; repeatable."),
+    retire_when: str = typer.Option("", help="When the rule stops being needed."),
+    replace: bool = typer.Option(False, "--replace", help="Change an existing rule."),
+):
+    """Add or change one rule note in the vault."""
+    try:
+        r = profile_module.add(
+            load(), rule_id, rule=rule, scope=scope, level=level, status=status,
+            tools=[t.strip() for t in tools.split(",") if t.strip()],
+            evidence=list(evidence), retire_when=retire_when, replace=replace,
+        )  # fmt: skip
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    typer.echo(str(r.path))
+
+
+@profile_app.command("compile")
+def profile_compile(apply: bool = typer.Option(False, "--apply", help="Write the changes.")):
+    """Show (or with --apply, write) the rules' blocks in each tool's instruction files."""
+    config = load()
+    changes = profile_module.compile_profile(config, apply=apply)
+    for change in changes:
+        typer.echo(change.diff())
+    for name in profile_module.missing_repos(config):
+        typer.echo(f"warning: repo {name!r} not found; set [profile.repos] {name} = PATH", err=True)
+    if not changes:
+        typer.echo("nothing to change")
+    elif not apply:
+        typer.echo(f"{len(changes)} files would change; run with --apply to write them")
+    else:
+        typer.echo(f"wrote {len(changes)} files")
+
+
+@profile_app.command("check")
+def profile_check(as_json: bool = _JSON):
+    """Instructions that contradict a rule, required settings, and uncovered memories.
+
+    Exits 1 when a conflict or a setting needs attention.
+    """
+    findings = profile_module.check(load())
+    if as_json:
+        typer.echo(
+            json.dumps(
+                [{**f.__dict__, "path": str(f.path) if f.path else None} for f in findings],
+                indent=2,
+            )
+        )
+    else:
+        for f in findings:
+            where = f"{f.path}:{f.line}" if f.line else f"{f.path}"
+            typer.echo(f"{f.kind:<9} {f.rule or '-':<22} {where}\n          {f.message}")
+        if not findings:
+            typer.echo("no conflicts")
+    if any(f.kind in ("conflict", "setting") for f in findings):
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

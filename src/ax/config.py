@@ -2,7 +2,7 @@
 
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULT_PATH = Path("~/.config/ax/config.toml")
@@ -27,6 +27,13 @@ class Config:
     # ntfy for `ax job` notifications; no topic means none are sent.
     notify_server: str = "https://ntfy.sh"
     notify_topic: str | None = None
+    # Codex's newer skills folder, beside ~/.codex/skills.
+    agents_home: Path = Path("~/.agents").expanduser()
+    # `ax profile`: where repo-scoped rules land (a repo is <root>/<name> unless listed).
+    profile_repos_root: Path = Path("~/Repos").expanduser()
+    profile_repos: dict = field(default_factory=dict)
+    # Extra folders whose SKILL.md files `ax profile check` reads, e.g. the desktop app's plugins.
+    profile_extra_dirs: tuple[Path, ...] = ()
 
     @property
     def db_path(self) -> Path:
@@ -46,6 +53,10 @@ def load(path: Path | None = None) -> Config:
     usage = raw.get("usage", {})
     runs = raw.get("runs", {})
     notify = raw.get("notify", {})
+    prof = raw.get("profile", {})
+    desktop_plugins = Path(
+        "~/Library/Application Support/Claude/local-agent-mode-sessions"
+    ).expanduser()
 
     def p(key, default):
         return Path(paths.get(key, default)).expanduser()
@@ -67,4 +78,13 @@ def load(path: Path | None = None) -> Config:
         run_roots=tuple(Path(r).expanduser() for r in runs.get("roots", ())),
         notify_server=str(notify.get("server", "https://ntfy.sh")),
         notify_topic=notify.get("topic") or None,
+        agents_home=p("agents_home", "~/.agents"),
+        profile_repos_root=Path(prof.get("repos_root", "~/Repos")).expanduser(),
+        profile_repos={k: Path(v).expanduser() for k, v in prof.get("repos", {}).items()},
+        profile_extra_dirs=tuple(
+            Path(d).expanduser()
+            for d in prof.get(
+                "extra_dirs", [str(desktop_plugins)] if desktop_plugins.is_dir() else []
+            )
+        ),
     )
