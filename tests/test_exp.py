@@ -120,3 +120,11 @@ def test_list_command_ranks_open_proposals(env, campaign):
     )
     assert result.exit_code == 0, result.output
     assert result.output.index("High") < result.output.index("Low")
+
+
+@pytest.mark.parametrize(
+    ("project", "slug"), [("../..", "x"), ("demo", "../../etc"), ("demo", ".hidden"), ("a/b", "c")]
+)
+def test_campaign_names_cannot_leave_the_vault(env, project, slug):
+    with pytest.raises(ValueError):
+        exp.init(env.vault, project, slug, "objective", [], 1)

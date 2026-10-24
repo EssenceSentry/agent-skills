@@ -17,6 +17,8 @@ from pathlib import Path
 STALL_AFTER = 3
 _ACTION = re.compile(r"→|->|\bthen\b", re.I)
 _OPEN = ("proposed", "running")
+# A single folder name that cannot climb out of the vault or hide.
+_SAFE_NAME = re.compile(r"^(?!\.)[\w .-]+$")
 
 
 class GateFailed(ValueError):
@@ -49,6 +51,9 @@ def init(
     budget_hours: float,
 ) -> Path:
     """Create a campaign folder and its Campaign.md; never overwrite one."""
+    for name in (project, slug):
+        if not _SAFE_NAME.match(name):
+            raise ValueError(f"{name!r}: use letters, digits, spaces, dots, - and _ only")
     folder = Path(vault) / "Projects" / project / "Research" / slug
     note = folder / "Campaign.md"
     if note.exists():
