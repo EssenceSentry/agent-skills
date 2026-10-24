@@ -92,10 +92,16 @@ def test_claude_background_sessions_are_listed(run_env):
 def test_archived_subagents_show_as_running_while_their_transcript_grows(run_env, env):
     config, _ = run_env
     sync(config)
+    day_ago = time.time() - 86400
+    for path in [
+        *(env.claude_home / "projects").rglob("*.jsonl"),
+        *env.codex_home.rglob("*.jsonl"),
+    ]:
+        os.utime(path, (day_ago, day_ago))  # a fresh checkout would date them now
     found = runs.collect(config, background=no_background, since_days=36500)
     subagents = [r for r in found if r.source.endswith("subagent")]
     assert {r.provider for r in subagents} == {"claude", "codex"}
-    assert all(r.state == "done" for r in subagents)  # fixture files are old
+    assert all(r.state == "done" for r in subagents)
     for path in (env.claude_home / "projects").rglob("agent-*.jsonl"):
         os.utime(path, None)
     found = runs.collect(config, background=no_background, since_days=36500)
