@@ -1,0 +1,60 @@
+filters:
+  and:
+    - file.inFolder("Sessions")
+    - 'type == "session"'
+properties:
+  provider:
+    displayName: Tool
+  user_turns:
+    displayName: Turns
+  tool_calls:
+    displayName: Tool calls
+views:
+  - type: table
+    name: Recent
+    filters:
+      and:
+        - 'kind == "main"'
+    order:
+      - started
+      - provider
+      - project
+      - file.name
+      - user_turns
+      - tool_calls
+      - model
+    sort:
+      - property: started
+        direction: DESC
+    limit: 100
+  - type: table
+    name: By project
+    filters:
+      and:
+        - 'kind == "main"'
+    groupBy:
+      property: project
+      direction: ASC
+    order:
+      - started
+      - provider
+      - file.name
+      - user_turns
+    sort:
+      - property: started
+        direction: DESC
+  - type: table
+    name: Subagents
+    filters:
+      and:
+        - 'kind == "subagent"'
+    order:
+      - started
+      - provider
+      - title
+      - file.name
+      - parent
+    sort:
+      - property: started
+        direction: DESC
+    limit: 100

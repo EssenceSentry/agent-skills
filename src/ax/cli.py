@@ -6,10 +6,52 @@ import typer
 
 from ax import search as search_module
 from ax import sync as sync_module
+from ax import vault as vault_module
 from ax.config import load
 from ax.store import Store
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
+vault_app = typer.Typer(no_args_is_help=True, help="Commit and push the vault safely.")
+app.add_typer(vault_app, name="vault")
+
+
+@vault_app.command("init")
+def vault_init():
+    """Add the starter Obsidian views and Home note where they are missing."""
+    for path in vault_module.init(load().vault):
+        typer.echo(f"created {path}")
+
+
+@vault_app.command("commit")
+def vault_commit():
+    """Commit every vault change, unless gitleaks finds a secret in it."""
+    try:
+        result = vault_module.commit(load())
+    except vault_module.ScanFailed as exc:
+        typer.echo(f"secret scan failed, nothing committed: {exc}")
+        raise typer.Exit(1) from None
+    if result.findings:
+        typer.echo(f"gitleaks found {len(result.findings)} possible secrets; nothing committed:")
+        for f in result.findings:
+            typer.echo(f"    {f.rule}  {f.file}:{f.line}  {f.fingerprint}")
+        typer.echo(
+            "Teach ax to redact the shape (then `ax sync`), or, for a false positive,"
+            " add its fingerprint to the vault's .gitleaksignore."
+        )
+        raise typer.Exit(1)
+    typer.echo(f"committed {result.notes} notes" if result.committed else "nothing to commit")
+
+
+@vault_app.command("push")
+def vault_push():
+    """Push the vault, only to a GitHub repository confirmed to be private."""
+    try:
+        vault_module.push(load())
+    except vault_module.UnsafeRemote as exc:
+        typer.echo(f"not pushed: {exc}")
+        raise typer.Exit(1) from None
+    typer.echo("pushed")
+
 
 # Below this many days Claude Code deletes transcripts before most archives notice.
 MIN_RETENTION_DAYS = 365
