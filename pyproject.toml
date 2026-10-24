@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 ax = "ax.cli:app"
+ax-guard = "ax.guard:main"
 
 [dependency-groups]
 dev = [

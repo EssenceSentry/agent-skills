@@ -249,11 +249,23 @@ def _visible(change) -> tuple[list[str], list[str]]:
 
 
 @hooks_app.command("install")
-def hooks_install(apply: bool = _APPLY):
-    """Run a background `ax sync` when a session ends or a turn stops, in both tools."""
-    _report(glue.plan_hooks(load(), ax=glue.ax_path()), apply)
+def hooks_install(
+    apply: bool = _APPLY,
+    guard: bool = typer.Option(
+        True, "--guard/--no-guard", help="Also run ax-guard before every shell command."
+    ),
+):
+    """Run a background `ax sync` when a session ends or a turn stops, in both tools.
+
+    With --guard (the default), also block shell commands your profile rules forbid.
+    """
+    config = load()
+    changes = glue.plan_hooks(config, ax=glue.ax_path(), guard=glue.guard_path() if guard else None)
+    _report(changes, apply)
     if apply:
         typer.echo("In Codex, run /hooks once to review and trust the new hooks.")
+        if guard and not (config.data / "guard_rules.json").exists():
+            typer.echo("No guard rules yet: run `ax profile compile --apply`.")
 
 
 @schedule_app.command("install")

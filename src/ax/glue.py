@@ -46,8 +46,27 @@ def hook_command(config: Config, ax: str) -> str:
     return f"/bin/sh -c {shlex.quote(inner)}"
 
 
-def plan_hooks(config: Config, *, ax: str) -> list[Change]:
-    command = hook_command(config, ax)
+def _add_sync(settings: dict, command: str, tool: str) -> None:
+    hooks = settings.setdefault("hooks", {})
+    for event in _EVENTS:
+        groups = hooks.setdefault(event, [])
+        present = any(h.get("command") == command for g in groups for h in g.get("hooks", []))
+        if not present:
+            handler = {"type": "command", "command": command, "timeout": _TIMEOUT[tool]}
+            groups.append({"hooks": [handler]})
+
+
+def _add_guard(settings: dict, guard: str, tool: str) -> None:
+    groups = settings.setdefault("hooks", {}).setdefault("PreToolUse", [])
+    command = f"{shlex.quote(guard)} --tool {tool}"
+    present = any(h.get("command") == command for g in groups for h in g.get("hooks", []))
+    if not present:
+        groups.append(
+            {"matcher": "Bash", "hooks": [{"type": "command", "command": command, "timeout": 5}]}
+        )
+
+
+def _plan(config: Config, edit) -> list[Change]:
     targets = {
         "claude": config.claude_home / "settings.json",
         "codex": config.codex_home / "hooks.json",
@@ -56,15 +75,34 @@ def plan_hooks(config: Config, *, ax: str) -> list[Change]:
     for tool, path in targets.items():
         before = path.read_text() if path.exists() else None
         settings = json.loads(before) if before else {}
-        hooks = settings.setdefault("hooks", {})
-        for event in _EVENTS:
-            groups = hooks.setdefault(event, [])
-            present = any(h.get("command") == command for g in groups for h in g.get("hooks", []))
-            if not present:
-                handler = {"type": "command", "command": command, "timeout": _TIMEOUT[tool]}
-                groups.append({"hooks": [handler]})
+        edit(settings, tool)
         changes.append(Change(path, before, json.dumps(settings, indent=2) + "\n"))
     return changes
+
+
+def plan_hooks(config: Config, *, ax: str, guard: str | None = None) -> list[Change]:
+    """Sync hooks at session end and turn stop; with `guard`, the shell-command guard too."""
+    command = hook_command(config, ax)
+
+    def edit(settings, tool):
+        _add_sync(settings, command, tool)
+        if guard:
+            _add_guard(settings, guard, tool)
+
+    return _plan(config, edit)
+
+
+def plan_guard_hooks(config: Config, *, guard: str) -> list[Change]:
+    """Run `ax-guard` before every shell command in both tools (PreToolUse on Bash)."""
+    return _plan(config, lambda settings, tool: _add_guard(settings, guard, tool))
+
+
+def guard_path() -> str:
+    found = shutil.which("ax-guard")
+    if found:
+        return found
+    sibling = Path(ax_path()).with_name("ax-guard")
+    return str(sibling) if sibling.exists() else "ax-guard"
 
 
 def plan_schedule(

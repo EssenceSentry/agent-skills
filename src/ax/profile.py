@@ -243,7 +243,31 @@ def compile_profile(config, *, apply: bool = False) -> list[Change]:
             tmp.replace(change.path)
             if change.path.name == "CLAUDE.local.md":
                 _exclude_from_git(change.path)
+        write_guard_rules(config)
     return changes
+
+
+def write_guard_rules(config) -> Path:
+    """Prebuild the block-level rules as JSON for the guard hook, which runs on every command."""
+    from ax import guard
+
+    rules = [
+        {
+            "id": r.id,
+            "tool": r.guard.get("tool", "shell"),
+            "pattern": r.guard["pattern"],
+            "repo": r.guard.get("repo") or r.repo,
+            "message": r.guard.get("message") or r.rule,
+        }
+        for r in load_rules(config)
+        if r.status == "active" and r.level == "block" and r.guard and r.guard.get("pattern")
+    ]
+    path = guard.rules_path(config.data)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(rules, indent=2))
+    tmp.replace(path)
+    return path
 
 
 def _exclude_from_git(local: Path) -> None:
