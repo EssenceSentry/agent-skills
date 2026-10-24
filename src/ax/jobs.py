@@ -34,7 +34,7 @@ WAIT_CODES = {
     "done": 0, "failed": 1, "stopped": 2, "ended": 2, "stalled": 3, "check_error": 4,
     "timeout": 124,
 }  # fmt: skip
-SOURCE_KINDS = ("file", "pid", "sagemaker", "seamless")
+SOURCE_KINDS = ("file", "pid", "sagemaker", "seamless", "runwatch", "tools")
 # Kinds ax checks itself: the watchable sources plus `ax job run`, whose runner is a process.
 CHECKED_KINDS = (*SOURCE_KINDS, "run")
 

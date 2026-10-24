@@ -1,9 +1,11 @@
-"""What `ax job watch` can check: a file, a process, a SageMaker or a Seamless job.
+"""What `ax job watch` can check: a file, a process, a SageMaker or a Seamless job, a
+Runwatch notebook run, or a job of the auto-classifier Tools MCP.
 
 Each source reads a job's `spec` and returns `Update`s for `ax.jobs`. AWS is
 reached through the `aws` command line, so ax needs no boto3 and uses whatever
 credentials the calling shell has; missing or expired ones become a check error,
-never a failed job.
+never a failed job. Runwatch is read through its own `status` and `events`
+commands, and the Tools MCP through the job.json files its workers keep.
 """
 
 import copy
@@ -11,7 +13,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -19,7 +23,9 @@ from pathlib import Path
 from ax.jobs import Job, Update, normalize_status, number, read_lines
 
 # Seconds between checks of one job; AWS calls are spaced out, local ones are free.
-MIN_INTERVAL = {"file": 0, "pid": 0, "run": 0, "sagemaker": 20, "seamless": 20}
+MIN_INTERVAL = {
+    "file": 0, "pid": 0, "run": 0, "sagemaker": 20, "seamless": 20, "runwatch": 10, "tools": 0,
+}  # fmt: skip
 SAGEMAKER_TYPES = ("processing", "training", "transform")
 SEAMLESS_PREFIX = "SEAMLESS_PROGRESS "
 SEAMLESS_LOG_GROUP = "/aws/sagemaker/ProcessingJobs"
@@ -29,6 +35,8 @@ _OPTIONS = {
     "pid": set(),
     "sagemaker": {"type", "region", "profile"},
     "seamless": {"region", "profile", "state_url", "log_group"},
+    "runwatch": {"runwatch"},
+    "tools": {"state_root"},
 }  # fmt: skip
 _SAGEMAKER_NAME = re.compile(r"[a-zA-Z0-9](-*[a-zA-Z0-9]){0,62}")
 _SAGEMAKER_STATUS = {
@@ -121,6 +129,8 @@ def prepare(kind: str, ref: str, options: dict, cwd: str) -> tuple[str, dict]:
         "pid": _prepare_pid,
         "sagemaker": _prepare_sagemaker,
         "seamless": _prepare_seamless,
+        "runwatch": _prepare_runwatch,
+        "tools": _prepare_tools,
     }[kind](ref, options, cwd)
 
 
@@ -129,6 +139,10 @@ def default_key(kind: str, ref: str) -> str:
         return ref
     if kind == "pid":
         return f"pid-{ref}"
+    if kind == "tools":
+        return f"tools-{ref[:12]}"
+    if kind == "runwatch":
+        return f"runwatch-{Path(ref).name}"[:100]
     stem = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(ref).stem).strip(".-_") or "file"
     return f"{stem[:40]}-{hashlib.sha1(ref.encode()).hexdigest()[:6]}"
 
@@ -140,6 +154,8 @@ def check(job: Job, now: datetime) -> list[Update]:
         "run": _check_run,
         "sagemaker": _check_sagemaker,
         "seamless": _check_seamless,
+        "runwatch": _check_runwatch,
+        "tools": _check_tools,
     }[job.kind](job)
 
 
@@ -503,3 +519,148 @@ def _check_seamless(job: Job) -> list[Update]:
     )
     spec["logs"] = logs  # only after every call succeeded, so no progress is skipped
     return [u for u in (progress, status) if u]
+
+
+# runwatch
+
+# A paused run waits for a repair, so it ends the ax job and wakes whoever waits on it.
+_RUNWATCH_STATUS = {"succeeded": "done", "failed": "failed", "cancelled": "stopped"}
+_RUNWATCH_ACTIVE = {"running", "restarting", "finalizing", "waiting_external"}
+
+
+def _runwatch_binary(options: dict, cwd: str) -> str:
+    given = options.get("runwatch") or os.environ.get("AX_RUNWATCH") or shutil.which("runwatch")
+    path = _resolve(given, cwd) if given else None
+    if path is None or not path.is_file() or not os.access(path, os.X_OK):
+        raise ValueError(
+            "no runwatch command: put it on PATH, set AX_RUNWATCH, or pass --runwatch PATH"
+        )
+    return str(path)
+
+
+def _prepare_runwatch(ref, options, cwd):
+    run = _resolve(ref, cwd)
+    if not (run / "runwatch.sqlite3").exists():
+        raise ValueError(f"{run} is not a Runwatch run folder (it has no runwatch.sqlite3)")
+    return str(run), {"run": str(run), "binary": _runwatch_binary(options, cwd)}
+
+
+def _runwatch(job: Job, command: str) -> str:
+    try:
+        done = subprocess.run(
+            [job.spec["binary"], command, job.spec["run"], "--json"],
+            capture_output=True, text=True, timeout=60,
+        )  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise CheckError(f"runwatch {command} failed: {exc}") from None
+    if done.returncode != 0:
+        lines = (done.stderr or done.stdout).strip().splitlines()
+        raise CheckError(f"runwatch {command}: {lines[-1] if lines else done.returncode}")
+    return done.stdout
+
+
+def _runwatch_bar(job: Job, cell: int) -> tuple | None:
+    """The newest progress bar the current cell drew, from `runwatch events`."""
+    found = None
+    for line in _runwatch(job, "events").splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict) or event.get("type") != "notebook.progress":
+            continue
+        data = event.get("data") or {}
+        if data.get("cell_index") == cell:
+            found = (number(data.get("completed")), number(data.get("total")), data.get("unit"))
+    return found
+
+
+def _check_runwatch(job: Job) -> list[Update]:
+    try:
+        state = json.loads(_runwatch(job, "status"))
+        run = state["run"]
+    except (ValueError, KeyError, TypeError):
+        raise CheckError("runwatch status gave no run state") from None
+    raw, message = run.get("status"), _text(run.get("message"))
+    if raw == "paused":
+        cell = run.get("failed_cell_index")
+        where = f" at cell {cell}" if cell is not None else ""
+        reason = message or "it needs attention"
+        return [
+            Update(
+                status="failed",
+                message=f"paused{where}: {reason}. Repair it, run `runwatch resume "
+                f"{job.spec['run']}`, then watch it again",
+            )
+        ]
+    if raw in _RUNWATCH_STATUS:
+        return [Update(status=_RUNWATCH_STATUS[raw], message=message)]
+    if raw in _RUNWATCH_ACTIVE and not state.get("controller_live"):
+        raise CheckError(
+            f"Runwatch's controller is not running; `runwatch resume {job.spec['run']}` "
+            "restarts the run"
+        )
+    cell = run.get("current_cell_index")
+    update = Update(stage=f"cell {cell}" if cell is not None else raw, message=message)
+    bar = _runwatch_bar(job, cell) if cell is not None else None
+    if bar:
+        update.done, update.total, update.unit = bar
+    return [update]
+
+
+# tools: jobs of the auto-classifier Tools MCP
+
+_TOOLS_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_TOOLS_STATUS = {
+    "starting": "running", "running": "running", "cancelling": "running",
+    "succeeded": "done", "succeeded_with_errors": "done", "failed": "failed",
+    "cancelled": "stopped", "interrupted": "ended",
+}  # fmt: skip
+
+
+def tools_state_root() -> Path:
+    """Where the Tools MCP keeps its jobs (platformdirs' user state folder)."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "auto-classifier" / "tools-mcp"
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(base) / "auto-classifier" / "tools-mcp"
+
+
+def _prepare_tools(ref, options, cwd):
+    if not _TOOLS_ID.fullmatch(ref):
+        raise ValueError("a Tools MCP job id uses only letters, digits, '-' and '_'")
+    given = options.get("state_root")
+    root = _resolve(given, cwd) if given else tools_state_root()
+    path = root / "jobs" / ref / "job.json"
+    if not path.exists():
+        raise ValueError(f"no Tools MCP job {ref} under {root}")
+    return ref, {"path": str(path)}
+
+
+def _check_tools(job: Job) -> list[Update]:
+    """The job as its worker last wrote it. Snowflake jobs move only when the MCP refreshes them."""
+    try:
+        record = json.loads(Path(job.spec["path"]).read_text())
+    except FileNotFoundError:
+        raise CheckError("the Tools MCP no longer has this job") from None
+    except (OSError, ValueError):
+        raise CheckError("the job's job.json is not readable right now") from None
+    raw = record.get("status")
+    status = _TOOLS_STATUS.get(raw)
+    if status is None:
+        raise CheckError(f"the Tools MCP reported an unknown status {raw!r}")
+    if raw == "succeeded_with_errors":
+        message = "succeeded, but some rows failed; tools_get_rows shows them"
+    elif raw == "interrupted":
+        message = "interrupted; tools_resume_job can resume it"
+    else:
+        message = _text(str(record["error"])[:300]) if record.get("error") else None
+    return [
+        Update(
+            status=status,
+            stage=_text(record.get("stage")),
+            done=number(record.get("completed")),
+            total=number(record.get("total")),
+            message=message,
+        )
+    ]

@@ -713,8 +713,10 @@ def job_new(
 
 @job_app.command("watch")
 def job_watch(
-    kind: str = typer.Argument(..., help="file, pid, sagemaker or seamless."),
-    ref: str = typer.Argument(..., help="A path, process id or SageMaker job name."),
+    kind: str = typer.Argument(..., help="file, pid, sagemaker, seamless, runwatch or tools."),
+    ref: str = typer.Argument(
+        ..., help="A path, process id, SageMaker job name, Runwatch run folder or Tools MCP job id."
+    ),
     key: str = typer.Option(None, help="Name the job; defaults to one derived from REF."),
     label: str = typer.Option(None, help="A human description."),
     type_: str = typer.Option(None, "--type", help="sagemaker: processing, training or transform."),
@@ -728,6 +730,8 @@ def job_watch(
     message_key: str = typer.Option(None, help="file (.json): dotted path of a message."),
     done_when: str = typer.Option(None, help="file: a path whose appearance means done."),
     format_: str = typer.Option(None, "--format", help="file: json or jsonl (default: by suffix)."),
+    runwatch: str = typer.Option(None, help="runwatch: its command, if not on PATH."),
+    state_root: str = typer.Option(None, help="tools: the Tools MCP state folder."),
     share: str = _SHARE,
     notify: bool = _NOTIFY,
     wake: str = _WAKE,
@@ -738,7 +742,7 @@ def job_watch(
         "type": type_, "region": region, "profile": profile, "state_url": state_url,
         "done_key": done_key, "total_key": total_key, "status_key": status_key,
         "stage_key": stage_key, "message_key": message_key, "done_when": done_when,
-        "format": format_,
+        "format": format_, "runwatch": runwatch, "state_root": state_root,
     }  # fmt: skip
     config = _jobs_config()
     job = _job_or_exit(
