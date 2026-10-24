@@ -139,6 +139,32 @@ def cli(env, *args):
     return CliRunner().invoke(app, ["job", *args], env={"AX_CONFIG": str(env.config_path)})
 
 
+def test_show_and_ls_include_the_estimate(env):
+    progressing(env, "score")
+    shown = cli(env, "show", "score")
+    assert shown.exit_code == 0 and "left (" in shown.output
+    data = json.loads(cli(env, "show", "score", "--json").output)
+    assert data["eta"]["basis"] == "progress" and data["eta"]["text"].startswith("~")
+    listed = cli(env, "ls")
+    assert "left" in listed.output.splitlines()[0] and "min" in listed.output
+
+
+def test_the_dashboard_and_progress_messages_carry_the_estimate(env):
+    from ax import job_dash, job_notify
+
+    job = progressing(env, "score")
+    server = job_dash.serve(env.config, "score")
+    try:
+        state = server.state()
+    finally:
+        server.close()
+    assert state["eta"]["text"].startswith("~") and "p50" in state["eta"]["finish"]
+    assert all(e["type"] != "eta" for e in state["events"])
+    eta = job_eta.estimate(env.config, job)
+    assert "left" in job_notify.progress(job, eta=eta)["message"]
+    assert "left" not in job_notify.progress(job)["message"]
+
+
 def test_eta_report_scores_finished_jobs(env):
     progressing(env, "score")
     jobs.refresh(env.config, "score")

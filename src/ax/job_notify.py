@@ -101,19 +101,19 @@ def _message(title: str, lines: list[str], *, tags, priority=None, click=None) -
     }
 
 
-def started(job: Job, link: str | None = None) -> dict:
+def started(job: Job, link: str | None = None, eta: dict | None = None) -> dict:
     what = job.label or (f"{job.kind} {job.ref}" if job.ref else job.kind)
-    return _message(
-        f"{job.key} started", [what, *_summary(job)], tags=("arrow_forward",), click=link
-    )
+    lines = [what, *_summary(job), eta["text"] if eta else ""]
+    return _message(f"{job.key} started", lines, tags=("arrow_forward",), click=link)
 
 
-def progress(job: Job, link: str | None = None) -> dict:
+def progress(job: Job, link: str | None = None, eta: dict | None = None) -> dict:
     if job.total and job.done is not None:
         title = f"{job.key}: {100 * job.done / job.total:.0f}%"
     else:
         title = f"{job.key}: {progress_text(job)}"
-    return _message(title, _summary(job), tags=("hourglass_flowing_sand",), click=link)
+    lines = [*_summary(job), eta["text"] if eta else ""]
+    return _message(title, lines, tags=("hourglass_flowing_sand",), click=link)
 
 
 def stage(job: Job, link: str | None = None) -> dict:

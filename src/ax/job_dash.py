@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from ax import jobs
+from ax import job_eta, jobs
 
 COOKIE = "ax_job_token"
 _TEMPLATES = Path(__file__).parent / "templates"
@@ -36,8 +36,9 @@ _HEADERS = {
     "Cache-Control": "no-store",
 }
 _LOG_BYTES = 16_000
-# Progress rows can number thousands; the bar shows them, the list skips them.
-_QUIET_EVENTS = {"progress"}
+# Progress rows can number thousands; the bar shows them, the list skips them. Stored
+# estimates come every five minutes; the page shows the current one instead.
+_QUIET_EVENTS = {"progress", "eta"}
 _CONSOLE_PATHS = {
     "processing": "processing-jobs",
     "training": "jobs",
@@ -127,6 +128,7 @@ class Dashboard:
             **job.to_dict(),
             "progress_text": jobs.progress_text(job),
             "console_url": _console_url(job),
+            "eta": job_eta.estimate(self.config, job),
             "events": recent,
         }
         for private in ("spec", "agent", "cwd"):

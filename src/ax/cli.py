@@ -646,14 +646,21 @@ def _progress(job) -> str:
     return jobs_module.progress_text(job)
 
 
-def _jobs_table(found) -> str:
-    lines = [f"{'key':<28} {'kind':<9} {'status':<8} {'progress':<20} {'updated':<9} stage"]
+def _left(config, job) -> str:
+    eta = None if job.terminal else job_eta.estimate(config, job)
+    return job_eta.duration_text(eta["remaining"]["p50"]) if eta else ""
+
+
+def _jobs_table(config, found) -> str:
+    lines = [
+        f"{'key':<28} {'kind':<9} {'status':<8} {'progress':<20} {'left':<9} {'updated':<9} stage"
+    ]
     for j in found:
         updated = _ago(jobs_module.parse_iso(j.updated))
         flag = " ⚠ " + j.check_error if j.check_error else ""
         lines.append(
             f"{j.key[:28]:<28} {j.kind:<9} {j.status:<8} {_progress(j)[:20]:<20} "
-            f"{updated:<9} {j.stage or ''}{flag}"
+            f"{_left(config, j):<9} {updated:<9} {j.stage or ''}{flag}"
         )
     return "\n".join(lines)
 
@@ -790,11 +797,12 @@ def job_ls(
     as_json: bool = _JSON,
 ):
     """Refresh active jobs and list them, most recently updated first."""
-    found = jobs_module.list_jobs(_jobs_config(), include_finished=all_)
+    config = _jobs_config()
+    found = jobs_module.list_jobs(config, include_finished=all_)
     if as_json:
         typer.echo(json.dumps([j.to_dict() for j in found], indent=2))
     else:
-        typer.echo(_jobs_table(found) if found else "no jobs")
+        typer.echo(_jobs_table(config, found) if found else "no jobs")
 
 
 @job_app.command("show")
@@ -813,6 +821,7 @@ def job_show(
         **job.to_dict(),
         "events_file": str(jobs_module.events_path(config, key)),
         "follower": job_follow.running(config, key),
+        "eta": None if job.terminal else job_eta.estimate(config, job),
         "events": recent,
     }
     if as_json:
@@ -822,6 +831,9 @@ def job_show(
         if data[name]:
             typer.echo(f"{name:<12} {data[name]}")
     typer.echo(f"{'progress':<12} {_progress(job)}")
+    if data["eta"]:
+        eta = data["eta"]
+        typer.echo(f"{'eta':<12} {eta['text']}, likely at {job_eta.finish_clock(eta)}")
     typer.echo(f"{'updated':<12} {data['updated']}")
     typer.echo(f"{'events file':<12} {data['events_file']}")
     if data["follower"]:

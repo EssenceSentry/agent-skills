@@ -152,7 +152,7 @@ def follow(
         link = links.get("public") or links.get("lan") or links.get("local")
         if on_ready:
             on_ready(running(config, key) or {"link": link, **links})
-        notify(job_notify.started(job, link))
+        notify(job_notify.started(job, link, _eta(config, job, options)))
         relink = server.link if options.dashboard else None
         return _loop(
             config, key, options, job, link, links, share, relink, notify, stopping, clock, sleep
@@ -163,6 +163,14 @@ def follow(
         _remove_info(config, key)
         if previous is not None:
             signal.signal(signal.SIGTERM, previous)
+
+
+def _eta(config, job, options) -> dict | None:
+    if not options.notify:
+        return None
+    from ax import job_eta
+
+    return job_eta.estimate(config, job)
 
 
 def _loop(
@@ -196,7 +204,7 @@ def _loop(
                 and now - last_note >= options.every
                 and (job.done, job.stage) != noted
             ):
-                notify(job_notify.progress(job, link))
+                notify(job_notify.progress(job, link, _eta(config, job, options)))
                 last_note, noted = now, (job.done, job.stage)
             if options.stall_after is not None:
                 quiet = now - jobs.parse_iso(job.changed).timestamp()

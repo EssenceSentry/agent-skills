@@ -35,6 +35,17 @@ function clock(iso) {
   return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+function finishRange(finish) {
+  // "7:24 PM (7:24 to 7:31 PM)"; dates appear only when the range leaves today.
+  const days = [finish.p10, finish.p50, finish.p90].map((iso) => new Date(iso).toDateString());
+  const today = days.every((day) => day === new Date().toDateString());
+  const show = (iso) =>
+    today
+      ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : clock(iso);
+  return `${show(finish.p50)} (${show(finish.p10)} to ${show(finish.p90)})`;
+}
+
 function stamp(iso) {
   // Events: the time with seconds today, the date as well on other days.
   const when = new Date(iso);
@@ -86,6 +97,11 @@ function render(data) {
   $("fill").style.width = known ? `${pct}%` : data.status === "done" ? "100%" : "";
   $("pct").textContent = known ? `${pct.toFixed(0)}%` : "";
   $("counts").textContent = counts(data);
+  // The estimate's 80% interval; "basis" says whether it comes from this job's
+  // progress or from how long similar jobs took.
+  const eta = data.status === "running" ? data.eta : null;
+  $("eta").textContent = eta ? `${eta.text}${eta.basis === "history" ? " (from past runs)" : ""}` : "";
+  $("finish").textContent = eta ? finishRange(eta.finish) : data.finished ? clock(data.finished) : "-";
   $("stage").textContent = data.stage ? `Stage: ${data.stage}` : "";
   $("message").textContent = data.message || "";
   $("check").hidden = !data.check_error;
