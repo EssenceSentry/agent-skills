@@ -86,3 +86,16 @@ def test_search_command_says_when_nothing_matches(env):
     result = runner.invoke(app, ["search", "zebra"], env={"AX_CONFIG": str(env.config_path)})
     assert result.exit_code == 1
     assert "no matches" in result.output
+
+
+def test_one_chatty_session_does_not_crowd_out_the_others(env):
+    from ax.model import Event, Session
+    from ax.store import Store
+
+    with Store(env.config.db_path) as store:
+        for name, count in (("chatty", 300), ("quiet1", 1), ("quiet2", 1)):
+            session = Session("claude", name, events=[Event("user", "alpha topic")] * count)
+            store.save_session(
+                session, note_path=f"{name}.md", raw_path=None, excluded=False, index_messages=True
+            )
+    assert len(search(env.config, "alpha", limit=3)) == 3

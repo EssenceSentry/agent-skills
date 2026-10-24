@@ -214,7 +214,7 @@ class Store:
         role: str | None = None,
         since: str | None = None,
     ) -> list[dict]:
-        """Full-text search over redacted message text, best matches first.
+        """Full-text search over redacted message text: the best-matching sessions first.
 
         Every word must match; each is quoted so FTS5 syntax in a query is literal text.
         """
@@ -229,17 +229,44 @@ class Store:
         if since:
             where.append("s.ended >= ?")
             params.append(since)
-        rows = self.db.execute(
+        # Each session's best message only, so one long session can't fill every slot.
+        # snippet() is not allowed beside a window function, so it is fetched afterwards.
+        best = self.db.execute(
             f"""
-            SELECT m.session_key, m.role, m.ts, s.provider, s.project, s.title, s.started,
-                   s.note_path, snippet(messages_fts, 0, '[', ']', '…', 12) AS snippet
-            FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid
-            JOIN sessions s ON s.key = m.session_key
-            WHERE {" AND ".join(where)} ORDER BY rank LIMIT ?
+            SELECT id, session_key, role, ts, provider, project, title, started, note_path
+            FROM (
+                SELECT m.id, m.session_key, m.role, m.ts, s.provider, s.project, s.title,
+                       s.started, s.note_path, messages_fts.rank AS score,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY m.session_key ORDER BY messages_fts.rank
+                       ) AS nth
+                FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid
+                JOIN sessions s ON s.key = m.session_key
+                WHERE {" AND ".join(where)}
+            )
+            WHERE nth = 1 ORDER BY score LIMIT ?
             """,
             (*params, limit),
         ).fetchall()
-        return [dict(r) for r in rows]
+        if not best:
+            return []
+        ids = [row["id"] for row in best]
+        snippets = dict(
+            self.db.execute(
+                f"""
+                SELECT rowid, snippet(messages_fts, 0, '[', ']', '…', 12)
+                FROM messages_fts WHERE messages_fts MATCH ?
+                AND rowid IN ({",".join("?" * len(ids))})
+                """,
+                (terms, *ids),
+            ).fetchall()
+        )
+        hits = []
+        for row in best:
+            hit = dict(row)
+            hit["snippet"] = snippets.get(hit.pop("id"), "")
+            hits.append(hit)
+        return hits
 
     def unknown_totals(self) -> list[dict]:
         rows = self.db.execute(

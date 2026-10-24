@@ -40,18 +40,13 @@ def search(
     with Store(config.db_path) as store:
         rows = store.search(
             query,
-            limit=limit * 20,
+            limit=limit,
             provider=provider,
             project=project,
             role=role,
             since=since.astimezone(UTC).isoformat() if since else None,
         )
-    hits: dict[str, dict] = {}
-    for row in rows:
-        if row["session_key"] in hits:
-            continue
-        note = str(config.vault / row["note_path"]) if row["note_path"] else None
-        hits[row["session_key"]] = {**row, "note": note}
-        if len(hits) == limit:
-            break
-    return list(hits.values())
+    return [
+        {**row, "note": str(config.vault / row["note_path"]) if row["note_path"] else None}
+        for row in rows
+    ]
