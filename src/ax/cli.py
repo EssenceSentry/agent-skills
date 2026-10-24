@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 import typer
 
 from ax import exp as exp_module
-from ax import glue, job_eta, job_follow
+from ax import glue, job_eta, job_follow, job_wake
 from ax import jobs as jobs_module
 from ax import profile as profile_module
 from ax import runs as runs_module
@@ -622,14 +622,22 @@ _SHARE = typer.Option(
     None, "--share", help="Start a follower with a dashboard: none (this Mac), lan or cloudflare."
 )
 _NOTIFY = typer.Option(False, "--notify", help="Start a follower that sends ntfy messages.")
+_WAKE = typer.Option(
+    None,
+    "--wake",
+    help="auto, claude or codex: when the job ends, resume the session that registered it.",
+)
 
 
-def _start_follower(config, key: str, share: str | None, notify: bool, show_log=False) -> None:
+def _start_follower(
+    config, key: str, share: str | None, notify: bool, show_log=False, wake=None
+) -> None:
     """Start a detached follower when asked; its link goes to stderr, so stdout stays capturable."""
-    if share is None and not notify:
+    if share is None and not notify and not wake:
         return
     args = ["--share", share or "none"] + (["--notify"] if notify else [])
     args += ["--show-log"] if show_log else []
+    args += ["--wake", wake] if wake else []
     try:
         info = job_follow.start_detached(config, key, args)
     except RuntimeError as exc:
@@ -686,6 +694,7 @@ def job_new(
     label: str = typer.Option(None, help="A human description."),
     share: str = _SHARE,
     notify: bool = _NOTIFY,
+    wake: str = _WAKE,
     as_json: bool = _JSON,
 ):
     """Register a job fed through its events file, and print that file's path.
@@ -699,7 +708,7 @@ def job_new(
         typer.echo(json.dumps({"key": job.key, "events_file": str(path)}))
     else:
         typer.echo(str(path))
-    _start_follower(config, job.key, share, notify)
+    _start_follower(config, job.key, share, notify, wake=wake)
 
 
 @job_app.command("watch")
@@ -721,6 +730,7 @@ def job_watch(
     format_: str = typer.Option(None, "--format", help="file: json or jsonl (default: by suffix)."),
     share: str = _SHARE,
     notify: bool = _NOTIFY,
+    wake: str = _WAKE,
     as_json: bool = _JSON,
 ):
     """Register a job that ax checks itself, check it once, and print its key."""
@@ -740,7 +750,7 @@ def job_watch(
     typer.echo(job.key)
     if job.check_error:
         typer.echo(f"warning: {job.check_error}", err=True)
-    _start_follower(config, job.key, share, notify)
+    _start_follower(config, job.key, share, notify, wake=wake)
 
 
 def _piped_stdin() -> bytes | None:
@@ -774,6 +784,7 @@ def job_run(
     show_log: bool = typer.Option(
         False, "--show-log", help="Show the output's tail on the dashboard."
     ),
+    wake: str = _WAKE,
     as_json: bool = _JSON,
 ):
     """Start a command detached, record its exit code, and print the job's key.
@@ -788,7 +799,7 @@ def job_run(
         typer.echo(json.dumps({**job.to_dict(), "output_log": job.spec["log"]}, indent=2))
     else:
         typer.echo(job.key)
-    _start_follower(config, job.key, share, notify, show_log)
+    _start_follower(config, job.key, share, notify, show_log, wake)
 
 
 @job_app.command("ls")
@@ -940,9 +951,10 @@ def job_follow_cmd(
     port: int = typer.Option(0, help="Local port for the dashboard; 0 picks a free one."),
     interval: float = typer.Option(3.0, help="Seconds between refreshes."),
     detach: bool = typer.Option(False, "--detach", help="Run in the background; print the link."),
+    wake: str = _WAKE,
     as_json: bool = _JSON,
 ):
-    """Follow a job: a mini dashboard, optional sharing, and ntfy messages until it ends."""
+    """Follow a job: a mini dashboard, optional sharing, ntfy messages and a wake-up at the end."""
     config = _jobs_config()
     if detach:
         args = ["--share", share, "--every", str(every), "--linger", str(linger)]
@@ -951,6 +963,7 @@ def job_follow_cmd(
         args += ["--notify-stages"] if notify_stages else []
         args += ["--show-log"] if show_log else []
         args += ["--stall-after", str(stall_after)] if stall_after is not None else []
+        args += ["--wake", wake] if wake else []
         if jobs_module.get(config, key) is None:
             _no_such_job(key)
         try:
@@ -963,7 +976,7 @@ def job_follow_cmd(
     options = job_follow.FollowOptions(
         share=share, notify=notify, every=every * 60, notify_stages=notify_stages,
         stall_after=None if stall_after is None else stall_after * 60, linger=linger,
-        show_log=show_log, interval=interval, port=port,
+        show_log=show_log, interval=interval, port=port, wake=wake,
     )  # fmt: skip
 
     def ready(info):
@@ -980,6 +993,35 @@ def job_follow_cmd(
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from None
     typer.echo(f"{key}: {status}", err=True)
+
+
+@job_app.command("wake")
+def job_wake_cmd(
+    key: str = typer.Argument(...),
+    agent: str = typer.Option("auto", help="auto, claude or codex."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the command; run nothing."),
+    as_json: bool = _JSON,
+):
+    """Resume the session that registered the job, with a note on its state."""
+    config = _jobs_config()
+    job = jobs_module.refresh(config, key)
+    if job is None:
+        _no_such_job(key)
+    try:
+        if dry_run:
+            found = job_wake.plan(config, job, agent, require=False)
+        else:
+            found = job_wake.wake(config, job, agent)
+    except job_wake.WakeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    if as_json:
+        typer.echo(json.dumps(found, indent=2))
+    elif dry_run:
+        typer.echo(job_wake.describe(found))
+        typer.echo(found["argv"][-1])
+    else:
+        typer.echo(f"woke the {found['agent']} session (pid {found['pid']}); log: {found['log']}")
 
 
 @job_app.command("unfollow")

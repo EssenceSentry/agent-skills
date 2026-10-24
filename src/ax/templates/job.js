@@ -71,6 +71,8 @@ function describe(event) {
     case "check_error": return `check failed: ${d.error}`;
     case "notified": return `sent: ${d.title}`;
     case "notify_failed": return `not sent: ${d.title}`;
+    case "woke": return `woke the ${d.agent} session`;
+    case "wake_failed": return `could not wake: ${d.error}`;
     default: return `${event.type} ${JSON.stringify(d)}`;
   }
 }

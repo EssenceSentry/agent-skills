@@ -1,8 +1,10 @@
-"""Follow one job: refresh it, serve its mini dashboard, share it, and send ntfy messages.
+"""Follow one job: refresh it, serve its mini dashboard, share it, send ntfy messages,
+and wake the agent that registered it when it ends.
 
-There is one follower per job. Its links live in the job's follower.json, so a
-second `ax job follow` reuses the running follower. It exits once the job has
-ended and the linger time has passed, or on SIGTERM.
+There is one follower per job. Its links and options live in the job's
+follower.json, so a second `ax job follow` reuses the running follower and the
+background poller can restart one that died. It exits once the job has ended and
+the linger time has passed, or on SIGTERM.
 """
 
 import json
@@ -12,7 +14,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
 from ax import job_notify, jobs
@@ -38,6 +40,7 @@ class FollowOptions:
     interval: float = 3.0
     port: int = 0
     dashboard: bool = True
+    wake: str | None = None  # auto, claude or codex: resume that session when the job ends
 
 
 def follower_path(config, key: str):
@@ -60,13 +63,15 @@ def running(config, key: str) -> dict | None:
     return info if isinstance(pid, int) and _alive(pid) else None
 
 
-def _write_info(config, key: str, links: dict) -> None:
+def _write_info(config, key: str, links: dict, options: "FollowOptions | None" = None) -> None:
     info = {
         "pid": os.getpid(),
         "link": links.get("public") or links.get("lan") or links.get("local"),
         **links,
         "started": jobs.now_iso(),
     }
+    if options is not None:
+        info["options"] = asdict(options)
     path = follower_path(config, key)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(info, indent=2))
@@ -88,6 +93,7 @@ def follow(
     options: FollowOptions,
     *,
     notifier=None,
+    waker=None,
     on_ready=None,
     clock=time.time,
     sleep=time.sleep,
@@ -120,6 +126,22 @@ def follow(
         else:
             jobs.record_event(config, key, "notified", {"title": message["title"]})
 
+    if options.wake and waker is None:
+        from ax import job_wake
+
+        def waker(job):
+            return job_wake.wake(config, job, options.wake)
+
+    def wake(job) -> None:
+        if not options.wake or waker is None:
+            return
+        from ax.job_wake import WakeError
+
+        try:
+            waker(job)
+        except (WakeError, OSError) as exc:
+            jobs.record_event(config, key, "wake_failed", {"error": str(exc)})
+
     stopping = threading.Event()
     previous = None
     if threading.current_thread() is threading.main_thread():
@@ -148,15 +170,16 @@ def follow(
                 share = job_tunnel.Share(server.local_url, on_url=server.allow_url)
                 closers.append(share.close)
                 links["public"] = server.link(share.start())
-        _write_info(config, key, links)
+        _write_info(config, key, links, options)
         link = links.get("public") or links.get("lan") or links.get("local")
         if on_ready:
             on_ready(running(config, key) or {"link": link, **links})
         notify(job_notify.started(job, link, _eta(config, job, options)))
         relink = server.link if options.dashboard else None
         return _loop(
-            config, key, options, job, link, links, share, relink, notify, stopping, clock, sleep
-        )
+            config, key, options, job, link, links, share, relink, notify, wake, stopping, clock,
+            sleep,
+        )  # fmt: skip
     finally:
         for close in reversed(closers):
             close()
@@ -174,7 +197,7 @@ def _eta(config, job, options) -> dict | None:
 
 
 def _loop(
-    config, key, options, job, link, links, share, relink, notify, stopping, clock, sleep
+    config, key, options, job, link, links, share, relink, notify, wake, stopping, clock, sleep
 ) -> str:
     end_at = None
     last_note, noted = clock(), (job.done, job.stage)
@@ -187,12 +210,13 @@ def _loop(
             replaced = share.tick()
             if replaced:
                 link = links["public"] = relink(replaced)
-                _write_info(config, key, links)
+                _write_info(config, key, links, options)
                 notify(job_notify.link_changed(job, link))
         if job.terminal:
             if end_at is None:
                 end_at = now
                 notify(job_notify.finished(job, link))
+                wake(job)
             if now - end_at >= options.linger:
                 break
         else:

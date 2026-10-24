@@ -60,6 +60,7 @@ job's own environment.
   - 124: timed out;
   - 69: no such job.
 - **Estimate:** `ax job show` and `ls` give the median time left and an 80% interval. The estimate comes from the job's own progress, plus finished runs of the same family (kind, unit, key without its numbers). `ax job eta-report` checks stored estimates against real finishes.
+- **Wake:** `--wake auto|claude|codex` on `new`, `watch`, `run` or `follow` resumes the session that registered the job once it ends, with a short note on how it ended. Codex resumes through `codex exec resume`, Claude Code through `claude --bg --resume`, and `ax job wake KEY --dry-run` shows the command. For a Claude session that is still open, run `ax job wait KEY` as a background command instead; its exit wakes that session.
 - **Follow:** `ax job follow KEY --share none|lan|cloudflare --notify --detach`, or `--share` and `--notify` on `new`, `watch` and `run`.
   - It serves a token-protected, read-only page for the job, optionally through a Cloudflare quick tunnel.
   - It sends ntfy messages for the start, progress, new stages, stalls and the end.
