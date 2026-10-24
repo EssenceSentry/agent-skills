@@ -228,14 +228,66 @@ def _check_pid(job: Job) -> list[Update]:
     return []
 
 
+_NUM = r"\d+(?:\.\d+)?[kMGTPE]?"
+_COUNTS = re.compile(rf"({_NUM})/({_NUM}) \[[\d?]")
+_COUNT = re.compile(rf"({_NUM})([A-Za-z_]*) \[[\d?]")
+_RATE_UNIT = re.compile(rf",\s*(?:{_NUM}|\?)\s?([A-Za-z_]+)/s\]")
+_DESC = re.compile(r"^\s*([^|]*?):\s+(?:\d+%\||\d)")
+_SCALE = {"k": 1e3, "M": 1e6, "G": 1e9, "T": 1e12, "P": 1e15, "E": 1e18}
+_LOG_TAIL = 8192
+
+
+def _count(text: str) -> float:
+    if text[-1] in _SCALE:
+        return float(text[:-1]) * _SCALE[text[-1]]
+    return float(text)
+
+
+def parse_bar(text: str) -> Update | None:
+    """The latest tqdm-style bar in output text ("Scoring: 45%|… | 450/1000 [00:10<…]")."""
+    for segment in reversed(re.split(r"[\r\n]", text)):
+        counts = _COUNTS.search(segment)
+        single = None if counts else _COUNT.search(segment)
+        if not counts and not single:
+            continue
+        unit = _RATE_UNIT.search(segment)
+        unit = unit.group(1) if unit else (single.group(2) if single else None)
+        desc = _DESC.match(segment)
+        return Update(
+            done=_count((counts or single).group(1)),
+            total=_count(counts.group(2)) if counts else None,
+            unit=unit if unit and unit != "it" else None,
+            stage=(desc.group(1).strip() or None) if desc else None,
+        )
+    return None
+
+
+def _bar_progress(job: Job) -> list[Update]:
+    """Progress from a bar in the command's output, unless the command reports its own."""
+    if job.done is not None and not job.spec.get("bar_progress"):
+        return []
+    try:
+        with open(job.spec["log"], "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - _LOG_TAIL))
+            tail = f.read().decode("utf-8", "replace")
+    except (OSError, KeyError):
+        return []
+    found = parse_bar(tail)
+    if found is None:
+        return []
+    job.spec["bar_progress"] = True
+    return [found]
+
+
 def _check_run(job: Job) -> list[Update]:
-    """An `ax job run` runner gone without writing its exit line was killed.
+    """Progress bars in the output, and the end of a runner killed before its exit line.
 
     The runner writes that line just before it exits, so lines that arrived after
     this refresh read the events file are read again before calling the job ended.
     """
     if job.spec.get("pid") is None or not _check_pid(job):
-        return []
+        return _bar_progress(job)
     late, job.offset = read_lines(Path(job.spec["events"]), job.offset)
     if any(update.status for update in late):
         return late

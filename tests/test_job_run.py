@@ -3,6 +3,7 @@ import signal
 import sys
 import time
 
+import pytest
 from typer.testing import CliRunner
 
 from ax import jobs
@@ -91,3 +92,61 @@ def test_cli_run_takes_a_heredoc_and_prints_the_key(env):
     assert result.stdout.strip() == "cli-heredoc"
     assert finish(env, "cli-heredoc")[0] == "done"
     assert "piped in" in output(env, "cli-heredoc")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (" 45%|####5     | 450/1000 [00:10<00:12, 44.2it/s]", (450, 1000, None, None)),
+        (
+            "x\rScoring:  10%|#  | 1.50k/15.0k [00:01<00:09, 1.5krows/s]",
+            (1500, 15000, "rows", "Scoring"),
+        ),
+        ("load: 450file [00:10, 44.2file/s]\r", (450, None, "file", "load")),
+        ("  0%|          | 0/40 [00:00<?, ?it/s]", (0, 40, None, None)),
+        ("plain output, 3/4 done\n", None),
+    ],
+)
+def test_progress_bars_are_read_from_output(text, expected):
+    from ax.job_sources import parse_bar
+
+    found = parse_bar(text)
+    got = None if found is None else (found.done, found.total, found.unit, found.stage)
+    assert got == expected
+
+
+def test_a_progress_bar_in_the_output_counts_as_progress(env):
+    script = (
+        "import sys, time\n"
+        "for i in range(5):\n"
+        "    sys.stderr.write(f'\\rScoring: {i * 10}%|#  | {i}/10 [00:01<00:02, 4.00rows/s]')\n"
+        "    sys.stderr.flush()\n"
+        "time.sleep(60)\n"
+    )
+    job = jobs.run(env.config, [sys.executable, "-c", script], key="bar")
+    deadline = time.time() + 15
+    while job.done != 4 and time.time() < deadline:
+        time.sleep(0.2)
+        job = jobs.refresh(env.config, "bar")
+    os.kill(job.spec["pid"], signal.SIGTERM)
+    finish(env, "bar")
+    assert (job.done, job.total, job.unit, job.stage) == (4, 10, "rows", "Scoring")
+
+
+def test_progress_the_command_reports_itself_wins_over_its_output(env):
+    script = (
+        "import json, os, sys, time\n"
+        "with open(os.environ['AX_JOB_FILE'], 'a') as f:\n"
+        "    f.write(json.dumps({'done': 7, 'total': 70}) + '\\n')\n"
+        "sys.stderr.write('\\r 50%|#  | 1/2 [00:01<00:01, 1.00it/s]')\n"
+        "sys.stderr.flush()\n"
+        "time.sleep(60)\n"
+    )
+    job = jobs.run(env.config, [sys.executable, "-c", script], key="own")
+    deadline = time.time() + 15
+    while "1/2" not in output(env, "own") and time.time() < deadline:
+        time.sleep(0.2)
+    job = jobs.refresh(env.config, "own")
+    os.kill(job.spec["pid"], signal.SIGTERM)
+    finish(env, "own")
+    assert (job.done, job.total) == (7, 70)

@@ -50,7 +50,7 @@ job's own environment.
 - **Register:**
   - `ax job new KEY` prints an events file. A producer appends JSON lines to it: `{"done": 10, "total": 40}`, `{"stage": "scoring"}`, `{"status": "done"}`, `{"exit": 0}`.
   - `ax job watch file|pid|sagemaker|seamless REF` lets ax check the job itself.
-  - `ax job run -- CMD` starts a command detached and records its exit code. A heredoc piped in is replayed to the command, and the command finds its events file in `$AX_JOB_FILE`.
+  - `ax job run -- CMD` starts a command detached and records its exit code. A heredoc piped in is replayed to the command, and the command finds its events file in `$AX_JOB_FILE`. Until the command reports progress there itself, a tqdm-style bar in its output counts as progress, with the bar's label as the stage.
 - **Wait:** `ax job wait KEY` blocks without polling an agent. Exit codes:
   - 0: done;
   - 1: failed;
