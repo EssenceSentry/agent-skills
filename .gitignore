@@ -31,3 +31,6 @@ result.json
 *.db
 session.lock
 stop.request
+
+# Synthetic test fixtures are the only JSONL allowed in this public repo.
+!tests/fixtures/**/*.jsonl
