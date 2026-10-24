@@ -11,6 +11,24 @@ Reusable skills for working with Claude Code, Codex, and ChatGPT.
 Only the delegation skill is included for now. Its references and Python helpers
 are part of that skill, not separate skills.
 
+## ax: archive agent sessions
+
+`ax` copies every Claude Code and Codex transcript into a compressed raw backup,
+indexes it in SQLite and writes one readable Markdown note per session into an
+Obsidian vault. It only reads the tools' own session folders. See
+[PLAN.md](PLAN.md) for the design and what comes next.
+
+```bash
+uv run ax sync     # archive new and changed sessions
+uv run ax doctor   # retention, vault, last sync and format-drift checks
+```
+
+Paths default to `~/.claude`, `~/.codex`, `~/Vaults/agents` and
+`~/.local/share/ax`; override them in `~/.config/ax/config.toml` (`[paths]`),
+and list working directories that must never be archived under
+`[sync] exclude`. Tests use synthetic fixtures only: this repository is public,
+so real transcripts never belong in it.
+
 ## Install in Codex
 
 Ask Codex's skill installer:
