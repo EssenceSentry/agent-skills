@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 import typer
 
 from ax import exp as exp_module
-from ax import glue
+from ax import glue, job_follow
 from ax import jobs as jobs_module
 from ax import runs as runs_module
 from ax import search as search_module
@@ -605,6 +605,24 @@ def _claude_retention(settings) -> int | None:
 job_app = typer.Typer(no_args_is_help=True, help="Long jobs any agent can register and wait on.")
 app.add_typer(job_app, name="job")
 _JSON = typer.Option(False, "--json", help="Machine-readable output.")
+_SHARE = typer.Option(
+    None, "--share", help="Start a follower with a dashboard: none (this Mac), lan or cloudflare."
+)
+_NOTIFY = typer.Option(False, "--notify", help="Start a follower that sends ntfy messages.")
+
+
+def _start_follower(config, key: str, share: str | None, notify: bool, show_log=False) -> None:
+    """Start a detached follower when asked; its link goes to stderr, so stdout stays capturable."""
+    if share is None and not notify:
+        return
+    args = ["--share", share or "none"] + (["--notify"] if notify else [])
+    args += ["--show-log"] if show_log else []
+    try:
+        info = job_follow.start_detached(config, key, args)
+    except RuntimeError as exc:
+        typer.echo(f"follower not started: {exc}", err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"dashboard: {info['link']}", err=True)
 
 
 def _jobs_config():
@@ -646,6 +664,8 @@ def job_new(
     total: float = typer.Option(None, help="Total units of work, if known."),
     unit: str = typer.Option(None, help="What the counts measure, e.g. rows."),
     label: str = typer.Option(None, help="A human description."),
+    share: str = _SHARE,
+    notify: bool = _NOTIFY,
     as_json: bool = _JSON,
 ):
     """Register a job fed through its events file, and print that file's path.
@@ -659,6 +679,7 @@ def job_new(
         typer.echo(json.dumps({"key": job.key, "events_file": str(path)}))
     else:
         typer.echo(str(path))
+    _start_follower(config, job.key, share, notify)
 
 
 @job_app.command("watch")
@@ -678,6 +699,8 @@ def job_watch(
     message_key: str = typer.Option(None, help="file (.json): dotted path of a message."),
     done_when: str = typer.Option(None, help="file: a path whose appearance means done."),
     format_: str = typer.Option(None, "--format", help="file: json or jsonl (default: by suffix)."),
+    share: str = _SHARE,
+    notify: bool = _NOTIFY,
     as_json: bool = _JSON,
 ):
     """Register a job that ax checks itself, check it once, and print its key."""
@@ -697,6 +720,7 @@ def job_watch(
     typer.echo(job.key)
     if job.check_error:
         typer.echo(f"warning: {job.check_error}", err=True)
+    _start_follower(config, job.key, share, notify)
 
 
 def _piped_stdin() -> bytes | None:
@@ -725,6 +749,11 @@ def job_run(
     key: str = typer.Option(None, help="Name the job; defaults to the program and the time."),
     label: str = typer.Option(None, help="A human description."),
     no_stdin: bool = typer.Option(False, "--no-stdin", help="Don't pass piped input on."),
+    share: str = _SHARE,
+    notify: bool = _NOTIFY,
+    show_log: bool = typer.Option(
+        False, "--show-log", help="Show the output's tail on the dashboard."
+    ),
     as_json: bool = _JSON,
 ):
     """Start a command detached, record its exit code, and print the job's key.
@@ -739,6 +768,7 @@ def job_run(
         typer.echo(json.dumps({**job.to_dict(), "output_log": job.spec["log"]}, indent=2))
     else:
         typer.echo(job.key)
+    _start_follower(config, job.key, share, notify, show_log)
 
 
 @job_app.command("ls")
@@ -769,6 +799,7 @@ def job_show(
     data = {
         **job.to_dict(),
         "events_file": str(jobs_module.events_path(config, key)),
+        "follower": job_follow.running(config, key),
         "events": recent,
     }
     if as_json:
@@ -780,6 +811,8 @@ def job_show(
     typer.echo(f"{'progress':<12} {_progress(job)}")
     typer.echo(f"{'updated':<12} {data['updated']}")
     typer.echo(f"{'events file':<12} {data['events_file']}")
+    if data["follower"]:
+        typer.echo(f"{'dashboard':<12} {data['follower']['link']}")
     for event in recent:
         typer.echo(f"  {event['ts']} {event['type']} {json.dumps(event['data'])}")
 
@@ -836,6 +869,77 @@ def job_poll(as_json: bool = _JSON):
 @job_app.command("forget")
 def job_forget(key: str = typer.Argument(...)):
     """Drop a job and its folder in ax's data; nothing outside ax is touched."""
-    if not _job_or_exit(lambda: jobs_module.forget(_jobs_config(), key)):
+    config = _jobs_config()
+    _job_or_exit(lambda: jobs_module.check_key(key))
+    job_follow.stop(config, key)
+    if not _job_or_exit(lambda: jobs_module.forget(config, key)):
         _no_such_job(key)
     typer.echo(f"forgot {key}")
+
+
+@job_app.command("follow")
+def job_follow_cmd(
+    key: str = typer.Argument(...),
+    share: str = typer.Option("none", help="Dashboard reach: none (this Mac), lan or cloudflare."),
+    notify: bool = typer.Option(False, "--notify", help="Send ntfy messages."),
+    every: float = typer.Option(15.0, help="Minutes between progress messages; 0 for none."),
+    notify_stages: bool = typer.Option(False, "--notify-stages", help="Message each new stage."),
+    stall_after: float = typer.Option(None, help="Minutes without change before a stall message."),
+    linger: float = typer.Option(120.0, help="Seconds the dashboard stays up after the job ends."),
+    show_log: bool = typer.Option(False, "--show-log", help="Show output.log's tail on the page."),
+    port: int = typer.Option(0, help="Local port for the dashboard; 0 picks a free one."),
+    interval: float = typer.Option(3.0, help="Seconds between refreshes."),
+    detach: bool = typer.Option(False, "--detach", help="Run in the background; print the link."),
+    as_json: bool = _JSON,
+):
+    """Follow a job: a mini dashboard, optional sharing, and ntfy messages until it ends."""
+    config = _jobs_config()
+    if detach:
+        args = ["--share", share, "--every", str(every), "--linger", str(linger)]
+        args += ["--port", str(port), "--interval", str(interval)]
+        args += ["--notify"] if notify else []
+        args += ["--notify-stages"] if notify_stages else []
+        args += ["--show-log"] if show_log else []
+        args += ["--stall-after", str(stall_after)] if stall_after is not None else []
+        if jobs_module.get(config, key) is None:
+            _no_such_job(key)
+        try:
+            info = job_follow.start_detached(config, key, args)
+        except RuntimeError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(2) from None
+        typer.echo(json.dumps(info, indent=2) if as_json else info["link"])
+        return
+    options = job_follow.FollowOptions(
+        share=share, notify=notify, every=every * 60, notify_stages=notify_stages,
+        stall_after=None if stall_after is None else stall_after * 60, linger=linger,
+        show_log=show_log, interval=interval, port=port,
+    )  # fmt: skip
+
+    def ready(info):
+        typer.echo(json.dumps(info) if as_json else f"dashboard: {info['link']}", err=not as_json)
+
+    try:
+        status = job_follow.follow(config, key, options, on_ready=ready)
+    except job_follow.AlreadyFollowing as exc:
+        typer.echo(exc.info["link"])
+        return
+    except KeyError:
+        _no_such_job(key)
+    except (ValueError, RuntimeError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"{key}: {status}", err=True)
+
+
+@job_app.command("unfollow")
+def job_unfollow(key: str = typer.Argument(...)):
+    """Stop a job's follower; the job itself carries on."""
+    if not job_follow.stop(_jobs_config(), key):
+        typer.echo(f"{key} has no follower", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"stopped the follower of {key}")
+
+
+if __name__ == "__main__":
+    app()
