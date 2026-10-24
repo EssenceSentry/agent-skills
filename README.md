@@ -19,13 +19,17 @@ indexes it in SQLite and writes one readable Markdown note per session into an
 Obsidian vault. It only reads the tools' own session folders. See
 [PLAN.md](PLAN.md) for the design and what comes next.
 
-Install it once with `uv tool install --editable .` from this checkout.
+Install it once with `uv tool install --editable .` from this checkout. Code changes
+take effect at once; after a change to the dependencies, run the same command with
+`--reinstall`, or the installed `ax` (which hooks and launchd call) keeps the old ones.
 
 | Command | What it does |
 | --- | --- |
 | `ax sync` | Archive new and changed sessions into the vault |
 | `ax doctor` | Check retention, the vault, the last sync and format drift |
 | `ax search "words" [--json]` | Find past sessions by what was said in them |
+| `ax runs` (`watch`, `show`, `stop`) | Delegated, background and subagent runs from both tools in one list |
+| `ax exp` (`init`, `propose`, `list`, `start`, `finish`, `abandon`) | Research campaigns whose experiments must pass a value gate |
 | `ax usage` / `ax usage guard` | Allowance left per tool and window, a forecast to reset, and a guard for scripts (exit 0 safe, 1 below, 69 unknown) |
 | `ax vault init` / `commit` / `push` | Starter Obsidian views; a commit gitleaks has scanned; a push only to a private GitHub repo |
 | `ax hooks install` | Hooks in Claude Code and Codex that sync when a session ends |

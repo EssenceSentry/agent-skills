@@ -38,3 +38,16 @@ def test_sync_while_another_runs_exits_quietly(env):
         result = runner.invoke(app, ["sync"], env={"AX_CONFIG": str(env.config_path)})
     assert result.exit_code == 0
     assert "another ax sync is running" in result.output
+
+
+def test_the_cli_loads_even_when_a_feature_dependency_is_missing(monkeypatch):
+    # Hooks and launchd run `ax sync`; a missing library for another command must not stop it.
+    import importlib
+    import sys
+
+    import ax.cli
+    import ax.exp
+
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    importlib.reload(ax.exp)
+    importlib.reload(ax.cli)

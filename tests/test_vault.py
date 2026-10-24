@@ -35,6 +35,7 @@ def clean_scan(path):
 def test_init_writes_views_and_home_without_overwriting(env):
     created = vault.init(env.config.vault)
     assert (env.vault / "Bases" / "Sessions.base").exists()
+    assert (env.vault / "Bases" / "Experiments.base").exists()
     assert (env.vault / "Home.md").exists()
     assert "Sessions.base" in (env.vault / "Home.md").read_text()
     (env.vault / "Home.md").write_text("mine")

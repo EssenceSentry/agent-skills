@@ -25,7 +25,11 @@ from ax.config import Config
 _TEMPLATES = Path(__file__).parent / "templates"
 GITLEAKS_CONFIG = _TEMPLATES / "gitleaks.toml"
 # Template name → where it goes in the vault.
-_STARTERS = {"Sessions.base": "Bases/Sessions.base", "Home.md": "Home.md"}
+_STARTERS = {
+    "Sessions.base": "Bases/Sessions.base",
+    "Experiments.base": "Bases/Experiments.base",
+    "Home.md": "Home.md",
+}
 _GITHUB = re.compile(
     r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
     r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$"

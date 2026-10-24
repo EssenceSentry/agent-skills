@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 import typer
 
+from ax import exp as exp_module
 from ax import glue
 from ax import runs as runs_module
 from ax import search as search_module
@@ -285,6 +286,134 @@ def skills_link(
     if apply:
         for target in glue.apply_links(actions):
             typer.echo(f"linked {target}")
+
+
+exp_app = typer.Typer(no_args_is_help=True, help="Research campaigns with a value gate.")
+app.add_typer(exp_app, name="exp")
+
+
+def _campaign(slug: str):
+    folder = exp_module.find_campaign(load().vault, slug)
+    if not folder:
+        typer.echo(f"no single campaign named {slug} under Projects/*/Research/")
+        raise typer.Exit(1)
+    return folder
+
+
+@exp_app.command("init")
+def exp_init(
+    project: str = typer.Argument(..., help="Project folder under the vault's Projects/."),
+    campaign: str = typer.Argument(..., help="Short name for the campaign, e.g. pricing-study."),
+    objective: str = typer.Option(..., help="What the campaign is for, in a sentence."),
+    decision: list[str] = typer.Option([], help="A decision the research serves (repeatable)."),
+    budget_hours: float = typer.Option(..., help="Hours the campaign may spend."),
+):
+    """Start a campaign: its folder and Campaign.md in the vault."""
+    folder = exp_module.init(load().vault, project, campaign, objective, decision, budget_hours)
+    typer.echo(f"created {folder / 'Campaign.md'}")
+
+
+@exp_app.command("propose")
+def exp_propose(
+    campaign: str = typer.Argument(...),
+    question: str = typer.Option(None, help="What the experiment asks."),
+    decision: str = typer.Option(None, help="The decision or claim it informs."),
+    outcome: list[str] = typer.Option([], help="'result → action' (repeat, at least two)."),
+    cheaper: str = typer.Option(None, help="Cheaper evidence considered, and why it isn't enough."),
+    stop: str = typer.Option(None, help="The result, failure or cost that ends it."),
+    hours: float = typer.Option(None, help="Estimated cost in hours."),
+    value: int = typer.Option(None, help="How much the decision matters, 1-5."),
+    p_change: float = typer.Option(None, help="Chance the result changes the decision, 0-1."),
+):
+    """Propose an experiment; it is recorded only if it passes the value gate."""
+    try:
+        e = exp_module.propose(
+            _campaign(campaign),
+            question=question,
+            decision=decision,
+            outcomes=outcome,
+            cheaper=cheaper,
+            stop=stop,
+            est_hours=hours,
+            value=value,
+            p_change=p_change,
+        )
+    except exp_module.GateFailed as failed:
+        typer.echo("not recorded; the gate needs you to:")
+        for problem in failed.problems:
+            typer.echo(f"  - {problem}")
+        raise typer.Exit(1) from None
+    typer.echo(f"proposed {e.id} (score {e.score:g}): {e.path}")
+
+
+@exp_app.command("list")
+def exp_list(
+    campaign: str = typer.Argument(...),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+):
+    """Open proposals ranked by value per hour, with budget and stall warnings."""
+    folder = _campaign(campaign)
+    found = exp_module.experiments(folder)
+    summary = exp_module.summary(folder)
+    if as_json:
+        rows = [{**e.__dict__, "path": str(e.path)} for e in found]
+        typer.echo(json.dumps({"summary": summary, "experiments": rows}, indent=2))
+        return
+    typer.echo(
+        f"spent {summary['spent_hours']:g} of {summary['budget_hours']:g} h · "
+        f"{summary['proposed']} proposed · {summary['running']} running · {summary['done']} done"
+    )
+    if summary["stalled"]:
+        typer.echo("! the last three results changed no decision: reconsider the direction")
+    for e in [e for e in found if e.status == "running"]:
+        typer.echo(f"  running  {e.id}  {e.question}")
+    for e in exp_module.rank(found):
+        typer.echo(f"  {e.score:>7.2f}  {e.id}  {e.question}  ({e.est_hours:g} h)")
+
+
+@exp_app.command("start")
+def exp_start(campaign: str = typer.Argument(...), exp_id: str = typer.Argument(...)):
+    """Mark a proposed experiment as running."""
+    exp_module.start(_campaign(campaign), exp_id)
+    typer.echo(f"{exp_id} running")
+
+
+@exp_app.command("finish")
+def exp_finish(
+    campaign: str = typer.Argument(...),
+    exp_id: str = typer.Argument(...),
+    result: str = typer.Option(..., help="What was found, in a sentence or two."),
+    hours: float = typer.Option(..., help="Hours actually spent."),
+    decision_changed: bool = typer.Option(
+        ..., "--decision-changed/--no-decision-changed", help="Did it change the decision?"
+    ),
+    insight: str = typer.Option(None, help="A lasting insight to add to Insights.md."),
+):
+    """Record a result, the hours spent and whether it changed the decision."""
+    folder = _campaign(campaign)
+    exp_module.finish(
+        folder,
+        exp_id,
+        result=result,
+        hours=hours,
+        decision_changed=decision_changed,
+        insight=insight,
+    )
+    if exp_module.summary(folder)["stalled"]:
+        typer.echo("! the last three results changed no decision: reconsider the direction")
+    typer.echo(f"{exp_id} done")
+
+
+@exp_app.command("abandon")
+def exp_abandon(
+    campaign: str = typer.Argument(...),
+    exp_id: str = typer.Argument(...),
+    reason: str = typer.Option(..., help="Why it stopped."),
+    dead_end: bool = typer.Option(False, help="Also record it in Dead ends.md."),
+):
+    """Stop an experiment, optionally recording it as a dead end."""
+    exp_module.abandon(_campaign(campaign), exp_id, reason=reason, dead_end=dead_end)
+    typer.echo(f"{exp_id} abandoned")
 
 
 @vault_app.command("init")

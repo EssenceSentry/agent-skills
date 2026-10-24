@@ -1,0 +1,58 @@
+properties:
+  p_change:
+    displayName: P(change)
+  est_hours:
+    displayName: Est. hours
+  actual_hours:
+    displayName: Hours
+  decision_changed:
+    displayName: Changed decision
+views:
+  - type: table
+    name: Open
+    filters:
+      and:
+        - 'type == "experiment"'
+        - or:
+            - 'status == "proposed"'
+            - 'status == "running"'
+    order:
+      - status
+      - file.name
+      - campaign
+      - score
+      - value
+      - p_change
+      - est_hours
+    sort:
+      - property: score
+        direction: DESC
+  - type: table
+    name: Done
+    filters:
+      and:
+        - 'type == "experiment"'
+        - or:
+            - 'status == "done"'
+            - 'status == "abandoned"'
+    order:
+      - finished
+      - file.name
+      - campaign
+      - status
+      - decision_changed
+      - actual_hours
+    sort:
+      - property: finished
+        direction: DESC
+  - type: table
+    name: Campaigns
+    filters:
+      and:
+        - 'type == "campaign"'
+    order:
+      - file.folder
+      - project
+      - status
+      - budget_hours
+      - objective

@@ -5,6 +5,7 @@ description = "Archive, search and track Claude Code and Codex sessions in an Ob
 readme = "PLAN.md"
 requires-python = ">=3.12"
 dependencies = [
+    "pyyaml>=6",
     "typer>=0.12",
     "zstandard>=0.22",
 ]
