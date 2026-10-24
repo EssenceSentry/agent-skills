@@ -329,9 +329,36 @@ Any long job an agent starts gets one key that both tools can register, read and
     - progress comes from Seamless's `/api/state` when `--state-url` is given, or else from the `SEAMLESS_PROGRESS` lines in CloudWatch;
     - progress is summed across workers for the active stream, the way Seamless does;
     - the dashboard stays Seamless's.
+- **Following a job: a mini dashboard and ntfy.** A simplified Runwatch for one job.
+  - `ax job follow KEY` runs a small follower in the foreground. With `--detach` it runs in the background and prints the dashboard link.
+  - `--share` and `--notify` on `new`, `watch` and `run` start a detached follower. Its link goes to stderr, so the key or path on stdout can still be captured.
+  - There is one follower per job. Its address is kept in the job's `follower.json`, so a second `follow` prints the running one's link instead of starting another. The follower exits when the job ends and `--linger` has passed (120 s by default), or on SIGTERM.
+  - **Dashboard:**
+    - one page, built with the standard library, showing:
+      - status, a progress bar with percent and counts;
+      - stage, message and any check error;
+      - elapsed time, last update and recent events;
+      - the tail of `output.log`, but only with `--show-log`;
+    - JSON at `/api/job`, refreshed every 5 s;
+    - no actions.
+    - Every request needs a random token. The link carries it once, and an HttpOnly cookie keeps it after that. Only localhost names, the LAN address and the tunnel's host are served.
+    - Only the job's state is exposed, never the archive.
+  - **Sharing:** `--share none|lan|cloudflare`.
+    - Cloudflare runs `cloudflared tunnel --url … --no-autoupdate` and reads the `trycloudflare.com` link from its output.
+    - It keeps draining that output, because a full pipe stalls cloudflared.
+    - It checks the public link every 30 s and replaces the tunnel after three failures. The new link goes to ntfy.
+  - **ntfy:** server and topic come from `[notify]` in `config.toml`, or from `AX_NTFY_SERVER` and `AX_NTFY_TOPIC`. A protected server also takes `AX_NTFY_TOKEN`. Messages:
+    - started, with the dashboard as the click target;
+    - progress every `--every` minutes (15 by default; 0 turns it off);
+    - stage changes, with `--notify-stages`;
+    - stalled, with `--stall-after`;
+    - done, failed, stopped or ended;
+    - a replaced link.
+    - Each send is retried three times with backoff and recorded as a job event.
+    - On ntfy.sh the topic name is the only password, so the dashboard link goes to ntfy only because the topic is yours.
 - **Next:**
   - a shared "jobs" skill;
-  - `--notify ntfy` and `--wake`;
+  - `--wake`;
   - a background service that holds the AWS session;
   - the ETA, with priors and calibration;
   - a Jobs panel in `ax serve`;
