@@ -7,9 +7,10 @@ Reusable skills for working with Claude Code, Codex, and ChatGPT.
 | Skill | What it provides |
 | --- | --- |
 | [delegation](skills/delegation/SKILL.md) | Authorized Claude/Codex workers, usage and lifecycle helpers, ChatGPT Pro consultation, native conversation messaging and history retrieval, and technical infographics. |
+| [session-recall](skills/session-recall/SKILL.md) | When and how agents search past Claude Code and Codex sessions with `ax search`, and how to cite what they find. |
 
-Only the delegation skill is included for now. Its references and Python helpers
-are part of that skill, not separate skills.
+Each skill's references and Python helpers are part of that skill, not
+separate skills.
 
 ## ax: archive agent sessions
 
