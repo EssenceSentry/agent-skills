@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote
 
-from ax import exp, job_eta, job_follow, jobs, runs, usage
+from ax import exp, job_eta, job_follow, jobs, runs, scorecard, usage
 from ax.config import Config
 from ax.config import load as load_config
 from ax.store import Store
@@ -72,7 +72,7 @@ def render_body(state: dict) -> str:
     parts = [
         '<header><h1>ax</h1><p class="muted">'
         f"last sync {e(_ago(state['last_sync']))} · updated {e(_clock(state['generated']))}"
-        "</p></header>"
+        ' · <a href="/scorecard">scorecard</a></p></header>'
     ]
     if state["errors"]:
         notes = "".join(f"<li>{e(x)}</li>" for x in state["errors"])
@@ -103,6 +103,7 @@ def make_server(config: Config, *, port: int = 8765) -> ThreadingHTTPServer:
                 "/": ("text/html", lambda: render_page(collect_state(config))),
                 "/fragment": ("text/html", lambda: render_body(collect_state(config))),
                 "/api/state": ("application/json", lambda: json.dumps(collect_state(config))),
+                "/scorecard": ("text/html", lambda: scorecard.render(scorecard.build(config))),
             }
             if self.path not in routes:
                 self.send_error(404)

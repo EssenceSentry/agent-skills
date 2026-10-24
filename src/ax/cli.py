@@ -1142,6 +1142,18 @@ def brief_cmd(
     typer.echo(f"after approval: {shlex.join(plan['command'])}")
 
 
+@app.command("scorecard")
+def scorecard_cmd(
+    weeks: int = typer.Option(6, help="How many weeks back, this one included."),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+):
+    """Corrections, nudges, guard blocks, worker denials, recurring errors and cost, by week."""
+    from ax import scorecard
+
+    card = scorecard.build(load(), weeks=weeks)
+    typer.echo(json.dumps(card, indent=2) if as_json else scorecard.text(card))
+
+
 learn_app = typer.Typer(
     no_args_is_help=True, help="Propose profile rules from your corrections, for approval."
 )
