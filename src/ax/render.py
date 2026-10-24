@@ -86,7 +86,8 @@ def render(
     if unlinked:
         lines += ["", "## Subagents", ""]
         lines += [f"- [[{stem}|{redact(t or stem)}]]" for stem, t in unlinked]
-    return "\n".join(lines).rstrip() + "\n"
+    # A NUL makes git treat the note as binary, which also hides it from secret scans.
+    return "\n".join(lines).replace("\0", "").rstrip() + "\n"
 
 
 def _transcript(session: Session) -> str:

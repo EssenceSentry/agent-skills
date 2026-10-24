@@ -103,3 +103,9 @@ def test_working_directory_fields_are_redacted():
     session.cwd = "/tmp/AKIAABCDEFGHIJKLMNOP"
     session.branch = "AKIAABCDEFGHIJKLMNOP"
     assert "AKIAABCDEFGHIJKLMNOP" not in render(session)
+
+
+def test_nul_bytes_never_reach_a_note():
+    session = claude.parse(CLAUDE_MAIN)
+    session.events[0].text = "before\x00after"
+    assert "\x00" not in render(session)

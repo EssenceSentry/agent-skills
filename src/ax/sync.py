@@ -29,7 +29,7 @@ from ax.sources import claude, codex
 from ax.store import Store
 
 # Bump when parsing or rendering changes, so the next sync rebuilds every note.
-PARSER_VERSION = "4"
+PARSER_VERSION = "5"
 
 
 class SyncBusy(RuntimeError):
