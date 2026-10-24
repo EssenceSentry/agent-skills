@@ -148,6 +148,28 @@ def number(value) -> float | None:
     return float(value) if value >= 0 and value == value and value != float("inf") else None
 
 
+def progress_text(job: "Job") -> str:
+    """Progress for people: "10/40 rows (25%)", "12 files", or "-" before any count."""
+
+    def fmt(value):
+        return f"{value:g}" if value is not None else "?"
+
+    if job.done is None and job.total is None:
+        return "-"
+    text = f"{fmt(job.done)}/{fmt(job.total)}" if job.total else fmt(job.done)
+    if job.unit:
+        text += f" {job.unit}"
+    if job.done is not None and job.total:
+        text += f" ({100 * job.done / job.total:.0f}%)"
+    return text
+
+
+def record_event(config, key: str, type_: str, data: dict) -> None:
+    """Add an event to a job's history, e.g. a notification that could not be sent."""
+    with connect(config) as db:
+        _event(db, key, now_iso(), type_, data)
+
+
 def jobs_dir(config: Config) -> Path:
     return config.data / "jobs"
 

@@ -24,6 +24,9 @@ class Config:
     reserve: tuple[tuple[str, float], ...] = ()
     # Folders holding delegation run directories; empty means ask Spotlight.
     run_roots: tuple[Path, ...] = ()
+    # ntfy for `ax job` notifications; no topic means none are sent.
+    notify_server: str = "https://ntfy.sh"
+    notify_topic: str | None = None
 
     @property
     def db_path(self) -> Path:
@@ -42,6 +45,7 @@ def load(path: Path | None = None) -> Config:
     sync = raw.get("sync", {})
     usage = raw.get("usage", {})
     runs = raw.get("runs", {})
+    notify = raw.get("notify", {})
 
     def p(key, default):
         return Path(paths.get(key, default)).expanduser()
@@ -61,4 +65,6 @@ def load(path: Path | None = None) -> Config:
         claude_usage_script=Path(script).expanduser() if script else None,
         reserve=tuple((k, float(v)) for k, v in usage.get("reserve", {}).items()),
         run_roots=tuple(Path(r).expanduser() for r in runs.get("roots", ())),
+        notify_server=str(notify.get("server", "https://ntfy.sh")),
+        notify_topic=notify.get("topic") or None,
     )

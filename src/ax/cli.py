@@ -612,15 +612,7 @@ def _jobs_config():
 
 
 def _progress(job) -> str:
-    def fmt(value):
-        return f"{value:g}" if value is not None else "?"
-
-    if job.done is None and job.total is None:
-        return "-"
-    text = f"{fmt(job.done)}/{fmt(job.total)}" if job.total else fmt(job.done)
-    if job.done is not None and job.total:
-        text += f" ({100 * job.done / job.total:.0f}%)"
-    return f"{text} {job.unit}" if job.unit else text
+    return jobs_module.progress_text(job)
 
 
 def _jobs_table(found) -> str:
