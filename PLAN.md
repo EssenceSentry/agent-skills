@@ -278,6 +278,65 @@ Done when: replaying a past campaign whose agents chased low-value studies, the 
   - Deletes the old copy in `~/.codex/skills/delegation`, a deprecated folder whose copy would show up twice.
   - Work skills stay where their own installers put them and never enter this public repo.
 
+### 9. Jobs: `ax job` (after the weekend)
+
+Any long job an agent starts gets one key that both tools can register, read and wait on. That covers a heredoc, a script, Seamless or a notebook, and nothing has to be imported in the job's own environment. This step builds the core. Wake-ups, phone pushes, the background service and the ETA come next.
+
+- **Commands.**
+  - `ax job new KEY [--total N] [--unit U]` registers a job fed only through its events file, and prints that file's path.
+  - `ax job watch file|pid|sagemaker|seamless REF` registers a job that a source can check, and returns at once.
+  - `ax job run [--key K] -- CMD …` starts CMD detached and records its exit code. Piped stdin, such as a heredoc, is saved and replayed. Output goes to the job's `output.log`.
+  - `ax job ls` and `ax job show KEY` refresh active jobs and print them, with `--json` for agents.
+  - `ax job wait KEY [--until …] [--timeout S] [--stall-after S]` blocks without spending tokens. Exit codes:
+    - 0: done;
+    - 1: failed;
+    - 2: stopped or ended;
+    - 3: stalled;
+    - 124: timed out;
+    - 69: no such job.
+  - `ax job poll` refreshes every active job once, for a scheduler later. `ax job forget KEY` drops one.
+- **File protocol.** Each job has `~/.local/share/ax/jobs/<key>/events.jsonl`. A producer appends one JSON object per line, from any language and with no ax import (`echo '{"done": 10}' >> "$F"`):
+  - `{"done": 120, "total": 500, "unit": "rows"}` reports progress; either count alone is fine.
+  - `{"stage": "scoring"}` and `{"message": "…"}` record a stage or a note.
+  - `{"status": "done" | "failed" | "stopped", "message": "…"}` ends the job. `{"exit": 0}` ends it as done; any other code ends it as failed.
+  - Other keys are kept as event data. A line still missing its newline is left for the next read.
+- **Storage.** `~/.local/share/ax/jobs.db`, kept apart from `ax.db` because a parser change rebuilds that.
+  - Table `jobs`: key, kind, ref, source options, status, stage, done, total, unit, message, timestamps, the last check error, and the events-file offset. It also records the launching agent session (`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`) for wake-ups later.
+  - Table `events`: one row per change, numbered globally, so later work can wait on "anything after N" and fit ETAs.
+- **Statuses.**
+  - The five: running, done, failed, stopped, and ended (a process vanished without a known result).
+  - A failed check keeps the last status and records `check_error`.
+  - "Stalled" is derived: running, but unchanged for `--stall-after` seconds.
+- **First sources.**
+  - **`file`:**
+    - a `.jsonl` file is read as protocol lines from its last offset;
+    - a `.json` file is reread at each check, using `--done-key`, `--total-key`, `--status-key` and `--stage-key` as dotted paths;
+    - with `--done-when PATH`, the appearance of that file means done.
+  - **`pid`:** alive or gone. The process start time guards against PID reuse.
+  - **`sagemaker`:**
+    - processing, training or transform jobs, read through `aws sagemaker describe-*` (no boto3);
+    - InProgress, Completed, Failed, Stopping and Stopped are mapped;
+    - missing or expired credentials become a check error.
+  - **`seamless`:**
+    - the processing job's status, plus progress;
+    - progress comes from Seamless's `/api/state` when `--state-url` is given, or else from the `SEAMLESS_PROGRESS` lines in CloudWatch;
+    - progress is summed across workers for the active stream, the way Seamless does;
+    - the dashboard stays Seamless's.
+- **Next:**
+  - a shared "jobs" skill;
+  - `--notify ntfy` and `--wake`;
+  - a background service that holds the AWS session;
+  - the ETA, with priors and calibration;
+  - a Jobs panel in `ax serve`;
+  - Runwatch and Tools MCP sources;
+  - tqdm parsing for `run`.
+
+Done when:
+
+- a heredoc job started with `ax job run`, and a job fed through its events file, each reach done or failed, and `ax job wait` returns the matching exit code;
+- tests show `ax job watch sagemaker` and `ax job watch seamless` reporting status and progress from recorded AWS responses, and one real job confirms it;
+- no source needs ax installed in the job's environment.
+
 ## Schedule
 
 ### Saturday, afternoon and evening
