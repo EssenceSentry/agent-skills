@@ -1,0 +1,113 @@
+// The ax job dashboard: polls /api/job and fills the page with text only.
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+let job = null;
+
+function duration(seconds) {
+  seconds = Math.max(0, Math.round(seconds));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h) return `${h} h ${m} min`;
+  if (m) return `${m} min ${s} s`;
+  return `${s} s`;
+}
+
+function ago(iso) {
+  if (!iso) return "-";
+  return `${duration((Date.now() - Date.parse(iso)) / 1000)} ago`;
+}
+
+function clock(iso) {
+  if (!iso) return "-";
+  return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function describe(event) {
+  const d = event.data || {};
+  switch (event.type) {
+    case "created": return "registered";
+    case "status": return `status: ${d.status}${d.message ? ` (${d.message})` : ""}`;
+    case "stage": return `stage: ${d.stage}`;
+    case "message": return d.message;
+    case "check_error": return `check failed: ${d.error}`;
+    case "notified": return `sent: ${d.title}`;
+    case "notify_failed": return `not sent: ${d.title}`;
+    default: return `${event.type} ${JSON.stringify(d)}`;
+  }
+}
+
+function times() {
+  if (!job) return;
+  const end = job.finished ? Date.parse(job.finished) : Date.now();
+  $("elapsed").textContent = duration((end - Date.parse(job.created)) / 1000);
+  $("updated").textContent = ago(job.updated);
+}
+
+function render(data) {
+  job = data;
+  document.title = `${data.key} · ${data.status}`;
+  $("key").textContent = data.key;
+  $("label").textContent = data.label || [data.kind, data.ref].filter(Boolean).join(" · ");
+  $("status").textContent = data.status;
+  $("status").dataset.status = data.status;
+  $("bar").dataset.status = data.status;
+
+  const known = data.total && data.done !== null;
+  const pct = known ? Math.min(100, (100 * data.done) / data.total) : null;
+  $("bar").dataset.unknown = String(!known && data.status === "running");
+  $("fill").style.width = known ? `${pct}%` : data.status === "done" ? "100%" : "";
+  $("pct").textContent = known ? `${pct.toFixed(0)}%` : "";
+  $("counts").textContent = data.progress_text === "-" ? "" : data.progress_text;
+  $("stage").textContent = data.stage || "";
+  $("message").textContent = data.message || "";
+  $("check").hidden = !data.check_error;
+  $("check").textContent = data.check_error ? `Last check failed: ${data.check_error}` : "";
+
+  $("started").textContent = clock(data.created);
+  $("source").textContent = [data.kind, data.ref].filter(Boolean).join(" · ");
+  $("console").hidden = !data.console_url;
+  if (data.console_url) $("console").href = data.console_url;
+
+  const list = $("events");
+  list.replaceChildren(
+    ...data.events.slice().reverse().map((event) => {
+      const item = document.createElement("li");
+      const when = document.createElement("time");
+      when.textContent = clock(event.ts);
+      const what = document.createElement("span");
+      what.textContent = describe(event);
+      item.append(when, what);
+      return item;
+    }),
+  );
+
+  $("log-card").hidden = data.log === undefined;
+  if (data.log !== undefined) {
+    const pre = $("log");
+    const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4;
+    pre.textContent = data.log || "(no output yet)";
+    if (atBottom) pre.scrollTop = pre.scrollHeight;
+  }
+  times();
+}
+
+async function load() {
+  try {
+    const response = await fetch("/api/job", { cache: "no-store", credentials: "same-origin" });
+    if (response.status === 401) {
+      $("conn").textContent = "Open this dashboard with its full link; it carries an access token.";
+      return;
+    }
+    if (!response.ok) throw new Error(String(response.status));
+    render(await response.json());
+    $("conn").textContent = "Refreshes every 5 s.";
+  } catch (error) {
+    $("conn").textContent = "The dashboard is offline; the follower has probably stopped.";
+  }
+}
+
+load();
+setInterval(load, 5000);
+setInterval(times, 1000);

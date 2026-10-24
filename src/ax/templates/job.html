@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>ax job</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1 id="key">…</h1>
+      <p id="label" class="quiet"></p>
+    </div>
+    <span id="status" class="pill">loading</span>
+  </header>
+
+  <section class="card">
+    <div class="bar" id="bar"><div class="fill" id="fill"></div></div>
+    <div class="row">
+      <strong id="pct"></strong>
+      <span id="counts" class="quiet"></span>
+    </div>
+    <p id="stage" class="stage"></p>
+    <p id="message"></p>
+    <p id="check" class="warning" hidden></p>
+  </section>
+
+  <section class="card facts">
+    <dl>
+      <div><dt>Started</dt><dd id="started">-</dd></div>
+      <div><dt>Elapsed</dt><dd id="elapsed">-</dd></div>
+      <div><dt>Updated</dt><dd id="updated">-</dd></div>
+      <div><dt>Source</dt><dd id="source">-</dd></div>
+    </dl>
+    <a id="console" hidden rel="noopener noreferrer" target="_blank">Open in the AWS console</a>
+  </section>
+
+  <section class="card">
+    <h2>Recent events</h2>
+    <ol id="events" class="events"></ol>
+  </section>
+
+  <section class="card" id="log-card" hidden>
+    <h2>Output</h2>
+    <pre id="log"></pre>
+  </section>
+
+  <p id="conn" class="quiet small"></p>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>
