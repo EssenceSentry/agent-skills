@@ -362,6 +362,14 @@ def _acknowledged(acks, rule_id: str, path: Path) -> bool:
     return any(rid == rule_id and fragment in str(path) for rid, fragment in acks)
 
 
+def _setting_matches(actual, expected) -> bool:
+    """`false` is also met by an object whose values are all empty or false, the form
+    Claude Code writes `attribution` in when it rewrites settings."""
+    if expected is False and isinstance(actual, dict):
+        return bool(actual) and not any(actual.values())
+    return actual == expected
+
+
 def check(config) -> list[Finding]:
     rules = [r for r in load_rules(config) if r.status == "active"]
     findings: list[Finding] = []
@@ -397,7 +405,7 @@ def check(config) -> list[Finding]:
         settings = {}
     for rule in rules:
         for key, expected in rule.settings.items():
-            if settings.get(key) != expected:
+            if not _setting_matches(settings.get(key), expected):
                 findings.append(
                     Finding("setting", rule.id, settings_path, None,
                             f"{key} should be {json.dumps(expected)} (now {json.dumps(settings.get(key))})")

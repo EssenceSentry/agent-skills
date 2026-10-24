@@ -187,3 +187,13 @@ def test_trash_is_skipped_and_acknowledged_conflicts_do_not_fail(home):
     found = profile.check(home.config)
     assert [f.kind for f in found if f.rule == "no-coauthor-trailer"] == ["acknowledged"]
     assert cli(home, "check").exit_code == 0
+
+
+def test_attribution_hidden_in_object_form_counts_as_off(home):
+    profile.seed(home.config)
+    settings = {"attribution": {"commit": "", "pr": "", "sessionUrl": False}}
+    (home.claude_home / "settings.json").write_text(json.dumps(settings))
+    assert not [f for f in profile.check(home.config) if f.kind == "setting"]
+    settings["attribution"]["commit"] = "Co-Authored-By: Claude"
+    (home.claude_home / "settings.json").write_text(json.dumps(settings))
+    assert [f for f in profile.check(home.config) if f.kind == "setting"]
