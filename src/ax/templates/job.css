@@ -32,6 +32,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -58,7 +59,6 @@ p { margin: 6px 0 0; }
 
 .bar { height: 10px; border-radius: 999px; background: var(--track); overflow: hidden; }
 .fill { height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .6s ease; }
-.bar[data-status="done"] .fill { background: var(--done); }
 .bar[data-status="failed"] .fill { background: var(--failed); }
 .bar[data-unknown="true"] .fill { width: 30%; animation: slide 1.6s ease-in-out infinite; }
 @keyframes slide { from { margin-left: -30%; } to { margin-left: 100%; } }

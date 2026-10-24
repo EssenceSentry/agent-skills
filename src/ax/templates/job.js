@@ -24,6 +24,21 @@ function clock(iso) {
   return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+function stamp(iso) {
+  // Events: the time with seconds today, the date as well on other days.
+  const when = new Date(iso);
+  const today = when.toDateString() === new Date().toDateString();
+  const time = when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return today ? time : `${when.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+}
+
+function counts(data) {
+  if (data.done === null && data.total === null) return "";
+  const n = (value) => (value === null ? "?" : String(Number(value)));
+  const text = data.total ? `${n(data.done)}/${n(data.total)}` : n(data.done);
+  return data.unit ? `${text} ${data.unit}` : text;
+}
+
 function describe(event) {
   const d = event.data || {};
   switch (event.type) {
@@ -59,8 +74,8 @@ function render(data) {
   $("bar").dataset.unknown = String(!known && data.status === "running");
   $("fill").style.width = known ? `${pct}%` : data.status === "done" ? "100%" : "";
   $("pct").textContent = known ? `${pct.toFixed(0)}%` : "";
-  $("counts").textContent = data.progress_text === "-" ? "" : data.progress_text;
-  $("stage").textContent = data.stage || "";
+  $("counts").textContent = counts(data);
+  $("stage").textContent = data.stage ? `Stage: ${data.stage}` : "";
   $("message").textContent = data.message || "";
   $("check").hidden = !data.check_error;
   $("check").textContent = data.check_error ? `Last check failed: ${data.check_error}` : "";
@@ -75,7 +90,7 @@ function render(data) {
     ...data.events.slice().reverse().map((event) => {
       const item = document.createElement("li");
       const when = document.createElement("time");
-      when.textContent = clock(event.ts);
+      when.textContent = stamp(event.ts);
       const what = document.createElement("span");
       what.textContent = describe(event);
       item.append(when, what);
