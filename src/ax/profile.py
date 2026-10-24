@@ -271,6 +271,7 @@ def write_guard_rules(config) -> Path:
             "pattern": r.guard["pattern"],
             "repo": r.guard.get("repo") or r.repo,
             "message": r.guard.get("message") or r.rule,
+            "where": r.guard.get("where", "anywhere"),
         }
         for r in load_rules(config)
         if r.status == "active" and r.level == "block" and r.guard and r.guard.get("pattern")
@@ -522,6 +523,7 @@ SEED = [
             "tool": "shell",
             "pattern": r"git\s+(add\s+(-A\b|--all\b|\.(\s|$))|commit\s+(-[a-zA-Z]*a[a-zA-Z]*\b|--all\b))",
             "message": "Stage the files this task changed by path; other work may be in the tree.",
+            "where": "command",
         },
         evidence=[
             "Codex memory preference: preserve unrelated dirty work, stage explicit paths",
@@ -547,6 +549,7 @@ SEED = [
             "repo": "ds-models",
             "pattern": r"uv\s+(run\s+[^|;&]*--(active|exact)\b|sync(\s*$|\s+[;&|]|\s+--(?!help)))",
             "message": "In ds-models use plain `uv run`; refresh with `uv run python scripts/bootstrap_dev.py`.",
+            "where": "command",
         },
         evidence=["Claude memory ds-models-uv-run-never-active (auto-classifier)"],
     ),

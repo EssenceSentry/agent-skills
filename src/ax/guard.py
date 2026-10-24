@@ -40,9 +40,32 @@ def _repo_name(cwd: str) -> str | None:
     return None
 
 
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+
+def code_only(command: str) -> str:
+    """The command without heredoc bodies or quoted strings: what it runs, not what it mentions."""
+    kept, end = [], None
+    for line in command.split("\n"):
+        if end is not None:
+            if line.strip() == end:
+                end = None
+            continue
+        if match := _HEREDOC.search(line):
+            end = match.group(2)
+        kept.append(line)
+    text = re.sub(r"'[^']*'", "''", "\n".join(kept))
+    return re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+
+
 def evaluate(rules: list[dict], command: str, cwd: str) -> dict | None:
-    """The first rule the command breaks, or None."""
-    repo = None
+    """The first rule the command breaks, or None.
+
+    A rule with `where: command` looks only at what runs, so a script or doc that
+    mentions a forbidden command isn't blocked; other rules read the whole text, which
+    a commit message inside quotes or a heredoc needs.
+    """
+    repo, code = None, None
     for rule in rules:
         if rule.get("tool", "shell") != "shell":
             continue
@@ -50,7 +73,11 @@ def evaluate(rules: list[dict], command: str, cwd: str) -> dict | None:
             repo = repo or _repo_name(cwd) or ""
             if repo != rule["repo"]:
                 continue
-        if re.search(rule["pattern"], command):
+        text = command
+        if rule.get("where") == "command":
+            code = code_only(command) if code is None else code
+            text = code
+        if re.search(rule["pattern"], text):
             return rule
     return None
 

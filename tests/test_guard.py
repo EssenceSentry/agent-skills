@@ -65,6 +65,27 @@ def test_repo_rules_apply_only_inside_that_repo(rules, ds_models, tmp_path):
     assert blocked(rules, "uv sync", str(tmp_path)) is None
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python3 - <<'PY'\nnote = 'never run git add -A here'\nPY",
+        "cat > PLAN.md <<EOF\nLive-tested on `git add -A`.\nEOF",
+        'echo "avoid git add -A and git commit -am"',
+        "git commit -m 'Explain why git add -A is blocked'",
+    ],
+)
+def test_mentions_in_text_are_not_commands(rules, command):
+    # Docs and scripts that mention a forbidden command don't run it.
+    assert blocked(rules, command) is None
+
+
+def test_commands_around_text_are_still_checked(rules):
+    assert blocked(rules, "cat > a.txt <<EOF\nhello\nEOF\ngit add -A") == "stage-explicit-paths"
+    assert blocked(rules, 'git commit -am "fix"') == "stage-explicit-paths"
+    trailer = "git commit -F - <<'EOF'\nFix\n\nCo-Authored-By: Claude <x>\nEOF"
+    assert blocked(rules, trailer) == "no-coauthor-trailer"  # message text still counts here
+
+
 def run_main(env, payload, tool="claude"):
     out = io.StringIO()
     code = guard.main(
