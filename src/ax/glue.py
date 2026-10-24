@@ -65,6 +65,12 @@ def _add_guard(settings: dict, guard: str, tool: str) -> None:
         groups.append(
             {"matcher": "Bash", "hooks": [{"type": "command", "command": command, "timeout": 5}]}
         )
+    if tool == "claude":
+        # The stop check reads Claude's transcript; Codex's has another format.
+        stops = settings["hooks"].setdefault("Stop", [])
+        check = f"{command} --event stop"
+        if not any(h.get("command") == check for g in stops for h in g.get("hooks", [])):
+            stops.append({"hooks": [{"type": "command", "command": check, "timeout": 5}]})
 
 
 def _plan(config: Config, edit) -> list[Change]:
@@ -94,7 +100,7 @@ def plan_hooks(config: Config, *, ax: str, guard: str | None = None) -> list[Cha
 
 
 def plan_guard_hooks(config: Config, *, guard: str) -> list[Change]:
-    """Run `ax-guard` before every shell command in both tools (PreToolUse on Bash)."""
+    """Run `ax-guard` before every shell command in both tools, and as Claude's stop check."""
     return _plan(config, lambda settings, tool: _add_guard(settings, guard, tool))
 
 

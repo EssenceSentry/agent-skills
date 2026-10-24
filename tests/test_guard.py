@@ -132,3 +132,73 @@ def test_hooks_install_registers_the_guard_for_both_tools(env):
     glue.apply(changes)
     again = glue.plan_guard_hooks(env.config, guard="/bin/ax-guard")
     assert all(c.before == c.after for c in again)
+
+
+def transcript(tmp_path, *records):
+    path = tmp_path / "t.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+    return str(path)
+
+
+def user(text):
+    return {"type": "user", "message": {"role": "user", "content": text}}
+
+
+def assistant(text=None, command=None):
+    content = []
+    if command:
+        content.append({"type": "tool_use", "name": "Bash", "input": {"command": command}})
+    if text:
+        content.append({"type": "text", "text": text})
+    return {"type": "assistant", "message": {"role": "assistant", "content": content}}
+
+
+def tool_result():
+    return {
+        "type": "user",
+        "message": {"role": "user", "content": [{"type": "tool_result", "content": "ok"}]},
+    }
+
+
+def stop(env, path, active=False):
+    payload = json.dumps({"hook_event_name": "Stop", "session_id": "s1", "cwd": "/tmp",
+                          "transcript_path": path, "stop_hook_active": active})  # fmt: skip
+    out = io.StringIO()
+    guard.main(["--tool", "claude", "--event", "stop", "--data", str(env.config.data)],
+               stdin=io.StringIO(payload), stdout=out)  # fmt: skip
+    return json.loads(out.getvalue()) if out.getvalue() else None
+
+
+def test_claiming_tests_pass_without_running_them_keeps_the_agent_working(env, tmp_path):
+    path = transcript(tmp_path, user("Fix the parser."), assistant(command="sed -i s/a/b/ p.py"),
+                      tool_result(), assistant("Fixed it; all tests pass."))  # fmt: skip
+    decision = stop(env, path)
+    assert decision["decision"] == "block" and "no test" in decision["reason"]
+    logged = [json.loads(x) for x in guard.log_path(env.config.data).read_text().splitlines()]
+    assert logged[-1]["rule"] == "tests-claimed-not-run"
+
+
+@pytest.mark.parametrize(
+    "records",
+    [
+        [user("Fix it."), assistant(command="uv run pytest -q"), tool_result(),
+         assistant("Fixed; 12 passed.")],
+        [user("Fix it."), assistant("I changed p.py; I did not run the tests.")],
+        [user("Run the tests."), assistant(command="uv run pytest"), tool_result(),
+         user("Thanks. Now explain."), assistant("Sure: the change swaps a for b.")],
+    ],
+)  # fmt: skip
+def test_honest_or_verified_endings_pass(env, tmp_path, records):
+    assert stop(env, transcript(tmp_path, *records)) is None
+
+
+def test_a_second_stop_after_a_block_is_let_through(env, tmp_path):
+    path = transcript(tmp_path, user("Fix."), assistant("Done, all tests pass."))
+    assert stop(env, path, active=True) is None
+
+
+def test_hooks_install_adds_the_stop_check_for_claude(env):
+    changes = glue.plan_guard_hooks(env.config, guard="/bin/ax-guard")
+    claude = {c.path.name: json.loads(c.after) for c in changes}["settings.json"]
+    commands = [h["command"] for e in claude["hooks"]["Stop"] for h in e["hooks"]]
+    assert "/bin/ax-guard --tool claude --event stop" in commands

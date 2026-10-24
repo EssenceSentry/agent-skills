@@ -1,8 +1,14 @@
-"""The PreToolUse guard Claude Code and Codex run before every shell command.
+"""The PreToolUse guard Claude Code and Codex run before every shell command, and
+Claude's stop check.
 
-It blocks a command that a profile rule at level "block" forbids, says why, and logs
-the block so the scorecard can count it. Both tools send `tool_name` "Bash" with the
-command in `tool_input.command` and accept the same denial, so one script serves both.
+Before a command, it blocks one that a profile rule at level "block" forbids, says why,
+and logs the block so the scorecard can count it. Both tools send `tool_name` "Bash"
+with the command in `tool_input.command` and accept the same denial, so one script
+serves both.
+
+When Claude stops (`--event stop`), it reads the turn from the transcript: if the last
+reply says tests pass but no test command ran since the user's last message, it asks
+Claude to keep working, once.
 
 It runs before every shell command, so it stays on the standard library and reads the
 rules `ax profile compile --apply` prebuilds as JSON instead of the vault's notes. Bad
@@ -49,6 +55,70 @@ def evaluate(rules: list[dict], command: str, cwd: str) -> dict | None:
     return None
 
 
+_TESTS_PASS = re.compile(
+    r"(?i)\b(?:all |the )?tests? (?:now |all |still )?pass(?:es|ed)?\b|\b\d+ (?:tests? )?passed\b"
+    r"|\btests? (?:are|is) (?:green|passing)\b"
+)
+_TEST_RUN = re.compile(
+    r"(?i)\b(?:pytest|unittest|npm (?:run )?test|yarn test|pnpm test|bun test|go test|cargo test"
+    r"|jest|vitest|tox|nox|make (?:test|check)|mvn test|gradle test|pre-commit run)\b"
+)
+_NOT_RUN = re.compile(r"(?i)\b(?:didn'?t|did not|haven'?t|have not|not) (?:run|re-?run)\b")
+
+
+def _turn(transcript: Path) -> tuple[str, list[str]]:
+    """The last reply's text and the shell commands run since the user's last message."""
+    text, commands = "", []
+    for line in transcript.read_text(errors="replace").splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        content = (record.get("message") or {}).get("content")
+        if record.get("type") == "user":
+            is_result = isinstance(content, list) and any(
+                isinstance(b, dict) and b.get("type") == "tool_result" for b in content
+            )
+            if not is_result:
+                text, commands = "", []
+        elif record.get("type") == "assistant" and isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    text = block.get("text", "")
+                elif block.get("type") == "tool_use" and block.get("name") == "Bash":
+                    commands.append(str((block.get("input") or {}).get("command", "")))
+    return text, commands
+
+
+def stop_check(payload: dict) -> str | None:
+    """Why Claude should keep working, or None to let it stop."""
+    if payload.get("stop_hook_active"):
+        return None  # it already continued once for this check
+    try:
+        text, commands = _turn(Path(payload["transcript_path"]))
+    except (KeyError, OSError, TypeError):
+        return None
+    if not _TESTS_PASS.search(text) or _NOT_RUN.search(text):
+        return None
+    if any(_TEST_RUN.search(c) for c in commands):
+        return None
+    return (
+        "You said tests pass, but no test command ran since the user's last message. "
+        "Run the tests now, or say when they last ran instead of saying they pass."
+    )
+
+
+def _log(data: Path, entry: dict) -> None:
+    try:
+        log_path(data).parent.mkdir(parents=True, exist_ok=True)
+        with log_path(data).open("a") as log:
+            log.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), **entry}) + "\n")
+    except OSError:
+        pass
+
+
 def _default_data() -> Path:
     try:
         from ax.config import load
@@ -63,6 +133,17 @@ def main(argv=None, *, stdin=None, stdout=None) -> int:
     stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
     tool = argv[argv.index("--tool") + 1] if "--tool" in argv else "claude"
     data = Path(argv[argv.index("--data") + 1]) if "--data" in argv else _default_data()
+    if "--event" in argv and argv[argv.index("--event") + 1] == "stop":
+        try:
+            payload = json.loads(stdin.read())
+        except ValueError:
+            return 0
+        reason = stop_check(payload) if isinstance(payload, dict) else None
+        if reason:
+            _log(data, {"tool": tool, "rule": "tests-claimed-not-run", "cwd": payload.get("cwd"),
+                        "session": payload.get("session_id")})  # fmt: skip
+            stdout.write(json.dumps({"decision": "block", "reason": reason}) + "\n")
+        return 0
     try:
         payload = json.loads(stdin.read())
         rules = json.loads(rules_path(data).read_text())
@@ -77,14 +158,8 @@ def main(argv=None, *, stdin=None, stdout=None) -> int:
     hit = evaluate(rules, command, cwd)
     if not hit:
         return 0
-    try:
-        with log_path(data).open("a") as log:
-            log.write(json.dumps({
-                "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "tool": tool, "rule": hit["id"],
-                "cwd": cwd, "session": payload.get("session_id"), "command": command[:300],
-            }) + "\n")  # fmt: skip
-    except OSError:
-        pass
+    _log(data, {"tool": tool, "rule": hit["id"], "cwd": cwd,
+                "session": payload.get("session_id"), "command": command[:300]})  # fmt: skip
     reason = (
         f"{hit['message']} (blocked by the user's profile rule {hit['id']}; "
         "if it is wrong here, ask the user rather than working around it)"
