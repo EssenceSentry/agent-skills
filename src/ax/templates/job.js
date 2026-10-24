@@ -4,6 +4,17 @@
 const $ = (id) => document.getElementById(id);
 let job = null;
 
+// The link carries the access token. Keep it for this tab and take it out of the
+// address bar; every refresh sends it in a header, so no cookie is needed.
+let token = new URLSearchParams(location.search).get("token");
+try {
+  if (token) sessionStorage.setItem("axJobToken", token);
+  else token = sessionStorage.getItem("axJobToken");
+} catch (error) {
+  // Storage can be off (private browsing); the token stays in memory for this page.
+}
+if (location.search) history.replaceState(null, "", "/");
+
 function duration(seconds) {
   seconds = Math.max(0, Math.round(seconds));
   const h = Math.floor(seconds / 3600);
@@ -110,7 +121,11 @@ function render(data) {
 
 async function load() {
   try {
-    const response = await fetch("/api/job", { cache: "no-store", credentials: "same-origin" });
+    const response = await fetch("/api/job", {
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: token ? { "X-Ax-Token": token } : {},
+    });
     if (response.status === 401) {
       $("conn").textContent = "Open this dashboard with its full link; it carries an access token.";
       return;

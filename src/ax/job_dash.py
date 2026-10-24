@@ -1,7 +1,8 @@
 """A one-job dashboard: a small page and its JSON, read-only, behind a token.
 
 Only the job's own state is served, never the archive. Every data request needs the
-token, which the link carries once and an HttpOnly cookie keeps after that. Only
+token: the link carries it, the page keeps it in memory and sends it in a header, and
+a Lax, HttpOnly cookie covers reloads. Only
 localhost names, the LAN address and a tunnel's host name are answered. The page
 reads the stored state; the follower refreshes the job, so a page view never calls
 AWS.
@@ -166,7 +167,11 @@ def _handler(dash: Dashboard):
 
         def _token_ok(self, query_token: str | None) -> bool:
             cookie = SimpleCookie(self.headers.get("Cookie") or "")
-            given = query_token or (cookie[COOKIE].value if COOKIE in cookie else "")
+            given = (
+                query_token
+                or self.headers.get("X-Ax-Token")
+                or (cookie[COOKIE].value if COOKIE in cookie else "")
+            )
             return bool(given) and hmac.compare_digest(given, dash.token)
 
         def do_GET(self):  # noqa: N802
@@ -184,14 +189,18 @@ def _handler(dash: Dashboard):
                     401, "Open this dashboard with its full link; it carries an access token."
                 )
             if parts.path == "/":
+                # Served straight from the link, not through a redirect: a phone opening it
+                # from the ntfy app counts as a cross-site visit and may withhold a cookie on
+                # the redirected request. The page keeps the token in memory and sends it in a
+                # header; the Lax cookie only makes a later reload work.
+                extra = {}
                 if query_token:
                     secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
-                    cookie = f"{COOKIE}={dash.token}; Path=/; HttpOnly; SameSite=Strict{secure}"
-                    return self._send(
-                        303, b"", "text/plain", {"Location": "/", "Set-Cookie": cookie}
+                    extra["Set-Cookie"] = (
+                        f"{COOKIE}={dash.token}; Path=/; HttpOnly; SameSite=Lax{secure}"
                     )
                 return self._send(
-                    200, (_TEMPLATES / "job.html").read_bytes(), "text/html; charset=utf-8"
+                    200, (_TEMPLATES / "job.html").read_bytes(), "text/html; charset=utf-8", extra
                 )
             if parts.path == "/api/job":
                 state = dash.state()

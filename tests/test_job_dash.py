@@ -53,18 +53,32 @@ def test_job_data_needs_the_token(dash):
     assert data["label"] == "<b>Score</b> rows"
 
 
-def test_the_link_sets_a_cookie_and_drops_the_token_from_the_address(dash):
+def test_the_link_serves_the_page_directly_and_sets_a_lax_cookie(dash):
+    # A tap in the ntfy app is a cross-site visit: a redirect after it could arrive
+    # without a Strict cookie, so the link must work in one request.
     server = dash()
-    status, headers, _ = request(server, "/", token=server.token)
-    assert status == 303 and headers["Location"] == "/"
-    cookie = headers["Set-Cookie"]
-    assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
-    status, headers, body = request(server, "/", cookie=cookie.split(";")[0])
+    status, headers, body = request(server, "/", token=server.token)
     assert status == 200 and b'src="/app.js"' in body
+    cookie = headers["Set-Cookie"]
+    assert "HttpOnly" in cookie and "SameSite=Lax" in cookie
     assert b"Score" not in body  # job data reaches the page only as JSON
     assert headers["Referrer-Policy"] == "no-referrer"
     assert "default-src 'self'" in headers["Content-Security-Policy"]
     assert headers["Cache-Control"] == "no-store"
+    assert request(server, "/", cookie=cookie.split(";")[0])[0] == 200
+
+
+def test_the_page_can_send_the_token_in_a_header(dash):
+    server = dash()
+    req = urllib.request.Request(
+        server.local_url + "/api/job", headers={"X-Ax-Token": server.token}
+    )
+    with urllib.request.urlopen(req, timeout=5) as response:
+        assert json.loads(response.read())["key"] == "score"
+    bad = urllib.request.Request(server.local_url + "/api/job", headers={"X-Ax-Token": "nope"})
+    with pytest.raises(urllib.error.HTTPError) as refused:
+        urllib.request.urlopen(bad, timeout=5)
+    assert refused.value.code == 401
 
 
 def test_only_known_host_names_are_served(dash):
