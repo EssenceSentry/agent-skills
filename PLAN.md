@@ -34,6 +34,13 @@ Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
     - Open proposals are ranked by value × P(change) per hour.
     - Replaying the youtube-optimization studies ranks the two gating studies (0.62 and 0.50) far above the long shot (0.02).
   - `ax serve`: a localhost dashboard (standard library only; it refuses foreign Host names).
+- **Step 9 core built 2026-10-24** (component 9):
+  - `ax job new`, `watch`, `run`, `ls`, `show`, `wait`, `poll` and `forget`, with file, pid, SageMaker and Seamless sources. 232 tests pass.
+  - Checked end to end with the installed `ax`:
+    - a real zsh heredoc through `ax job run`;
+    - an idle stdin pipe, which returns in 0.36 s;
+    - the file protocol from bash.
+  - SageMaker and Seamless have been tested only against recorded AWS responses so far, not yet against a real job.
 - **Deferred:**
   - Run notes in `Runs/`.
   - Cheap handoffs and supervisor agents.
