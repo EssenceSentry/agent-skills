@@ -37,3 +37,7 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "B", "UP", "SIM"]
 # `ruff format` owns line length; long strings and test tables are left as written.
 ignore = ["E501"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Typer declares parameters through calls in argument defaults.
+extend-immutable-calls = ["typer.Argument", "typer.Option"]

@@ -1,10 +1,14 @@
 """The ax command line."""
 
+import difflib
 import json
+import os
+import subprocess
 from datetime import UTC, datetime
 
 import typer
 
+from ax import glue
 from ax import search as search_module
 from ax import sync as sync_module
 from ax import usage as usage_module
@@ -92,6 +96,78 @@ def _usage_json(w, f) -> dict:
     out = {**w.__dict__, "remaining": None if w.used is None else 100 - w.used}
     out["forecast"] = f.__dict__ if f else None
     return out
+
+
+hooks_app = typer.Typer(no_args_is_help=True, help="Claude Code and Codex hooks that sync.")
+schedule_app = typer.Typer(no_args_is_help=True, help="A launchd job that syncs every 30 min.")
+skills_app = typer.Typer(no_args_is_help=True, help="Link this repository's skills.")
+app.add_typer(hooks_app, name="hooks")
+app.add_typer(schedule_app, name="schedule")
+app.add_typer(skills_app, name="skills")
+_APPLY = typer.Option(False, "--apply", help="Make the changes; without it, only print them.")
+
+
+def _report(changes, apply: bool):
+    for change in changes:
+        if change.before == change.after:
+            typer.echo(f"unchanged {change.path}")
+        elif not apply:
+            # Only the changed lines: settings files can hold secrets in other keys.
+            typer.echo(f"would write {change.path}:")
+            diff = difflib.unified_diff(
+                (change.before or "").splitlines(), change.after.splitlines(), lineterm="", n=1
+            )
+            for line in list(diff)[2:]:
+                typer.echo(f"    {line}")
+    if apply:
+        for path in glue.apply(changes):
+            typer.echo(f"wrote {path} (previous version backed up beside it)")
+
+
+@hooks_app.command("install")
+def hooks_install(apply: bool = _APPLY):
+    """Run a background `ax sync` when a session ends or a turn stops, in both tools."""
+    _report(glue.plan_hooks(load(), ax=glue.ax_path()), apply)
+    if apply:
+        typer.echo("In Codex, run /hooks once to review and trust the new hooks.")
+
+
+@schedule_app.command("install")
+def schedule_install(
+    apply: bool = _APPLY,
+    with_vault: bool = typer.Option(False, help="Also commit and push the vault each run."),
+):
+    """Sync and record usage every 30 minutes with launchd, even with no session open."""
+    changes = glue.plan_schedule(
+        load(), ax=glue.ax_path(), launch_agents=glue.launch_agents_dir(), with_vault=with_vault
+    )
+    _report(changes, apply)
+    if apply:
+        domain = f"gui/{os.getuid()}"
+        subprocess.run(["launchctl", "bootout", domain, str(changes[0].path)], capture_output=True)
+        subprocess.run(["launchctl", "bootstrap", domain, str(changes[0].path)], check=True)
+        typer.echo(f"loaded {glue.LABEL}")
+
+
+@skills_app.command("link")
+def skills_link(
+    names: list[str] = typer.Argument(..., help="Skill folder names under skills/."),
+    apply: bool = _APPLY,
+):
+    """Symlink skills into ~/.claude/skills and ~/.agents/skills where none is installed."""
+    actions = glue.plan_skill_links(
+        load(), names=names, repo_skills=glue.repo_skills(), agents_skills=glue.agents_skills_dir()
+    )
+    for a in actions:
+        if a.kind == "conflict":
+            typer.echo(f"skip {a.name} for {a.tool}: {a.reason}")
+        elif a.kind == "linked":
+            typer.echo(f"already linked {a.target}")
+        elif not apply:
+            typer.echo(f"would link {a.target} -> {a.source}")
+    if apply:
+        for target in glue.apply_links(actions):
+            typer.echo(f"linked {target}")
 
 
 @vault_app.command("init")
