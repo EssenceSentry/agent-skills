@@ -11,6 +11,7 @@ import typer
 
 from ax import exp as exp_module
 from ax import glue
+from ax import jobs as jobs_module
 from ax import runs as runs_module
 from ax import search as search_module
 from ax import sync as sync_module
@@ -595,3 +596,170 @@ def _claude_retention(settings) -> int | None:
     except (OSError, ValueError, AttributeError):
         return None
     return value if isinstance(value, int) else None
+
+
+job_app = typer.Typer(no_args_is_help=True, help="Long jobs any agent can register and wait on.")
+app.add_typer(job_app, name="job")
+_JSON = typer.Option(False, "--json", help="Machine-readable output.")
+
+
+def _jobs_config():
+    return load()
+
+
+def _progress(job) -> str:
+    def fmt(value):
+        return f"{value:g}" if value is not None else "?"
+
+    if job.done is None and job.total is None:
+        return "-"
+    text = f"{fmt(job.done)}/{fmt(job.total)}" if job.total else fmt(job.done)
+    if job.done is not None and job.total:
+        text += f" ({100 * job.done / job.total:.0f}%)"
+    return f"{text} {job.unit}" if job.unit else text
+
+
+def _jobs_table(found) -> str:
+    lines = [f"{'key':<28} {'kind':<9} {'status':<8} {'progress':<20} {'updated':<9} stage"]
+    for j in found:
+        updated = _ago(jobs_module.parse_iso(j.updated))
+        flag = " ⚠ " + j.check_error if j.check_error else ""
+        lines.append(
+            f"{j.key[:28]:<28} {j.kind:<9} {j.status:<8} {_progress(j)[:20]:<20} "
+            f"{updated:<9} {j.stage or ''}{flag}"
+        )
+    return "\n".join(lines)
+
+
+def _no_such_job(key: str):
+    typer.echo(f"no job {key!r}; see `ax job ls --all`", err=True)
+    raise typer.Exit(69)
+
+
+def _job_or_exit(fn):
+    try:
+        return fn()
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+
+
+@job_app.command("new")
+def job_new(
+    key: str = typer.Argument(..., help="A short name for the job, used as its folder."),
+    total: float = typer.Option(None, help="Total units of work, if known."),
+    unit: str = typer.Option(None, help="What the counts measure, e.g. rows."),
+    label: str = typer.Option(None, help="A human description."),
+    as_json: bool = _JSON,
+):
+    """Register a job fed through its events file, and print that file's path.
+
+    Producers append one JSON object per line, e.g. {"done": 10} or {"status": "done"}.
+    """
+    config = _jobs_config()
+    job = _job_or_exit(lambda: jobs_module.new(config, key, total=total, unit=unit, label=label))
+    path = jobs_module.events_path(config, job.key)
+    if as_json:
+        typer.echo(json.dumps({"key": job.key, "events_file": str(path)}))
+    else:
+        typer.echo(str(path))
+
+
+@job_app.command("ls")
+def job_ls(
+    all_: bool = typer.Option(False, "--all", help="Include finished jobs."),
+    as_json: bool = _JSON,
+):
+    """Refresh active jobs and list them, most recently updated first."""
+    found = jobs_module.list_jobs(_jobs_config(), include_finished=all_)
+    if as_json:
+        typer.echo(json.dumps([j.to_dict() for j in found], indent=2))
+    else:
+        typer.echo(_jobs_table(found) if found else "no jobs")
+
+
+@job_app.command("show")
+def job_show(
+    key: str = typer.Argument(...),
+    events: int = typer.Option(10, help="How many recent events to include."),
+    as_json: bool = _JSON,
+):
+    """One job, refreshed, with its recent events."""
+    config = _jobs_config()
+    job = jobs_module.refresh(config, key)
+    if job is None:
+        _no_such_job(key)
+    recent = jobs_module.events(config, key, limit=events, latest=True) if events else []
+    data = {
+        **job.to_dict(),
+        "events_file": str(jobs_module.events_path(config, key)),
+        "events": recent,
+    }
+    if as_json:
+        typer.echo(json.dumps(data, indent=2))
+        return
+    for name in ("key", "kind", "ref", "label", "status", "stage", "message", "check_error"):
+        if data[name]:
+            typer.echo(f"{name:<12} {data[name]}")
+    typer.echo(f"{'progress':<12} {_progress(job)}")
+    typer.echo(f"{'updated':<12} {data['updated']}")
+    typer.echo(f"{'events file':<12} {data['events_file']}")
+    for event in recent:
+        typer.echo(f"  {event['ts']} {event['type']} {json.dumps(event['data'])}")
+
+
+@job_app.command("wait")
+def job_wait(
+    key: str = typer.Argument(...),
+    until: str = typer.Option(
+        "done,failed,stopped,ended", help="Statuses to stop at; add 'stalled' to stop on stalls."
+    ),
+    timeout: float = typer.Option(None, help="Give up after this many seconds (exit 124)."),
+    interval: float = typer.Option(15.0, help="Seconds between checks."),
+    stall_after: float = typer.Option(None, help="Seconds without change that count as stalled."),
+    as_json: bool = _JSON,
+):
+    """Block until the job ends; spends no tokens while waiting.
+
+    Exit codes: 0 done, 1 failed, 2 stopped or ended, 3 stalled, 124 timed out, 69 no such job.
+    """
+    wanted = {part.strip() for part in until.split(",") if part.strip()}
+    unknown = wanted - set(jobs_module.STATUSES) - {"stalled"}
+    if unknown:
+        typer.echo(f"unknown status in --until: {', '.join(sorted(unknown))}", err=True)
+        raise typer.Exit(2)
+    try:
+        outcome, job = jobs_module.wait(
+            _jobs_config(),
+            key,
+            until=wanted,
+            timeout=timeout,
+            interval=interval,
+            stall_after=stall_after,
+        )
+    except KeyError:
+        _no_such_job(key)
+    if as_json:
+        typer.echo(json.dumps({"outcome": outcome, "job": job.to_dict()}, indent=2))
+    else:
+        note = f" · {job.message}" if job.message else ""
+        typer.echo(f"{job.key}: {outcome} · {_progress(job)}{note}")
+    raise typer.Exit(jobs_module.WAIT_CODES.get(outcome, 1))
+
+
+@job_app.command("poll")
+def job_poll(as_json: bool = _JSON):
+    """Refresh every active job once (for a scheduler)."""
+    active = jobs_module.poll(_jobs_config())
+    if as_json:
+        typer.echo(json.dumps([j.to_dict() for j in active], indent=2))
+    else:
+        typer.echo(f"{len(active)} active")
+
+
+@job_app.command("forget")
+def job_forget(key: str = typer.Argument(...)):
+    """Drop a job and its folder in ax's data; nothing outside ax is touched."""
+    if not _job_or_exit(lambda: jobs_module.forget(_jobs_config(), key)):
+        _no_such_job(key)
+    typer.echo(f"forgot {key}")
