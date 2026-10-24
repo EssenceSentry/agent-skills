@@ -194,20 +194,40 @@ class Store:
             [(s.key, s.provider, s.version, kind, n) for kind, n in s.unknown.items()],
         )
 
-    def search(self, query: str, limit: int = 20) -> list[dict]:
-        """Full-text search over redacted message text, best matches first."""
+    def search(
+        self,
+        query: str,
+        limit: int = 20,
+        *,
+        provider: str | None = None,
+        project: str | None = None,
+        role: str | None = None,
+        since: str | None = None,
+    ) -> list[dict]:
+        """Full-text search over redacted message text, best matches first.
+
+        Every word must match; each is quoted so FTS5 syntax in a query is literal text.
+        """
         terms = " ".join('"' + t.replace('"', '""') + '"' for t in query.split())
         if not terms:
             return []
+        where, params = ["messages_fts MATCH ?"], [terms]
+        for column, value in (("s.provider", provider), ("s.project", project), ("m.role", role)):
+            if value:
+                where.append(f"{column} = ?")
+                params.append(value)
+        if since:
+            where.append("s.ended >= ?")
+            params.append(since)
         rows = self.db.execute(
-            """
-            SELECT m.session_key, m.role, m.ts, s.title, s.note_path,
-                   snippet(messages_fts, 0, '[', ']', '…', 12) AS snippet
+            f"""
+            SELECT m.session_key, m.role, m.ts, s.provider, s.project, s.title, s.started,
+                   s.note_path, snippet(messages_fts, 0, '[', ']', '…', 12) AS snippet
             FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid
             JOIN sessions s ON s.key = m.session_key
-            WHERE messages_fts MATCH ? ORDER BY rank LIMIT ?
+            WHERE {" AND ".join(where)} ORDER BY rank LIMIT ?
             """,
-            (terms, limit),
+            (*params, limit),
         ).fetchall()
         return [dict(r) for r in rows]
 

@@ -4,6 +4,7 @@ import json
 
 import typer
 
+from ax import search as search_module
 from ax import sync as sync_module
 from ax.config import load
 from ax.store import Store
@@ -32,6 +33,37 @@ def sync(quiet: bool = typer.Option(False, "--quiet", "-q", help="Print nothing 
         for error in report.errors:
             typer.echo(f"error: {error}", err=True)
     raise typer.Exit(1 if report.errors else 0)
+
+
+@app.command()
+def search(
+    query: str = typer.Argument(..., help="Words that must all appear in a message."),
+    provider: str = typer.Option(None, help="claude or codex."),
+    project: str = typer.Option(None, help="Project (git repository) name."),
+    role: str = typer.Option(None, help="user, assistant, tool, notice or message."),
+    since: str = typer.Option(None, help="YYYY-MM-DD or a period such as 7d or 2w."),
+    limit: int = typer.Option(10, help="Most sessions to return."),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output for agents."),
+):
+    """Find past sessions by what was said in them."""
+    try:
+        start = search_module.parse_since(since) if since else None
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--since") from None
+    hits = search_module.search(
+        load(), query, provider=provider, project=project, role=role, since=start, limit=limit
+    )
+    if as_json:
+        typer.echo(json.dumps(hits, indent=2, ensure_ascii=False))
+    elif not hits:
+        typer.echo("no matches")
+    for hit in [] if as_json else hits:
+        day = (hit["started"] or "")[:10]
+        typer.echo(f"{day} · {hit['provider']} · {hit['project']} · {hit['title']}")
+        typer.echo(f"    {hit['snippet']}")
+        if hit["note"]:
+            typer.echo(f"    {hit['note']}")
+    raise typer.Exit(0 if hits else 1)
 
 
 @app.command()
