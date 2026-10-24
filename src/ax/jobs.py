@@ -472,8 +472,10 @@ def apply(db, job: Job, update: Update, ts: str) -> None:
     job.updated = ts
 
 
-def refresh(config, key, *, now: datetime | None = None, force: bool = False) -> Job | None:
-    """Read new events-file lines and, when due, ask the job's source.
+def refresh(
+    config, key, *, now: datetime | None = None, force: bool = False, check: bool = True
+) -> Job | None:
+    """Read new events-file lines and, when due and `check` allows, ask the job's source.
 
     Local checks run inside the write transaction. An AWS check can take a minute, so
     it runs outside it: the job is claimed by stamping `checked`, which keeps other
@@ -493,7 +495,12 @@ def refresh(config, key, *, now: datetime | None = None, force: bool = False) ->
             lines, job.offset = read_lines(events_path(config, key), job.offset)
             for update in lines:
                 apply(db, job, update, ts)
-            due = job.kind in CHECKED_KINDS and not job.terminal and (force or _due(job, now))
+            due = (
+                check
+                and job.kind in CHECKED_KINDS
+                and not job.terminal
+                and (force or _due(job, now))
+            )
             slow = due and job_sources.MIN_INTERVAL.get(job.kind, 0) > 0
             if due:
                 job.checked = ts

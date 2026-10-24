@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 import typer
 
 from ax import exp as exp_module
-from ax import glue, job_eta, job_follow, job_wake
+from ax import glue, job_eta, job_follow, job_service, job_wake
 from ax import jobs as jobs_module
 from ax import profile as profile_module
 from ax import runs as runs_module
@@ -900,13 +900,65 @@ def job_wait(
 
 
 @job_app.command("poll")
-def job_poll(as_json: bool = _JSON):
+def job_poll(
+    background: bool = typer.Option(
+        False,
+        "--background",
+        help="The service's pass: skip followed jobs, restart dead followers, and check "
+        "AWS only for jobs with a named profile.",
+    ),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Print only what changed."),
+    as_json: bool = _JSON,
+):
     """Refresh every active job once (for a scheduler)."""
-    active = jobs_module.poll(_jobs_config())
+    config = _jobs_config()
+    if not background:
+        active = jobs_module.poll(config)
+        if as_json:
+            typer.echo(json.dumps([j.to_dict() for j in active], indent=2))
+        elif not quiet:
+            typer.echo(f"{len(active)} active")
+        return
+    found = job_service.tick(config)
     if as_json:
-        typer.echo(json.dumps([j.to_dict() for j in active], indent=2))
-    else:
-        typer.echo(f"{len(active)} active")
+        typer.echo(json.dumps(found, indent=2))
+        return
+    for name in ("revived", "gave_up"):
+        if found[name]:
+            typer.echo(f"{jobs_module.now_iso()} {name}: {', '.join(found[name])}")
+    if not quiet:
+        typer.echo(", ".join(f"{len(keys)} {name}" for name, keys in found.items()))
+
+
+@job_app.command("service")
+def job_service_cmd(
+    apply: bool = typer.Option(False, "--apply", help="Write and load it; otherwise preview."),
+    remove: bool = typer.Option(False, "--remove", help="Unload and delete it."),
+):
+    """Run `ax job poll --background` every minute with launchd (com.ax.jobs)."""
+    config = _jobs_config()
+    path = glue.launch_agents_dir() / f"{glue.JOBS_LABEL}.plist"
+    domain = f"gui/{os.getuid()}"
+    if remove:
+        if not apply:
+            typer.echo(
+                f"would unload and delete {path}"
+                if path.exists()
+                else f"nothing would change: {path} is not there"
+            )
+            return
+        subprocess.run(["launchctl", "bootout", domain, str(path)], capture_output=True)
+        path.unlink(missing_ok=True)
+        typer.echo(f"removed {glue.JOBS_LABEL}")
+        return
+    changes = glue.plan_jobs_service(
+        config, ax=glue.ax_path(), launch_agents=glue.launch_agents_dir()
+    )
+    _report(changes, apply)
+    if apply:
+        subprocess.run(["launchctl", "bootout", domain, str(path)], capture_output=True)
+        subprocess.run(["launchctl", "bootstrap", domain, str(path)], check=True)
+        typer.echo(f"loaded {glue.JOBS_LABEL}")
 
 
 @job_app.command("eta-report")
@@ -952,18 +1004,20 @@ def job_follow_cmd(
     interval: float = typer.Option(3.0, help="Seconds between refreshes."),
     detach: bool = typer.Option(False, "--detach", help="Run in the background; print the link."),
     wake: str = _WAKE,
+    resumed: bool = typer.Option(
+        False, "--resumed", hidden=True, help="Restarted by the poller: send nothing twice."
+    ),
     as_json: bool = _JSON,
 ):
     """Follow a job: a mini dashboard, optional sharing, ntfy messages and a wake-up at the end."""
     config = _jobs_config()
+    options = job_follow.FollowOptions(
+        share=share, notify=notify, every=every * 60, notify_stages=notify_stages,
+        stall_after=None if stall_after is None else stall_after * 60, linger=linger,
+        show_log=show_log, interval=interval, port=port, wake=wake, resumed=resumed,
+    )  # fmt: skip
     if detach:
-        args = ["--share", share, "--every", str(every), "--linger", str(linger)]
-        args += ["--port", str(port), "--interval", str(interval)]
-        args += ["--notify"] if notify else []
-        args += ["--notify-stages"] if notify_stages else []
-        args += ["--show-log"] if show_log else []
-        args += ["--stall-after", str(stall_after)] if stall_after is not None else []
-        args += ["--wake", wake] if wake else []
+        args = job_follow.options_args(options)
         if jobs_module.get(config, key) is None:
             _no_such_job(key)
         try:
@@ -973,11 +1027,6 @@ def job_follow_cmd(
             raise typer.Exit(2) from None
         typer.echo(json.dumps(info, indent=2) if as_json else info["link"])
         return
-    options = job_follow.FollowOptions(
-        share=share, notify=notify, every=every * 60, notify_stages=notify_stages,
-        stall_after=None if stall_after is None else stall_after * 60, linger=linger,
-        show_log=show_log, interval=interval, port=port, wake=wake,
-    )  # fmt: skip
 
     def ready(info):
         typer.echo(json.dumps(info) if as_json else f"dashboard: {info['link']}", err=not as_json)

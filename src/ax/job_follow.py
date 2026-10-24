@@ -41,6 +41,30 @@ class FollowOptions:
     port: int = 0
     dashboard: bool = True
     wake: str | None = None  # auto, claude or codex: resume that session when the job ends
+    resumed: bool = False  # restarted by the poller: don't repeat what was already sent
+
+
+def options_args(options: FollowOptions) -> list[str]:
+    """The `ax job follow` arguments that recreate these options."""
+    args = ["--share", options.share, "--every", str(options.every / 60)]
+    args += ["--linger", str(options.linger), "--interval", str(options.interval)]
+    args += ["--port", str(options.port)]
+    args += ["--notify"] if options.notify else []
+    args += ["--notify-stages"] if options.notify_stages else []
+    args += ["--show-log"] if options.show_log else []
+    if options.stall_after is not None:
+        args += ["--stall-after", str(options.stall_after / 60)]
+    args += ["--wake", options.wake] if options.wake else []
+    args += ["--resumed"] if options.resumed else []
+    return args
+
+
+def _already(config, key: str, type_: str, title: str | None = None) -> bool:
+    """Whether the job's history already holds this event, so a restart won't repeat it."""
+    return any(
+        e["type"] == type_ and (title is None or e["data"].get("title") == title)
+        for e in jobs.events(config, key, limit=200, latest=True)
+    )
 
 
 def follower_path(config, key: str):
@@ -135,6 +159,8 @@ def follow(
     def wake(job) -> None:
         if not options.wake or waker is None:
             return
+        if options.resumed and _already(config, key, "woke"):
+            return
         from ax.job_wake import WakeError
 
         try:
@@ -174,7 +200,10 @@ def follow(
         link = links.get("public") or links.get("lan") or links.get("local")
         if on_ready:
             on_ready(running(config, key) or {"link": link, **links})
-        notify(job_notify.started(job, link, _eta(config, job, options)))
+        if not options.resumed:
+            notify(job_notify.started(job, link, _eta(config, job, options)))
+        elif "public" in links and not job.terminal:
+            notify(job_notify.link_changed(job, link))
         relink = server.link if options.dashboard else None
         return _loop(
             config, key, options, job, link, links, share, relink, notify, wake, stopping, clock,
@@ -215,7 +244,9 @@ def _loop(
         if job.terminal:
             if end_at is None:
                 end_at = now
-                notify(job_notify.finished(job, link))
+                message = job_notify.finished(job, link)
+                if not (options.resumed and _already(config, key, "notified", message["title"])):
+                    notify(message)
                 wake(job)
             if now - end_at >= options.linger:
                 break

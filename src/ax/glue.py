@@ -17,6 +17,7 @@ from pathlib import Path
 from ax.config import Config
 
 LABEL = "com.ax.sync"
+JOBS_LABEL = "com.ax.jobs"
 _EVENTS = ("SessionEnd", "Stop")
 # Codex gives SessionEnd hooks at most 3 seconds; ours only starts a background sync.
 _TIMEOUT = {"claude": 5, "codex": 3}
@@ -126,6 +127,23 @@ def plan_schedule(
         "StandardErrorPath": log,
     }
     path = launch_agents / f"{LABEL}.plist"
+    before = path.read_text() if path.exists() else None
+    return [Change(path, before, plistlib.dumps(plist).decode())]
+
+
+def plan_jobs_service(config: Config, *, ax: str, launch_agents: Path) -> list[Change]:
+    """A launchd agent that refreshes unfollowed jobs and restarts dead followers each minute."""
+    log = str(config.data / "jobs-service.log")
+    plist = {
+        "Label": JOBS_LABEL,
+        "ProgramArguments": [ax, "job", "poll", "--background", "--quiet"],
+        "StartInterval": 60,
+        "EnvironmentVariables": {"PATH": _launchd_path()},
+        "RunAtLoad": True,
+        "StandardOutPath": log,
+        "StandardErrorPath": log,
+    }
+    path = launch_agents / f"{JOBS_LABEL}.plist"
     before = path.read_text() if path.exists() else None
     return [Change(path, before, plistlib.dumps(plist).decode())]
 
