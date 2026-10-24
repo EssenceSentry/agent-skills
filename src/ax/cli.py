@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 import typer
 
 from ax import exp as exp_module
-from ax import glue, job_follow
+from ax import glue, job_eta, job_follow
 from ax import jobs as jobs_module
 from ax import profile as profile_module
 from ax import runs as runs_module
@@ -877,6 +877,24 @@ def job_poll(as_json: bool = _JSON):
         typer.echo(json.dumps([j.to_dict() for j in active], indent=2))
     else:
         typer.echo(f"{len(active)} active")
+
+
+@job_app.command("eta-report")
+def job_eta_report(as_json: bool = _JSON):
+    """How often finished jobs landed inside their 80% finish-time intervals."""
+    found = job_eta.report(_jobs_config())
+    if as_json:
+        typer.echo(json.dumps(found, indent=2))
+        return
+    if not found["predictions"]:
+        typer.echo("no finished job has stored estimates yet")
+        return
+    error = found["median_error_s"]
+    typer.echo(
+        f"coverage {found['coverage']:.0%} of {found['predictions']} predictions over "
+        f"{found['jobs']} jobs (target {found['target']:.0%}): {found['verdict']}"
+        + (f"; median miss {job_eta.duration_text(error)}" if error is not None else "")
+    )
 
 
 @job_app.command("forget")

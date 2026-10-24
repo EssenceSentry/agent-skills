@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS events (
     data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_key ON events(key, seq);
+CREATE INDEX IF NOT EXISTS events_type ON events(key, type, seq);
 """
 
 
@@ -474,9 +475,10 @@ def refresh(config, key, *, now: datetime | None = None, force: bool = False) ->
     Local checks run inside the write transaction. An AWS check can take a minute, so
     it runs outside it: the job is claimed by stamping `checked`, which keeps other
     refreshes from repeating the call, and the answer is applied in a second
-    transaction.
+    transaction. Either way the refresh ends by storing a finish-time estimate when
+    the last one is five minutes old.
     """
-    from ax import job_sources
+    from ax import job_eta, job_sources
 
     now = now or datetime.now(UTC)
     ts = now_iso(now)
@@ -495,6 +497,8 @@ def refresh(config, key, *, now: datetime | None = None, force: bool = False) ->
                 if not slow:
                     _record_check(db, job, ts, *_run_check(job, now))
             _save(db, job)
+            if not slow:
+                job_eta.record(db, job, now)
         if not slow:
             return job
         checked = Job(**{**asdict(job), "spec": copy.deepcopy(job.spec)})
@@ -508,6 +512,7 @@ def refresh(config, key, *, now: datetime | None = None, force: bool = False) ->
                     job.spec = checked.spec
                 _record_check(db, job, ts, updates, error)
                 _save(db, job)
+                job_eta.record(db, job, now)
             return job
 
 
