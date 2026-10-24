@@ -1,0 +1,6 @@
+{
+  "agentType": "general-purpose",
+  "description": "Review the retry change",
+  "spawnDepth": 1,
+  "toolUseId": "toolu_agent"
+}
