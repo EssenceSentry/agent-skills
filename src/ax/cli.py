@@ -65,7 +65,11 @@ def usage_guard(
     config = usage_module.load_config()
     if min_remaining is None:
         min_remaining = usage_module.reserve_for(config, provider, window)
-    code = usage_module.guard(_windows(config, cached), provider, window, min_remaining)
+    try:
+        code = usage_module.guard(_windows(config, cached), provider, window, min_remaining)
+    except Exception as exc:  # a failure must read as unknown, never as below threshold
+        typer.echo(f"{provider} {window}: unknown ({type(exc).__name__}: {exc})")
+        raise typer.Exit(usage_module.UNKNOWN) from None
     verdict = {0: "safe", 1: "below threshold", 69: "unknown"}[code]
     typer.echo(f"{provider} {window}: {verdict} (needs {min_remaining:g}% left)")
     raise typer.Exit(code)
@@ -76,7 +80,9 @@ def _usage_line(w, f, now) -> str:
     if w.used is None:
         return f"{head} unknown ({w.status})"
     line = f"{head} {w.used:.0f}% used · {100 - w.used:.0f}% left"
-    if w.resets_at:
+    if w.resets_at and w.resets_at <= now:
+        line += " · reset passed"
+    elif w.resets_at:
         left = w.resets_at - now
         hours = int(left.total_seconds() // 3600)
         line += f" · resets {w.resets_at.astimezone():%a %H:%M} (in {hours // 24}d {hours % 24}h)"
@@ -85,6 +91,8 @@ def _usage_line(w, f, now) -> str:
             low, high = round(f.projected_low), round(f.projected_high)
             pace = f"{low}%" if low == high else f"{low}–{high}%"
             line += f" · on pace for {pace} at reset"
+        elif f.runs_out_at and f.runs_out_at <= now:
+            line += " · may already have run out"
         elif f.runs_out_at:
             line += f" · may run out {f.runs_out_at.astimezone():%a %H:%M}"
     if w.status != "fresh":

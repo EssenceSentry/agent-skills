@@ -7,7 +7,9 @@ the logs without a network call. Readings are stored, and the forecast is a
 range between two burn rates: since the window began and over the last hours.
 """
 
+import contextlib
 import json
+import sqlite3
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -23,6 +25,8 @@ from ax.store import Store
 # Guard exit codes, the same as CodexBar's `codexbar guard`.
 SAFE, BELOW, UNKNOWN = 0, 1, 69
 _RECENT = timedelta(hours=3)
+# Older readings tell a guard nothing: the allowance may have been used since.
+MAX_AGE = timedelta(hours=6)
 _MIN_SPAN = timedelta(minutes=10)
 _CLAUDE_WINDOWS = {"five_hour": ("session", 300), "weekly_all": ("weekly", 10080)}
 _CLAUDE_WINDOWS["weekly_fable"] = ("weekly_fable", 10080)
@@ -62,7 +66,7 @@ def claude_windows(config: Config, *, refresh: bool = True, timeout: int = 60) -
         report = json.loads(result.stdout)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return [Window("claude", "weekly", None, None, None, "unavailable", 10080)]
-    observed = parse_ts(report.get("fetched_at"))
+    observed = _aware(parse_ts(report.get("fetched_at")))
     windows = []
     for key, (name, minutes) in _CLAUDE_WINDOWS.items():
         row = report.get("windows", {}).get(key) or {}
@@ -73,7 +77,7 @@ def claude_windows(config: Config, *, refresh: bool = True, timeout: int = 60) -
                 "claude",
                 name,
                 row.get("reported_used_percent"),
-                parse_ts(row.get("resets_at")),
+                _aware(parse_ts(row.get("resets_local") or row.get("resets_at"))),
                 observed,
                 row.get("status") or "unavailable",
                 minutes,
@@ -85,7 +89,7 @@ def claude_windows(config: Config, *, refresh: bool = True, timeout: int = 60) -
 def codex_windows(codex_home: Path, *, now: datetime | None = None) -> list[Window]:
     """The newest rate-limit report in Codex's own rollouts."""
     now = now or datetime.now(UTC)
-    rollouts = sorted(codex_rollouts(codex_home), key=lambda p: p.stat().st_mtime, reverse=True)
+    rollouts = sorted(codex_rollouts(codex_home), key=_mtime, reverse=True)
     for path in rollouts[:30]:
         latest = _latest_rate_limits(path)
         if latest:
@@ -116,7 +120,8 @@ def forecast(
         rates.append(max(0.0, (recent[-1][1] - recent[0][1]) / hours))
     if not rates:
         return None
-    hours_left = max(0.0, (window.resets_at - now).total_seconds() / 3600)
+    # Everything is projected from the reading itself, so a stale reading stays consistent.
+    hours_left = max(0.0, (window.resets_at - window.observed_at).total_seconds() / 3600)
     low, high = min(rates), max(rates)
     projected_high = window.used + high * hours_left
     runs_out = None
@@ -127,15 +132,32 @@ def forecast(
     )
 
 
-def guard(windows: list[Window], provider: str, name: str, min_remaining: float) -> int:
+def guard(
+    windows: list[Window],
+    provider: str,
+    name: str,
+    min_remaining: float,
+    *,
+    now: datetime | None = None,
+    max_age: timedelta = MAX_AGE,
+) -> int:
     """SAFE when at least `min_remaining` percent is left, BELOW when not, UNKNOWN otherwise."""
+    now = now or datetime.now(UTC)
     window = next((w for w in windows if w.provider == provider and w.name == name), None)
     if not window or window.used is None or window.status not in ("fresh", "stale"):
+        return UNKNOWN
+    if window.observed_at is None or now - window.observed_at > max_age:
         return UNKNOWN
     return SAFE if 100 - window.used >= min_remaining else BELOW
 
 
 def record(config: Config, windows: list[Window]) -> None:
+    """Store readings for forecasts; skipped, not fatal, while a sync holds the database."""
+    with contextlib.suppress(sqlite3.Error):
+        _record(config, windows)
+
+
+def _record(config: Config, windows: list[Window]) -> None:
     with Store(config.db_path) as store:
         for w in windows:
             if w.used is not None and w.observed_at is not None:
@@ -194,6 +216,18 @@ def _codex_window(limit: dict, observed: datetime, now: datetime) -> Window:
         status,
         minutes if isinstance(minutes, int) else None,
     )
+
+
+def _aware(ts: datetime | None) -> datetime | None:
+    """A time without a zone can't be placed; treat it as unknown, as the Claude helper does."""
+    return ts if ts and ts.tzinfo else None
+
+
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:  # compressed or archived since it was listed
+        return 0.0
 
 
 def _repo_root() -> Path:

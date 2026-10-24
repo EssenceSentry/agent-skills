@@ -92,7 +92,7 @@ def test_a_recent_burst_widens_the_forecast_and_predicts_running_out():
 )
 def test_guard_exit_codes_follow_codexbar(used, status, expected):
     windows = [usage.Window("claude", "weekly", used, NOW + timedelta(days=1), NOW, status)]
-    assert usage.guard(windows, "claude", "weekly", min_remaining=20) == expected
+    assert usage.guard(windows, "claude", "weekly", min_remaining=20, now=NOW) == expected
 
 
 def test_snapshots_are_stored_once_per_reading(usage_env):
@@ -118,3 +118,52 @@ def test_usage_guard_command_exits_with_the_guard_code(usage_env, monkeypatch):
         app, ["usage", "guard", "--provider", "claude", "--min-remaining", "50", "--cached"]
     )
     assert (ok.exit_code, low.exit_code) == (0, 1)
+
+
+def test_an_old_reading_is_unknown_to_the_guard():
+    old = usage.Window(
+        "claude", "weekly", 10.0, NOW + timedelta(days=1), NOW - timedelta(days=6), "stale"
+    )
+    assert usage.guard([old], "claude", "weekly", min_remaining=20, now=NOW) == usage.UNKNOWN
+
+
+def test_the_guard_command_reports_unknown_when_reading_fails(usage_env, monkeypatch):
+    monkeypatch.setattr(usage, "load_config", lambda: usage_env)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(usage, "claude_windows", broken)
+    result = runner.invoke(app, ["usage", "guard", "--provider", "claude", "--cached"])
+    assert result.exit_code == usage.UNKNOWN
+
+
+def test_a_reset_time_without_a_timezone_is_dropped(usage_env):
+    cache = json.loads(usage_env.claude_json.read_text())
+    limits = cache["cachedUsageUtilization"]["utilization"]["limits"]
+    limits[0]["resets_at"] = "2026-10-25T00:00:00"
+    usage_env.claude_json.write_text(json.dumps(cache))
+    for window in usage.claude_windows(usage_env, refresh=False):
+        assert window.resets_at is None or window.resets_at.tzinfo is not None
+
+
+def test_forecast_is_anchored_at_the_reading_not_at_now():
+    seen = NOW - timedelta(days=1)
+    window = usage.Window("codex", "weekly", 40.0, NOW + timedelta(days=3), seen, "stale", 10080)
+    history = [(seen - timedelta(hours=2), 30.0), (seen, 40.0)]
+    forecast = usage.forecast(window, history=history, now=NOW)
+    assert forecast.runs_out_at == seen + timedelta(hours=12)
+
+
+def test_lines_say_when_a_reset_has_passed_or_the_allowance_may_be_gone():
+    from ax.cli import _usage_line
+
+    window = usage.Window(
+        "codex", "weekly", 40.0, NOW - timedelta(hours=1), NOW - timedelta(days=1), "reset_passed"
+    )
+    assert "reset passed" in _usage_line(window, None, NOW)
+    gone = usage.Forecast(1, 5, 50, 500, NOW - timedelta(hours=3), False)
+    live = usage.Window(
+        "codex", "weekly", 40.0, NOW + timedelta(days=1), NOW - timedelta(days=1), "stale"
+    )
+    assert "may already have run out" in _usage_line(live, gone, NOW)
