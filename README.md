@@ -19,10 +19,21 @@ indexes it in SQLite and writes one readable Markdown note per session into an
 Obsidian vault. It only reads the tools' own session folders. See
 [PLAN.md](PLAN.md) for the design and what comes next.
 
-```bash
-uv run ax sync     # archive new and changed sessions
-uv run ax doctor   # retention, vault, last sync and format-drift checks
-```
+Install it once with `uv tool install --editable .` from this checkout.
+
+| Command | What it does |
+| --- | --- |
+| `ax sync` | Archive new and changed sessions into the vault |
+| `ax doctor` | Check retention, the vault, the last sync and format drift |
+| `ax search "words" [--json]` | Find past sessions by what was said in them |
+| `ax usage` / `ax usage guard` | Allowance left per tool and window, a forecast to reset, and a guard for scripts (exit 0 safe, 1 below, 69 unknown) |
+| `ax vault init` / `commit` / `push` | Starter Obsidian views; a commit gitleaks has scanned; a push only to a private GitHub repo |
+| `ax hooks install` | Hooks in Claude Code and Codex that sync when a session ends |
+| `ax schedule install` | A launchd job that syncs every 30 minutes |
+| `ax skills link NAME…` | Link this repository's skills into both tools |
+
+The last three print what they would change and do nothing without
+`--apply`.
 
 Paths default to `~/.claude`, `~/.codex`, `~/Vaults/agents` and
 `~/.local/share/ax`; override them in `~/.config/ax/config.toml` (`[paths]`),

@@ -14,9 +14,17 @@ Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
   - A rollout's own id is the last UUID in its file name.
   - Codex ids are time-ordered, so note names use the id's tail.
   - Agent-to-agent `agent_message` items are rendered as quoted messages.
+- **Steps 2–5 built 2026-10-24.**
+  - `ax search` and the `session-recall` skill.
+  - `ax vault init/commit/push`:
+    - The first real scan of 1,887 notes found 3 false positives, all content hashes; a narrow allowlist covers them.
+    - The vault commit is local only, not pushed yet.
+  - `ax usage` and `ax usage guard`. On a Team seat, Claude's allowance comes from `/usage`; Codex's comes from rollout logs.
+  - `ax hooks install`, `ax schedule install` and `ax skills link` are dry-run-first. They are not applied yet.
 - **Next:**
-  - Step 3: Bases views, gitleaks and the vault push guard, first content push.
-  - Then the remaining steps.
+  - Push the vault and the `ax-workbench` branch.
+  - Apply hooks, the schedule and the skill links.
+  - Then steps 6–8: runs, research ledger, dashboard.
 
 ## Goal
 
