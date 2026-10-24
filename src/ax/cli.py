@@ -127,8 +127,10 @@ def _report(changes, apply: bool):
             for line in list(diff)[2:]:
                 typer.echo(f"    {line}")
     if apply:
+        existed = {c.path for c in changes if c.before is not None}
         for path in glue.apply(changes):
-            typer.echo(f"wrote {path} (previous version backed up beside it)")
+            note = "previous version backed up beside it" if path in existed else "created"
+            typer.echo(f"wrote {path} ({note})")
 
 
 def _visible(change) -> tuple[list[str], list[str]]:

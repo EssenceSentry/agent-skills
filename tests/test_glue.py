@@ -149,3 +149,17 @@ def test_the_hooks_dry_run_shows_only_hooks(env):
     result = CliRunner().invoke(app, ["hooks", "install"], env={"AX_CONFIG": str(env.config_path)})
     assert "would write" in result.output
     assert "sekret-value-123" not in result.output
+
+
+def test_apply_only_mentions_a_backup_when_one_was_made(env):
+    from typer.testing import CliRunner
+
+    from ax.cli import app
+
+    (env.claude_home / "settings.json").write_text("{}")
+    result = CliRunner().invoke(
+        app, ["hooks", "install", "--apply"], env={"AX_CONFIG": str(env.config_path)}
+    )
+    lines = result.output.splitlines()
+    assert any("settings.json" in line and "backed up" in line for line in lines)
+    assert any("hooks.json" in line and "created" in line for line in lines)
