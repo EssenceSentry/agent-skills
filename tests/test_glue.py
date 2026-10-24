@@ -129,3 +129,23 @@ def test_install_commands_are_dry_runs_by_default(env, monkeypatch):
     links = runner.invoke(app, ["skills", "link", "session-recall"], env=environment)
     assert links.exit_code == 0, links.output
     assert "would link" in links.output
+
+
+def test_the_schedule_finds_homebrew_and_user_tools():
+    from ax.config import load
+
+    config = load("/nonexistent/config.toml")
+    [change] = glue.plan_schedule(config, ax=AX, launch_agents=config.data)
+    path = plistlib.loads(change.after.encode())["EnvironmentVariables"]["PATH"]
+    assert "/opt/homebrew/bin" in path and ".local/bin" in path
+
+
+def test_the_hooks_dry_run_shows_only_hooks(env):
+    from typer.testing import CliRunner
+
+    from ax.cli import app
+
+    (env.claude_home / "settings.json").write_text('{"env":{"TOKEN":"sekret-value-123"}}')
+    result = CliRunner().invoke(app, ["hooks", "install"], env={"AX_CONFIG": str(env.config_path)})
+    assert "would write" in result.output
+    assert "sekret-value-123" not in result.output

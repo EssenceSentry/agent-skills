@@ -81,6 +81,8 @@ def plan_schedule(
         "Label": LABEL,
         "ProgramArguments": ["/bin/sh", "-c", "; ".join(steps)],
         "StartInterval": 1800,
+        # launchd starts jobs with /usr/bin:/bin only; gitleaks, gh and ax live elsewhere.
+        "EnvironmentVariables": {"PATH": _launchd_path()},
         "RunAtLoad": True,
         "StandardOutPath": log,
         "StandardErrorPath": log,
@@ -88,6 +90,11 @@ def plan_schedule(
     path = launch_agents / f"{LABEL}.plist"
     before = path.read_text() if path.exists() else None
     return [Change(path, before, plistlib.dumps(plist).decode())]
+
+
+def _launchd_path() -> str:
+    dirs = [Path.home() / ".local/bin", "/opt/homebrew/bin", "/usr/local/bin"]
+    return ":".join([*map(str, dirs), "/usr/bin", "/bin", "/usr/sbin", "/sbin"])
 
 
 def apply(changes: list[Change]) -> list[Path]:

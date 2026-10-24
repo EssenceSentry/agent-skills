@@ -122,14 +122,25 @@ def _report(changes, apply: bool):
         elif not apply:
             # Only the changed lines: settings files can hold secrets in other keys.
             typer.echo(f"would write {change.path}:")
-            diff = difflib.unified_diff(
-                (change.before or "").splitlines(), change.after.splitlines(), lineterm="", n=1
-            )
+            before, after = _visible(change)
+            diff = difflib.unified_diff(before, after, lineterm="", n=1)
             for line in list(diff)[2:]:
                 typer.echo(f"    {line}")
     if apply:
         for path in glue.apply(changes):
             typer.echo(f"wrote {path} (previous version backed up beside it)")
+
+
+def _visible(change) -> tuple[list[str], list[str]]:
+    """The lines to show: for a JSON settings file, only its `hooks` key."""
+    if change.path.suffix != ".json":
+        return (change.before or "").splitlines(), change.after.splitlines()
+
+    def hooks(text):
+        value = json.loads(text).get("hooks", {}) if text else {}
+        return json.dumps({"hooks": value}, indent=2).splitlines()
+
+    return hooks(change.before), hooks(change.after)
 
 
 @hooks_app.command("install")
