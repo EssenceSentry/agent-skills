@@ -1154,6 +1154,61 @@ def scorecard_cmd(
     typer.echo(json.dumps(card, indent=2) if as_json else scorecard.text(card))
 
 
+lab_app = typer.Typer(no_args_is_help=True, help="Replay evals that test the profile.")
+app.add_typer(lab_app, name="lab")
+
+
+@lab_app.command("build")
+def lab_build():
+    """Package the profile as a plugin and seed the starter cases."""
+    from ax import lab
+
+    root = lab.build(load())
+    cases = sorted(p.parent.name for p in (root / "evals").glob("*/prompt.md"))
+    typer.echo(f"{root} · {len(cases)} cases: {', '.join(cases)}")
+
+
+@lab_app.command("cut")
+def lab_cut(
+    session: str = typer.Argument(..., help="A Claude session id, or its start."),
+    turn: int = typer.Option(..., help="Which request (1 = the first) becomes the prompt."),
+    name: str = typer.Option(..., help="The case's folder name."),
+    rubric: str = typer.Option(
+        None, help="The grader's PASS/FAIL rubric; default: the next message."
+    ),
+):
+    """Make a case from a past Claude session, cut just before one of its requests."""
+    from ax import lab
+
+    try:
+        case = lab.cut(load(), session, turn=turn, name=name, rubric=rubric)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"wrote {case}; read graders/avoids-correction.md before running it")
+
+
+@lab_app.command("run")
+def lab_run(
+    runs: int = typer.Option(1, help="Runs per case and arm."),
+    model: str = typer.Option("sonnet", help="The model under test."),
+    max_cost: float = typer.Option(5.0, help="Stop once this many dollars are spent."),
+    case: str = typer.Option(None, help="Only cases whose name matches this glob."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the command; run nothing."),
+):
+    """Run the cases with and without the profile plugin, and print the scores."""
+    from ax import lab
+
+    config = load()
+    lab.build(config)
+    options = {"runs": runs, "model": model, "max_cost": max_cost, "case": case}
+    if dry_run:
+        typer.echo(shlex.join(lab.command(config, **options)))
+        return
+    result = lab.run(config, **options)
+    typer.echo(json.dumps(result.get("summary", result), indent=2)[:4000])
+
+
 learn_app = typer.Typer(
     no_args_is_help=True, help="Propose profile rules from your corrections, for approval."
 )
