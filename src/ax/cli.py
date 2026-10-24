@@ -851,11 +851,15 @@ def job_wait(
     timeout: float = typer.Option(None, help="Give up after this many seconds (exit 124)."),
     interval: float = typer.Option(15.0, help="Seconds between checks."),
     stall_after: float = typer.Option(None, help="Seconds without change that count as stalled."),
+    error_after: float = typer.Option(
+        600.0, help="Give up after the job's check has failed this long (exit 4); 0 never."
+    ),
     as_json: bool = _JSON,
 ):
     """Block until the job ends; spends no tokens while waiting.
 
-    Exit codes: 0 done, 1 failed, 2 stopped or ended, 3 stalled, 124 timed out, 69 no such job.
+    Exit codes: 0 done, 1 failed, 2 stopped or ended, 3 stalled, 4 its check kept failing,
+    124 timed out, 69 no such job.
     """
     wanted = {part.strip() for part in until.split(",") if part.strip()}
     unknown = wanted - set(jobs_module.STATUSES) - {"stalled"}
@@ -870,6 +874,7 @@ def job_wait(
             timeout=timeout,
             interval=interval,
             stall_after=stall_after,
+            error_after=error_after or None,
         )
     except KeyError:
         _no_such_job(key)
@@ -877,6 +882,8 @@ def job_wait(
         typer.echo(json.dumps({"outcome": outcome, "job": job.to_dict()}, indent=2))
     else:
         note = f" · {job.message}" if job.message else ""
+        if outcome == "check_error":
+            note = f" · {job.check_error}"
         typer.echo(f"{job.key}: {outcome} · {_progress(job)}{note}")
     raise typer.Exit(jobs_module.WAIT_CODES.get(outcome, 1))
 

@@ -163,6 +163,46 @@ def test_waiting_for_stalled_turns_on_stall_detection(env):
     assert outcome == "stalled"
 
 
+def broken_file_job(env, tmp_path):
+    progress = tmp_path / "progress.json"
+    progress.write_text("{not json")
+    return jobs.watch(env.config, "file", str(progress), key="broken"), progress
+
+
+def test_wait_gives_up_when_the_check_keeps_failing(env, tmp_path):
+    job, _ = broken_file_job(env, tmp_path)
+    assert job.check_error
+    clock = FakeClock()
+    start = clock.now
+    outcome, job = jobs.wait(
+        env.config, "broken", interval=60, error_after=600, clock=clock, sleep=clock.sleep
+    )
+    assert outcome == "check_error" and "not valid JSON" in job.check_error
+    assert 600 <= clock.now - start < 700
+
+
+def test_a_check_that_recovers_keeps_the_wait_going(env, tmp_path):
+    _, progress = broken_file_job(env, tmp_path)
+    clock = FakeClock()
+
+    def sleep(seconds):
+        clock.sleep(seconds)
+        if clock.now - start >= 300:
+            progress.write_text(json.dumps({"status": "done"}))
+
+    start = clock.now
+    outcome, _ = jobs.wait(
+        env.config, "broken", interval=60, error_after=600, clock=clock, sleep=sleep
+    )
+    assert outcome == "done"
+
+
+def test_cli_wait_exits_4_on_a_failing_check(env, tmp_path):
+    broken_file_job(env, tmp_path)
+    result = cli(env, "wait", "broken", "--error-after", "0.1", "--interval", "0.05")
+    assert result.exit_code == 4 and "check_error" in result.output
+
+
 def test_wait_on_an_unknown_job_raises(env):
     with pytest.raises(KeyError):
         jobs.wait(env.config, "nope", timeout=0)

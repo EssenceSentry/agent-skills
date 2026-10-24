@@ -30,7 +30,10 @@ from ax.sources.common import project_name
 STATUSES = ("running", "done", "failed", "stopped", "ended")
 TERMINAL = frozenset({"done", "failed", "stopped", "ended"})
 # `ax job wait` exit codes; 69 (no such job) matches `ax usage guard`'s "unknown".
-WAIT_CODES = {"done": 0, "failed": 1, "stopped": 2, "ended": 2, "stalled": 3, "timeout": 124}
+WAIT_CODES = {
+    "done": 0, "failed": 1, "stopped": 2, "ended": 2, "stalled": 3, "check_error": 4,
+    "timeout": 124,
+}  # fmt: skip
 SOURCE_KINDS = ("file", "pid", "sagemaker", "seamless")
 # Kinds ax checks itself: the watchable sources plus `ax job run`, whose runner is a process.
 CHECKED_KINDS = (*SOURCE_KINDS, "run")
@@ -572,6 +575,7 @@ def wait(
     timeout: float | None = None,
     interval: float = 15.0,
     stall_after: float | None = None,
+    error_after: float | None = 600.0,
     clock=time.time,
     sleep=time.sleep,
 ) -> tuple[str, Job]:
@@ -579,15 +583,17 @@ def wait(
 
     A job that has ended returns at once even if `until` didn't name its status,
     since nothing else can happen to it. "stalled" in `until` turns on stall
-    detection after 30 minutes unless `stall_after` says otherwise.
+    detection after 30 minutes unless `stall_after` says otherwise. A source check
+    that keeps failing for `error_after` seconds, such as a mistyped SageMaker name
+    or expired credentials, ends the wait too, since waiting can't fix it.
 
-    Returns (outcome, job), where outcome is a status, "stalled" or "timeout".
-    Raises KeyError for an unknown job.
+    Returns (outcome, job), where outcome is a status, "stalled", "check_error" or
+    "timeout". Raises KeyError for an unknown job.
     """
     until = set(until or TERMINAL)
     if "stalled" in until and stall_after is None:
         stall_after = 1800.0
-    start = clock()
+    start, failing_since = clock(), None
     while True:
         now = clock()
         job = refresh(config, key, now=datetime.fromtimestamp(now, UTC))
@@ -601,6 +607,12 @@ def wait(
             and now - parse_iso(job.changed).timestamp() >= stall_after
         ):
             return "stalled", job
+        if job.check_error and error_after is not None:
+            failing_since = now if failing_since is None else failing_since
+            if now - failing_since >= error_after:
+                return "check_error", job
+        else:
+            failing_since = None
         if timeout is not None and now - start >= timeout:
             return "timeout", job
         pause = interval if timeout is None else min(interval, max(0.0, start + timeout - now))

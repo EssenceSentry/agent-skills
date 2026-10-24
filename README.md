@@ -56,8 +56,10 @@ job's own environment.
   - 1: failed;
   - 2: stopped or ended;
   - 3: stalled;
+  - 4: the source check kept failing for `--error-after` seconds (10 minutes by default), as with a mistyped SageMaker name or expired credentials;
   - 124: timed out;
   - 69: no such job.
+- **Estimate:** `ax job show` and `ls` give the median time left and an 80% interval. The estimate comes from the job's own progress, plus finished runs of the same family (kind, unit, key without its numbers). `ax job eta-report` checks stored estimates against real finishes.
 - **Follow:** `ax job follow KEY --share none|lan|cloudflare --notify --detach`, or `--share` and `--notify` on `new`, `watch` and `run`.
   - It serves a token-protected, read-only page for the job, optionally through a Cloudflare quick tunnel.
   - It sends ntfy messages for the start, progress, new stages, stalls and the end.

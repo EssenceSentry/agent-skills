@@ -307,6 +307,7 @@ Any long job an agent starts gets one key that both tools can register, read and
     - 1: failed;
     - 2: stopped or ended;
     - 3: stalled;
+    - 4: the source check kept failing for `--error-after` seconds (10 minutes by default);
     - 124: timed out;
     - 69: no such job.
   - `ax job poll` refreshes every active job once, for a scheduler later. `ax job forget KEY` drops one.
