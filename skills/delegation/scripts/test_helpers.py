@@ -228,5 +228,48 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(report["snapshot_status"], "recent_cache")
 
 
+
+class ShellProfileTests(unittest.TestCase):
+    """Workers were denied `git status`, `ls` and `wc` hundreds of times; these profiles
+    allow read-only commands and test runners while unrestricted Bash stays refused."""
+
+    def command(self, profile, *extra):
+        args = argparse.Namespace(model="opus", effort=None, profile=profile, allow_tool=list(extra),
+                                  claude="claude", max_cost_usd=1)
+        command = worker.build_command(args, "00000000-0000-4000-8000-000000000000")
+        tools = [t for t in command[command.index("--tools") + 1].split(",") if t]
+        allowed = (command[command.index("--allowedTools") + 1].split(",")
+                   if "--allowedTools" in command else [])
+        return tools, allowed
+
+    def test_inspect_allows_read_only_shell_commands(self):
+        tools, allowed = self.command("inspect")
+        self.assertIn("Bash", tools)
+        for rule in ("Bash(git status:*)", "Bash(git diff:*)", "Bash(ls:*)", "Bash(wc:*)", "Bash(rg:*)"):
+            self.assertIn(rule, allowed)
+        self.assertNotIn("Bash", allowed)
+        self.assertNotIn("Edit", tools)
+
+    def test_verify_adds_editing_and_test_runners(self):
+        tools, allowed = self.command("verify")
+        self.assertTrue({"Edit", "Write", "Bash"} <= set(tools))
+        for rule in ("Bash(git status:*)", "Bash(uv run pytest:*)", "Bash(uv run ruff:*)",
+                     "Bash(.venv/bin/python -m pytest:*)"):
+            self.assertIn(rule, allowed)
+        self.assertNotIn("Bash", allowed)
+
+    def test_no_profile_allows_arbitrary_code_or_writes_through_git(self):
+        for profile in worker.PROFILES:
+            _, allowed = self.command(profile)
+            joined = " ".join(allowed)
+            for unsafe in ("python -c", "Bash(git push", "Bash(git commit", "Bash(rm", "Bash(*)"):
+                self.assertNotIn(unsafe, joined, profile)
+
+    def test_old_profiles_keep_their_meaning(self):
+        tools, allowed = self.command("read")
+        self.assertEqual(tools, ["Read", "Glob", "Grep"])
+        self.assertNotIn("Bash", " ".join(allowed))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

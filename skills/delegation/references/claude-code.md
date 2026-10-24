@@ -67,7 +67,15 @@ python3 "$DELEGATION_SKILL/scripts/worker.py" run \
 
 Use the host's asynchronous process tool with a short initial yield. Save its process handle and run directory; continue independent work. Launch independent jobs in parallel with unique output directories.
 
-Profiles: `none` has no tools; `read` provides Read/Glob/Grep; `edit` adds Edit/Write. Bash is **not** included. Add a required command explicitly, e.g. `--allow-tool 'Bash(python3 -m unittest discover -s tests)'`, after inspecting its effects. `dontAsk` fails unapproved tools instead of waiting on prompts. Never repair a denial with bypass permissions.
+Profiles:
+
+- `none` has no tools.
+- `read` provides Read, Glob and Grep, with no shell.
+- `edit` adds Edit and Write, with no shell.
+- `inspect` is `read` plus read-only shell commands: `git status`, `diff`, `log`, `show`, `branch`, `rev-parse` and `ls-files`, and `ls`, `wc`, `rg`, `grep`, `head`, `tail`, `cat`, `file`, `stat`, `shasum`, `pwd` and `which`. Use it for reviews.
+- `verify` is `edit` plus those commands and the test and lint runners (`uv run pytest`, `ruff` and `pyright`, their `.venv/bin` forms, and `python3 -m pytest` or `unittest`). Use it for implementation.
+
+No profile allows unrestricted Bash, `python -c`, or a git command that writes. Add any other required command explicitly, e.g. `--allow-tool 'Bash(python3 -m unittest discover -s tests)'`, after inspecting its effects. `dontAsk` fails unapproved tools instead of waiting on prompts. Never repair a denial with bypass permissions.
 
 Rendered-UI review needs actual screenshots or render artifacts supplied by the parent, or a narrowly allowed project browser-test/capture command consistent with current tool policies. The default profiles do not provide a browser, and safe mode disables MCP/custom tools. Give the worker the necessary evidence or permissions explicitly. Without rendered evidence, label the result a static code review rather than a visual check.
 

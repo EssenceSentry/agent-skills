@@ -25,7 +25,25 @@ from usage import terminate_owned
 MODELS = {"opus": "claude-opus-5-5", "fable": "claude-fable-5-1",
           "sonnet": "claude-sonnet-5", "haiku": "claude-haiku-4-5-20251001"}
 PROFILES = {"none": [], "read": ["Read", "Glob", "Grep"],
-            "edit": ["Read", "Glob", "Grep", "Edit", "Write"]}
+            "edit": ["Read", "Glob", "Grep", "Edit", "Write"],
+            "inspect": ["Read", "Glob", "Grep", "Bash"],
+            "verify": ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]}
+# Shell commands a profile allows. Workers kept spending turns on denials of commands
+# like these, so inspect and verify allow them up front. Nothing here runs arbitrary
+# code, deletes files or writes through git; anything else still needs --allow-tool.
+READ_ONLY_SHELL = [
+    "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
+    "Bash(git branch:*)", "Bash(git rev-parse:*)", "Bash(git ls-files:*)",
+    "Bash(ls:*)", "Bash(wc:*)", "Bash(rg:*)", "Bash(grep:*)", "Bash(head:*)",
+    "Bash(tail:*)", "Bash(cat:*)", "Bash(file:*)", "Bash(stat:*)", "Bash(shasum:*)",
+    "Bash(pwd)", "Bash(which:*)",
+]
+TEST_SHELL = [
+    "Bash(uv run pytest:*)", "Bash(uv run ruff:*)", "Bash(uv run pyright:*)",
+    "Bash(.venv/bin/python -m pytest:*)", "Bash(.venv/bin/ruff:*)", "Bash(.venv/bin/pyright:*)",
+    "Bash(python3 -m pytest:*)", "Bash(python3 -m unittest:*)",
+]
+SHELL_RULES = {"inspect": READ_ONLY_SHELL, "verify": READ_ONLY_SHELL + TEST_SHELL}
 POLICY = """You are a delegated worker. Complete only the attached task and respect
 its file ownership and acceptance criteria. Do not delegate again, publish,
 commit, push, deploy, send external messages, change credentials, or modify
@@ -78,7 +96,8 @@ def build_command(args, session_id, resume=False):
     if "haiku" in model and args.effort:
         raise ValueError("Haiku 4.5 does not support the effort parameter; omit --effort")
     available = list(PROFILES[args.profile])
-    allowed = list(available)
+    # "Bash" alone would allow every command; a profile allows only its listed ones.
+    allowed = [tool for tool in available if tool != "Bash"] + SHELL_RULES.get(args.profile, [])
     for rule in args.allow_tool:
         base = rule.split("(", 1)[0]
         if base not in {"Read", "Glob", "Grep", "Edit", "Write", "Bash", "WebFetch", "WebSearch"}:
