@@ -9,6 +9,7 @@ Reusable skills for working with Claude Code, Codex, and ChatGPT.
 | [delegation](skills/delegation/SKILL.md) | Authorized Claude/Codex workers, usage and lifecycle helpers, ChatGPT Pro consultation, native conversation messaging and history retrieval, and technical infographics. |
 | [research-director](skills/research-director/SKILL.md) | How agents run research campaigns through `ax exp`: weigh each experiment by the decision it can change, re-rank after every result, stop when results change nothing. |
 | [session-recall](skills/session-recall/SKILL.md) | When and how agents search past Claude Code and Codex sessions with `ax search`, and how to cite what they find. |
+| [jobs](skills/jobs/SKILL.md) | How agents register long work with `ax job`, wait on it without polling, and wake when it ends. |
 
 Each skill's references and Python helpers are part of that skill, not
 separate skills.
@@ -37,7 +38,12 @@ take effect at once; after a change to the dependencies, run the same command wi
 | `ax hooks install` | Hooks in Claude Code and Codex that sync when a session ends |
 | `ax schedule install` | A launchd job that syncs every 30 minutes |
 | `ax skills link NAME…` | Link this repository's skills into both tools |
-| `ax job` (`new`, `watch`, `run`, `ls`, `show`, `wait`, `follow`, `unfollow`, `poll`, `forget`) | Long jobs any agent can register and wait on; see below |
+| `ax job` (`new`, `watch`, `run`, `ls`, `show`, `wait`, `follow`, `unfollow`, `wake`, `poll`, `service`, `eta-report`, `forget`) | Long jobs any agent can register and wait on; see below |
+| `ax profile` (`seed`, `list`, `add`, `compile`, `check`) | One set of working rules, compiled into both tools, their guard and their workers |
+| `ax brief KIND` | A brief for a delegated worker that carries those rules, and its launch plan |
+| `ax learn` (`scan`, `label`, `propose`, `list`, `accept`, `reject`, `recall`) | Rule proposals from your own corrections, for your approval |
+| `ax scorecard` | Corrections, nudges, guard blocks, worker denials, recurring errors and cost, by week |
+| `ax lab` (`build`, `cut`, `run`) | Replay evals that test the profile as a plugin, with and without it |
 
 `hooks install`, `schedule install` and `skills link` print what they would change
 and do nothing without `--apply`.
@@ -67,6 +73,52 @@ job's own environment.
   - It sends ntfy messages for the start, progress, new stages, stalls and the end.
   - It stops two minutes after the job ends.
   - Set the ntfy topic in `[notify] topic` in `config.toml`, or in `AX_NTFY_TOPIC`. On ntfy.sh the topic name is the only password, and messages carry the dashboard link.
+
+### Profile and guard
+
+Each rule is a note in the vault's `Profile/rules/`: the rule, its scope (global or
+`repo:NAME`), the tools it applies to (`claude`, `codex`, and `workers` when delegated
+workers need it too), its level (advice, check or block) and its evidence.
+
+- `ax profile compile --apply` writes the rules into a marked block of
+  `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`, per-repo rules into a git-excluded
+  `CLAUDE.local.md`, and the worker definitions: Claude agents `~/.claude/agents/ax-*.md`
+  and Codex profiles `~/.codex/ax-*.config.toml` (`codex exec --profile ax-review`).
+- `ax profile check` finds instructions elsewhere (skills, plugins, memories) that
+  contradict a rule, and feedback memories no rule covers.
+- `ax-guard` runs before every shell command in both tools and blocks what a
+  block-level rule forbids, saying why. A guard with `where: command` ignores heredoc
+  bodies and quoted text, so a script or doc that only mentions a forbidden command
+  passes. As Claude's Stop hook it also keeps Claude working, once, when a reply says
+  tests pass but no test ran in that turn.
+
+### Delegated work
+
+`ax brief implement|review|scout|continue --repo R --task "…"` writes a brief under
+`~/.local/share/ax/briefs/`: the task, owned paths, acceptance criteria, the rules marked
+for workers in that repo, the repo's `AGENTS.md`/`CLAUDE.md` as required reads, a
+permission profile and a budget halved when a Claude window is at 80% or more. It
+prints the runner command and launches nothing; the delegation skill keeps the
+approval step.
+
+### Learning from corrections
+
+`ax learn scan` collects your own corrections from human sessions of both tools, and
+the preference signals Codex wrote into its raw memories. `label` has Claude Haiku
+(through `claude -p`, redacted first) name each one's kind, rule and scope. `propose`
+writes rule notes with status `proposed` once a rule has support from two sessions
+(two projects for a global rule); `accept` and `reject` settle them, and a rejected
+proposal returns only when its support doubles. `recall` reports how many active rules
+the labels rediscover.
+
+### Measuring it
+
+`ax scorecard` (and `/scorecard` in `ax serve`) counts per week the corrections,
+"I said"/"again" repeats, progress nudges, guard blocks and worker denials, with cost
+by model and effort, and lists errors that recur across sessions and skills nobody
+used. `ax lab build` packages the profile as a plugin for `claude plugin eval`, with
+starter cases; `ax lab cut` turns a past Claude session into a case; `ax lab run`
+compares both arms under a cost ceiling.
 
 Paths default to `~/.claude`, `~/.codex`, `~/Vaults/agents` and
 `~/.local/share/ax`; override them in `~/.config/ax/config.toml` (`[paths]`),

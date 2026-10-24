@@ -49,7 +49,18 @@ Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
     - seven ntfy messages reached a local stand-in server, each opening the public link;
     - the follower and cloudflared exited after the linger.
   - Not yet sent to a real ntfy topic.
+- **The finished product built 2026-10-24** (the "Your agent layer" doc; 383 tests pass):
+  - **Profile:** ten rules in the vault, compiled into both tools; `ax profile check` found the pixability-dev trailer conflict. A rule reaches delegated workers only when it names `workers`.
+  - **Guards:** `ax-guard` in both tools, cc-safety-net, and a Claude Stop check for "tests pass" claims without a test run. Claude's commit attribution is off. A live false positive (a heredoc that only mentioned a forbidden command) led to `where: command` guards that ignore heredoc bodies and quoted text.
+  - **Jobs:** finish estimates (a Gamma rate posterior with change detection, a history prior and a calibration report; on simulated jobs the 80% interval covered 84% of steady runs, 55% of predictions made before an undetected rate change). Wake-ups through `codex exec resume` and `claude --bg --resume`, both live-tested. Also `ax job service`, Runwatch and Tools MCP sources, tqdm bars from `run`, a Jobs panel in `ax serve` and the `jobs` skill. In Runwatch, the stale-attention fix and an `ax job wait` section in its skill (branch `fix/stale-attention-after-retry`).
+  - **Briefs:** `ax brief` and generated worker definitions; a live probe confirmed Codex applies a profile file's `developer_instructions`. The drifted `~/.codex/skills/delegation` copy is in `~/.local/share/ax/backups/`, and the repo skill is linked into both tools.
+  - **Learner:** 1,489 candidates (1,210 phrase matches, 6 after interruptions, 273 Codex preference signals) labelled by Haiku. It rediscovered 8 of the 10 rules (missed: no-green-ui, ds-models-uv) and proposed 12, waiting for review in `ax learn list`.
+  - **Trials:** claude-reflect (heuristic dry run, read-only) proposed nothing in ds-models or auto-classifier: it reads only Claude sessions, and most corrections are in Codex. cass-memory was not run: its license grants no rights to Anthropic or anyone acting for it, and its reflection needs API keys. SkillOpt-Sleep was not installed, as decided.
+  - **Scorecard and lab:** `ax scorecard` and `/scorecard`. Baselines for the last six weeks: corrections 9–17% of messages; worker denials 150 in W41, 41 in W43; the pyright warning in 44 sessions. Also `ax lab` with five starter cases and one cut from a real session.
+  - **Not yet run live:** one delegated review (to confirm no permission denials), the first `ax lab run`, a real SageMaker or Seamless job, and `ax job service --apply`.
 - **Deferred:**
+  - Rules matched per prompt (UserPromptSubmit): the ten rules fit in the always-loaded block, so retrieval waits until the profile grows.
+  - The stop check for Codex, whose transcript has another format.
   - Run notes in `Runs/`.
   - Cheap handoffs and supervisor agents.
   - `ax mcp`.
