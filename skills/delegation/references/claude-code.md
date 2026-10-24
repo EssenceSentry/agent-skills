@@ -48,6 +48,8 @@ Read the actual scope-defining artifact first. Include:
 
 Supply enough relevant context to reason end to end without forcing each worker to rediscover the same background. Write boundaries should prevent conflicts without hiding needed callers or consumers. Avoid unrelated conversation dumps or credentials. Don't prime independent reviews with an expected conclusion. For extraction, use stable IDs, a schema, an abstention path, and a parent-checked pilot before scaling.
 
+Start the brief with `ax brief implement|review|scout|continue --repo /absolute/repo --task "…" [--path FILE] [--accept CRITERION] [--diff RANGE] [--session ID]`. It fills in points 2–4 from the user's profile: the rules marked for workers in that repository, the repository's `AGENTS.md`/`CLAUDE.md` as required reads, the permission profile for the kind of work, and a budget halved when a Claude window is at 80% or more. It writes the brief under `~/.local/share/ax/briefs/` and prints the runner command. Add the task's own inputs and evidence to the file, then show the printed plan for approval before running the command.
+
 The runner uses `--safe-mode`, disabling automatic instructions, plugins, hooks and MCP customization while retaining authentication and permissions. **The brief must carry applicable instructions.** It neither installs a repository `CLAUDE.md` bridge nor changes global configuration. Safe mode is not an OS sandbox.
 
 Use a suitable isolated checkout for writes, or create a managed worktree through the host tool when needed. Inspect dirty state and preserve necessary uncommitted inputs. Simple disjoint work can use explicit file ownership in an authorized working directory. Keep private logs and briefs outside published source.

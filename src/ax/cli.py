@@ -5,6 +5,7 @@ import io
 import json
 import os
 import select
+import shlex
 import stat
 import subprocess
 import sys
@@ -1084,6 +1085,61 @@ def job_unfollow(key: str = typer.Argument(...)):
         typer.echo(f"{key} has no follower", err=True)
         raise typer.Exit(1)
     typer.echo(f"stopped the follower of {key}")
+
+
+@app.command("brief")
+def brief_cmd(
+    kind: str = typer.Argument(..., help="implement, review, scout or continue."),
+    repo: str = typer.Option(".", help="The repository the worker works in."),
+    task: str = typer.Option(None, help="What the worker should do or answer."),
+    task_file: str = typer.Option(None, help="Read the task from this file."),
+    path: list[str] = typer.Option(
+        [], "--path", help="A file it owns (implement) or should look at; repeatable."
+    ),
+    accept: list[str] = typer.Option([], "--accept", help="An acceptance criterion; repeatable."),
+    diff: str = typer.Option(None, help="review: the revision range to review, e.g. main..HEAD."),
+    session: str = typer.Option(None, help="continue: the archived session id or its start."),
+    provider: str = typer.Option("claude", help="claude (worker.py) or codex (codex exec)."),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+):
+    """Write a worker brief that carries your rules, and print the launch plan.
+
+    Nothing is launched: show the plan to the user and start the worker only after they
+    approve its count, model and effort.
+    """
+    from ax import brief as brief_module
+
+    if provider not in ("claude", "codex"):
+        typer.echo("--provider must be claude or codex", err=True)
+        raise typer.Exit(2)
+    if task_file:
+        with open(task_file) as f:
+            task = f.read()
+    if not task:
+        typer.echo("give the task with --task or --task-file", err=True)
+        raise typer.Exit(2)
+    config = load()
+    try:
+        found = brief_module.build(
+            config, kind, repo=repo, task=task.strip(), paths=path, accept=accept, diff=diff,
+            session=session, provider=provider,
+        )  # fmt: skip
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    found = brief_module.write(config, found)
+    plan = found.plan
+    if as_json:
+        typer.echo(json.dumps(plan, indent=2))
+        return
+    typer.echo(f"brief: {plan['brief']}")
+    typer.echo(
+        f"plan, for the user's approval: {plan['agents']} {plan['provider']} worker · "
+        f"{plan['model']} · effort {plan['effort']} · {plan['profile']} · "
+        f"about ${plan['budget_usd']:g}"
+    )
+    typer.echo(f"  {plan['usage_note']}")
+    typer.echo(f"after approval: {shlex.join(plan['command'])}")
 
 
 profile_app = typer.Typer(no_args_is_help=True, help="One set of working rules for both tools.")

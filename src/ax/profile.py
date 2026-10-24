@@ -230,12 +230,23 @@ def missing_repos(config) -> list[str]:
 
 
 def compile_profile(config, *, apply: bool = False) -> list[Change]:
-    """The file changes the active rules call for; written only with apply=True."""
+    """The file changes the active rules call for; written only with apply=True.
+
+    Besides each tool's instruction files, rules marked for workers produce the
+    worker definitions in `ax.brief`; a hand-written file of the same name is kept.
+    """
+    from ax import brief
+
+    rules = load_rules(config)
     changes = []
-    for path, block in _targets(config, load_rules(config)).items():
+    for path, block in _targets(config, rules).items():
         old = path.read_text() if path.exists() else ""
         new = _merge(old, block)
         if new != old:
+            changes.append(Change(path, old, new))
+    for path, new in brief.definitions(config, rules).items():
+        old = path.read_text() if path.exists() else ""
+        if new != old and (not old or brief.GENERATED in old):
             changes.append(Change(path, old, new))
     if apply:
         for change in changes:

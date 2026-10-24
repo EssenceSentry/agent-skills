@@ -61,7 +61,7 @@ The Codex app can schedule follow-ups in this same chat through `mcp__codex_app_
 
 ## Preserve the distinction
 
-**Claude:** define the objective, inputs, owned files, constraints, and a concrete output with an affordable verification step. UI checks and long audits should return compact findings supported by local evidence, avoiding a second exhaustive parent pass.
+**Claude:** define the objective, inputs, owned files, constraints, and a concrete output with an affordable verification step. Start the brief with `ax brief` when it is installed; it adds the user's worker rules, the repository's instruction files and a usage-scaled budget (see [claude-code.md](references/claude-code.md)). UI checks and long audits should return compact findings supported by local evidence, avoiding a second exhaustive parent pass.
 
 **Codex:** define the same concrete worker contract, preserving the chosen model and effort. Prefer native subagents for suitable current-chat subtasks; use an authorized independent CLI session when requested or needed for its lifecycle. Verify effective native records, actual owned processes and exact-session continuity. A configured limit, zero exit code or saved state file alone does not prove admission, durability or correctness.
 
