@@ -1,0 +1,313 @@
+# Agent workbench: weekend plan
+
+Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
+
+## Status
+
+- **Step 1 (setup and archive) done 2026-10-24.**
+  - Obsidian is installed, and `~/Vaults/agents` is pushed to the private `agent-vault` repo (skeleton only).
+  - `ax sync` and `ax doctor` work: 3,130 transcripts became 1,887 notes.
+  - 1,243 Codex guardian reviews are indexed but get no notes.
+  - The first full run takes about 60 seconds; later runs take under a second.
+- **Learned while building:**
+  - A Codex subagent rollout starts with its own `session_meta`, then copies the parent's metadata and history up to `subagent_history_start_ordinal`. Records below that ordinal are skipped.
+  - A rollout's own id is the last UUID in its file name.
+  - Codex ids are time-ordered, so note names use the id's tail.
+  - Agent-to-agent `agent_message` items are rendered as quoted messages.
+- **Next:**
+  - Step 3: Bases views, gitleaks and the vault push guard, first content push.
+  - Then the remaining steps.
+
+## Goal
+
+One local toolkit that makes working with Claude Code and Codex easier:
+
+- Every session from both tools becomes a readable, searchable Markdown note in a private vault.
+- One command shows remaining allowance, reset times and whether the allowance will last.
+- Every delegated run, started from either tool, appears in one list you can watch and stop.
+- Long research campaigns keep a ledger and pass a value gate before expensive work.
+
+You look at it three ways: Obsidian (notes and tables), the terminal (`ax`), and a localhost page.
+
+## Decisions already made
+
+| Topic | Decision |
+| --- | --- |
+| Sources | Claude Code (CLI and the desktop Code tab) and Codex (CLI and desktop). ChatGPT and Claude.ai chats are out of scope for now. |
+| Vault | The private repo `agent-vault`, created private on 2026-10-24. Transcripts go only there, never to this public repo. A secret scan gates every commit, and `ax` refuses to push the vault to any remote that isn't private. |
+| Detail | Readable transcripts: messages in full, tool calls as one-line summaries, long outputs trimmed. Raw JSONL stays on this Mac, outside Git. |
+| Code home | This repo: the `ax` CLI plus the skills it serves. The repo is public, so no work data goes in it, test fixtures included. |
+| Research ledger | In the vault, one folder per project. |
+| Recall | On demand. Agents search when a skill or question calls for it; nothing is injected at session start. |
+| Retention | Claude Code `cleanupPeriodDays` set to 3650 on 2026-10-24. |
+| Time | Saturday afternoon and all of Sunday. |
+
+## What already exists
+
+Reuse these rather than rebuilding them:
+
+- **Delegation helpers** (`skills/delegation/scripts/worker.py`, `codex_worker.py`): run, status, stop and exact resume of Claude and Codex workers. Each run gets one directory (`run.json`, `events.jsonl`, `answer.md`). There is no shared registry yet.
+- **Claude allowance** (`skills/delegation/scripts/usage.py`): reads Claude's allowance through headless `/usage` with zero inference. It works on the Team plan with Claude Code 2.1.283.
+- **Claude Code**:
+  - `claude agents --json --all` lists background sessions with state `working`, `blocked`, `done`, `failed` or `stopped`.
+  - It has 33 hook events.
+  - Skills load from `~/.claude/skills`, including symlinked folders (already in use on this Mac).
+- **Codex 0.163**:
+  - The app-server has `account/rateLimits/read`, `thread/list` and `thread/read`.
+  - `token_count` events in session logs carry `rate_limits` (used %, window, reset time), readable offline.
+  - It has 12 hook events; each hook must be trusted once via `/hooks`.
+  - Skills load from `~/.agents/skills`; `~/.codex/skills` is the deprecated location.
+- **qmd** ([tobi/qmd](https://github.com/tobi/qmd)): local BM25, vector and reranked search over Markdown, with a CLI and an MCP server. Node 24 and Homebrew sqlite are already installed.
+- **Obsidian 1.12**:
+  - Bases gives tables over frontmatter.
+  - The official CLI needs the app running, so agents search files on disk instead of going through Obsidian.
+
+## Facts that shape the design
+
+1. **Transcripts were being deleted.** Until today Claude Code deleted CLI transcripts older than 30 days; desktop-app sessions are kept. Archive the raw JSONL first and render it second.
+2. **Size.** Claude holds 1.6 GB (209 main sessions plus 589 subagent files). Codex holds 2.0 GB (about 2,190 rollouts, 93% of them already `.jsonl.zst`), plus 164 archived sessions.
+3. **Formats are unstable.** Both vendors say their transcript format is not a stable interface. Codex compresses files after 7 days and is migrating sessions into SQLite. Parsers must tolerate unknown records and count them.
+4. **Subagents dominate.** They are 74% of Claude transcript files. Fold them into the parent note as linked one-liners and keep their own notes in `_subagents/`, out of the default views.
+5. **Transcripts carry secrets.** They are plaintext and contain whatever passed through tools, credentials included. Since the vault leaves the machine, redaction plus gitleaks before every commit is mandatory.
+6. **Claude Team allowance.** Headless `/usage` is the only verified source of remaining allowance. Statusline `rate_limits` is documented for Pro and Max only: test it, don't rely on it.
+7. **Hooks are constrained.** Claude's SessionEnd hooks share a 1.5-second budget, and Codex's SessionEnd doesn't fire for subagents. Hooks only enqueue work; a scheduled sweep catches anything missed.
+
+## Architecture
+
+```text
+~/.claude/projects/**.jsonl ──┐                         ┌─> Vault (Markdown, Git, private) ─> Obsidian + Bases
+~/.codex/{sessions,archived} ─┤                         ├─> ax CLI: search, usage, runs, exp ─> you and agents (via skills)
+delegation run directories ───┼─> ax sync ─> ax.db ─────┼─> ax serve (localhost page)
+claude agents / codex threads ┤   (SQLite + FTS5)       └─> qmd index (semantic search, MCP)   [stretch]
+usage: /usage, Codex limits ──┘
+hooks in both tools ─> queue ─> ax sync --queue
+```
+
+Rules:
+
+- `ax` only reads the native session stores; it never writes to them.
+- Code does capture, rendering, indexing and usage. Models are used only for judgment: handoffs and the research gate.
+- One SQLite store feeds all three views. Markdown notes are generated and can be rebuilt at any time.
+
+### Where things live
+
+| Path | Contents | In Git? |
+| --- | --- | --- |
+| `~/Documents/Codex/agent-skills/` | `ax` source, skills, hooks, synthetic fixtures | Public repo |
+| `~/Vaults/agents/` | The vault | Private repo `agent-vault` |
+| `~/.local/share/ax/ax.db` | SQLite tables: sessions, messages (FTS5), runs, usage, experiments | No |
+| `~/.local/share/ax/raw/` | zstd copy of every raw transcript | No (Time Machine covers it) |
+| `~/.local/share/ax/runs/` | Delegation run directories (new default location) | No |
+| `~/.config/ax/config.toml` | Paths, exclusions, budgets, redaction rules | No |
+
+### Vault layout
+
+```text
+Home.md                                   dashboard note embedding the bases below
+Sessions/2026/10/2026-10-24 claude my-repo - <title>.md
+Sessions/2026/10/_subagents/...
+Runs/<run-id>.md
+Projects/<project>/Overview.md            your notes: goal, current state, links
+Projects/<project>/Decisions.md
+Projects/<project>/Handoffs/
+Projects/<project>/Research/<campaign>/   Campaign.md, ledger.jsonl, Dead ends.md, Insights.md
+Bases/Sessions.base, Runs.base, Experiments.base
+```
+
+`Sessions/` and `Runs/` are generated: never edit them by hand, because regenerating overwrites them. Your own writing goes in `Projects/`, which `ax` never overwrites.
+
+### Session note
+
+Frontmatter:
+
+```yaml
+type: session
+provider: claude            # or codex
+session_id: 2e065b04-...
+title: Plan agent workbench
+project: my-repo            # name of the cwd's git root
+cwd: ~/Repos/my-repo
+branch: main
+model: claude-opus-5-5
+started: 2026-10-24T13:32:00-03:00
+ended: 2026-10-24T16:10:00-03:00
+user_turns: 9
+tokens_in: 812345
+tokens_out: 40211
+parent_session:             # set for subagents and delegated runs
+run_id:
+raw: ~/.local/share/ax/raw/claude/<project>/<session>.jsonl.zst
+tags: [session, claude, my-repo]
+```
+
+The body has:
+
+- your messages and the agent's replies in full;
+- one line per tool call, for example `ran uv run pytest → exit 0` or `edited code/x.py +12 −3`;
+- outputs over 40 lines trimmed, with a pointer to the raw file;
+- a linked list of the session's subagents.
+
+## Components
+
+### 1. Archive: `ax sync` (must)
+
+- **Parsing.** Claude `*.jsonl` plus `subagents/`; Codex `*.jsonl`, `*.jsonl.zst` and `archived_sessions`, read with the `zstandard` package.
+- **Incremental.** Record path, size, mtime and hash, and reparse only changed files. A rerun with no changes does nothing.
+- **Raw first.** Copy raw files to `raw/` before rendering.
+- **Redaction.**
+  - Mask known secret shapes during rendering.
+  - `ax vault commit` runs gitleaks on staged files and refuses to commit on any hit.
+  - `ax vault push` checks the remote with `gh repo view --json visibility` and refuses unless it is `PRIVATE`.
+  - `exclude` globs in `config.toml` list projects that must never leave the machine.
+- **`ax doctor`.** Count unknown record types per provider and version, so a format change shows up as a number, not as silent loss.
+
+Done when:
+
+- every current session renders;
+- a rerun is a no-op;
+- three hand-picked sessions read correctly in Obsidian;
+- gitleaks passes and the vault is pushed.
+
+### 2. Search: `ax search` (must)
+
+- **Full-text search.** SQLite FTS5 over message text, with filters `--project`, `--provider`, `--since` and `--role`, and `--json` output for agents.
+- **`session-recall` skill.** It tells agents when to search (before re-deriving a decision, or when you say "we discussed…") and how to cite the session note.
+- **Stretch: semantic search** from both agents, via `qmd collection add ~/Vaults/agents --name agents` and then `qmd mcp`.
+
+Done when:
+
+- `ax search "cleanupPeriodDays"` finds this planning session;
+- a Claude agent and a Codex agent each answer "what did we decide about the vault repo?" through the skill.
+
+### 3. Usage: `ax usage` (must)
+
+- **Sources.**
+  - Claude: reuse the `usage.py` logic (headless `/usage`, no inference).
+  - Codex: the latest `rate_limits` from session logs, refreshed with app-server `account/rateLimits/read` when stale.
+- **Display.** `ax usage` stores each snapshot and shows used %, remaining, reset time, countdown and freshness for every window.
+- **Forecast.** A burn rate from recent snapshots gives projected use at reset and "lasts" or "runs out at HH:MM", shown as a range.
+- **Guard.** `ax usage guard --provider claude --window weekly --min-remaining 20` exits 0 when safe, 1 when below the threshold and 69 when unknown, the same codes as CodexBar.
+- **Budgets.** Set in config, for example keep 25% of Claude's weekly window for interactive work; the guard applies them.
+- **Schedule.** A launchd job takes a snapshot every 30 minutes.
+
+Done when:
+
+- the numbers match `/usage` and the Codex app;
+- the guard exits correctly at a test threshold.
+
+### 4. Runs: `ax runs` (should)
+
+- **Registry sources:**
+  - delegation run directories (move the default `--run-dir` under `~/.local/share/ax/runs/` and record `parent_session`);
+  - `claude agents --json --all`;
+  - Codex app-server `thread/list` or the session logs;
+  - SubagentStart and SubagentStop hook events from both tools.
+- **Commands:**
+  - `ax runs`: a table of provider, model, effort, state, parent, elapsed time and last activity.
+  - `ax runs watch` and `ax runs show <id>`.
+  - `ax runs stop <id>`, only for runs `ax` owns; it writes `stop.request`.
+  - `ax runs follow-up <id> --brief <file>`.
+- **Run notes.** One note per run in `Runs/`, linked to its parent session.
+- **Approval rule unchanged.** Agents may request a launch, but the count, model and effort need your approval.
+
+Done when:
+
+- a Claude worker started from Codex and a Codex worker started from Claude both appear within seconds and can be watched;
+- one of them can be stopped.
+
+### 5. Research ledger: `ax exp` plus the `research-director` skill (should)
+
+- **`Campaign.md`.** The objective, the decisions it serves, the budget (hours, allowance %, $), stop rules, and the current answer in plain language.
+- **`ledger.jsonl`.** One record per experiment:
+  - the question and the decision it informs;
+  - possible outcomes and the action each would trigger;
+  - the cheaper alternative considered;
+  - estimated cost, status and actual cost;
+  - the result, whether the decision changed, and links.
+- **Commands:**
+  - `ax exp propose` rejects a proposal that lacks the decision informed, the outcome-to-action mapping or a stop rule.
+  - `ax exp start`, `finish` and `abandon`.
+  - `ax exp rank` orders open proposals by (decision importance × chance the result changes it) ÷ cost, using your weights.
+  - `ax exp stall` flags a run of finished experiments that changed no decision.
+- **Obsidian files.** `Dead ends.md` and `Insights.md` are append-only, and `Experiments.base` shows the ledger.
+- **The skill** carries the Research Director policy: gate first, use the cheapest adequate evidence, re-rank after each result, and stop when the marginal value is low.
+
+Done when: replaying a past campaign whose agents chased low-value studies, the gate ranks the studies that gated the real decision first.
+
+### 6. Dashboard: `ax serve` (could)
+
+- **One localhost page** showing:
+  - live runs;
+  - usage gauges with reset countdowns and the forecast;
+  - recent sessions, linked into Obsidian through `obsidian://` URLs;
+  - active campaigns.
+- **Stack.** Server-rendered with FastAPI, Jinja and HTMX polling every 5 seconds; no JavaScript build.
+- **Cut first** if Sunday runs late: Obsidian Bases and `ax runs watch` cover the same need.
+
+### 7. Glue (must)
+
+- **One hook script for both tools** (`hooks/ax-hook`):
+  - SessionEnd and Stop enqueue the session for sync; SubagentStart and SubagentStop record run events.
+  - It returns in under 100 ms, and a detached `ax sync --queue` does the work.
+  - Codex needs the hook trusted once via `/hooks`. Codex's `notify` slot stays with Computer Use.
+- **launchd jobs:** `ax sync` and `ax usage snapshot` every 30 minutes; `ax vault commit --push` hourly.
+- **`ax skills link`:**
+  - Symlinks each skill in this repo into `~/.claude/skills/` and `~/.agents/skills/`.
+  - Deletes the old copy in `~/.codex/skills/delegation`, a deprecated folder whose copy would show up twice.
+  - Work skills stay where their own installers put them and never enter this public repo.
+
+## Schedule
+
+### Saturday, afternoon and evening
+
+1. **Setup (30 min).**
+   - `brew install --cask obsidian`.
+   - Create `~/Vaults/agents` and its private repo.
+   - Set up the uv project for `ax` in this repo.
+   - Write synthetic fixtures for both providers.
+2. **Archive (3–4 h).** Parsers, store, renderer, raw backup, `ax sync` and `ax doctor`.
+3. **Search and vault Git (1.5 h).** FTS5 and `ax search`, redaction, the gitleaks gate, first push, `Sessions.base` and `Home.md`.
+
+### Sunday
+
+4. **Usage (2 h).**
+5. **Glue (1 h).** Hooks, launchd jobs and `ax skills link`.
+6. **Runs (2–3 h).**
+7. **Research ledger and skill (2 h).**
+8. **Dashboard (2 h),** only if steps 1–7 are done.
+
+Cut line: steps 1–5 must ship, 6–7 should, and 8 and every stretch item may slip.
+
+## How we build it
+
+- **One context per step.** Each step is one agent session that gets this plan section and the fixtures.
+- **Tests first** for the parsers, redaction, the forecast and the guard's exit codes.
+- **Stack.**
+  - Python 3.12 via uv; install with `uv tool install -e .`.
+  - Skill scripts stay standard-library only so the skills remain portable.
+  - Dependencies: typer, rich and zstandard. Dashboard extras: fastapi, uvicorn and jinja2. Dev: pytest and ruff.
+- **Synthetic fixtures only,** never real transcripts, because this repo is public.
+
+## After the weekend
+
+- **Cheap handoffs.** `ax handoff <session>` does a deterministic extraction, compresses it with Haiku, and writes the result to `Projects/<project>/Handoffs/`.
+- **Native supervisor agents.** A Haiku subagent in Claude, and a Codex counterpart, follow a run from the other tool through `ax runs wait` and relay progress and questions.
+- **`ax mcp` server,** if the CLI plus skills prove awkward for agents.
+- **More skills and views.** Architecture Steward and UI-design skills; Agenttrail Map over `Projects/`.
+- **Chat exports.** ChatGPT and Claude.ai exports through convoviz, if wanted later.
+
+## Risks
+
+| Risk | Mitigation |
+| --- | --- |
+| Transcript formats change | Tolerant parsers, fixtures per version, and `ax doctor` counts of unknown records |
+| Secrets or sensitive work data reach GitHub | Redaction, gitleaks gate, exclusions and a private repo. Work data on a personal account is a deliberate choice; revisit it if policy requires. |
+| Team usage numbers unavailable | The `/usage` adapter reports freshness and shows "unknown", never a guess |
+| Hooks slow or untrusted | Enqueue only, a launchd sweep as backup, and `ax doctor` checks hook install and Codex trust |
+| Scope | The cut line above, with the dashboard last |
+
+## Open items
+
+- **CLI name.** `ax` is free on this Mac; rename it before step 1 if you prefer something else.
+- **Vault names.** Path `~/Vaults/agents` and repo name `agent-vault`.
+- **Team statusline.** Check whether statusline `rate_limits` appears on a Team seat (a one-line test).
