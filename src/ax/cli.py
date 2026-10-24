@@ -665,6 +665,44 @@ def job_new(
         typer.echo(str(path))
 
 
+@job_app.command("watch")
+def job_watch(
+    kind: str = typer.Argument(..., help="file, pid, sagemaker or seamless."),
+    ref: str = typer.Argument(..., help="A path, process id or SageMaker job name."),
+    key: str = typer.Option(None, help="Name the job; defaults to one derived from REF."),
+    label: str = typer.Option(None, help="A human description."),
+    type_: str = typer.Option(None, "--type", help="sagemaker: processing, training or transform."),
+    region: str = typer.Option(None, help="sagemaker, seamless: AWS region."),
+    profile: str = typer.Option(None, help="sagemaker, seamless: AWS profile."),
+    state_url: str = typer.Option(None, help="seamless: its dashboard's /api/state address."),
+    done_key: str = typer.Option(None, help="file (.json): dotted path of the done count."),
+    total_key: str = typer.Option(None, help="file (.json): dotted path of the total."),
+    status_key: str = typer.Option(None, help="file (.json): dotted path of the status."),
+    stage_key: str = typer.Option(None, help="file (.json): dotted path of the stage."),
+    message_key: str = typer.Option(None, help="file (.json): dotted path of a message."),
+    done_when: str = typer.Option(None, help="file: a path whose appearance means done."),
+    format_: str = typer.Option(None, "--format", help="file: json or jsonl (default: by suffix)."),
+    as_json: bool = _JSON,
+):
+    """Register a job that ax checks itself, check it once, and print its key."""
+    options = {
+        "type": type_, "region": region, "profile": profile, "state_url": state_url,
+        "done_key": done_key, "total_key": total_key, "status_key": status_key,
+        "stage_key": stage_key, "message_key": message_key, "done_when": done_when,
+        "format": format_,
+    }  # fmt: skip
+    config = _jobs_config()
+    job = _job_or_exit(
+        lambda: jobs_module.watch(config, kind, ref, key=key, label=label, options=options)
+    )
+    if as_json:
+        typer.echo(json.dumps(job.to_dict(), indent=2))
+        return
+    typer.echo(job.key)
+    if job.check_error:
+        typer.echo(f"warning: {job.check_error}", err=True)
+
+
 @job_app.command("ls")
 def job_ls(
     all_: bool = typer.Option(False, "--all", help="Include finished jobs."),

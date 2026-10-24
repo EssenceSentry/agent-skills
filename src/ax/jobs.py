@@ -324,16 +324,16 @@ def parse_line(raw: dict) -> Update:
     return update
 
 
-def _read_lines(job: Job, path: Path) -> tuple[list[Update], int]:
-    """Complete lines after the job's offset; a line still missing its newline waits."""
+def read_lines(path: Path, offset: int) -> tuple[list[Update], int]:
+    """Complete lines after `offset`; a line still missing its newline waits."""
     if not path.exists():
-        return [], job.offset
+        return [], offset
     with path.open("rb") as f:
-        f.seek(job.offset)
+        f.seek(offset)
         chunk = f.read()
     end = chunk.rfind(b"\n")
     if end < 0:
-        return [], job.offset
+        return [], offset
     updates = []
     for line in chunk[: end + 1].splitlines():
         if not line.strip():
@@ -349,7 +349,7 @@ def _read_lines(job: Job, path: Path) -> tuple[list[Update], int]:
             updates.append(
                 Update(events=[("bad_line", {"reason": "not a JSON object", "line": text})])
             )
-    return updates, job.offset + end + 1
+    return updates, offset + end + 1
 
 
 def apply(db, job: Job, update: Update, ts: str) -> None:
@@ -391,7 +391,7 @@ def refresh(config, key, *, now: datetime | None = None, force: bool = False) ->
         job = _load(db, key)
         if job is None:
             return None
-        lines, job.offset = _read_lines(job, events_path(config, key))
+        lines, job.offset = read_lines(events_path(config, key), job.offset)
         for update in lines:
             apply(db, job, update, ts)
         if job.kind in SOURCE_KINDS and not job.terminal and (force or _due(job, now)):
@@ -399,14 +399,15 @@ def refresh(config, key, *, now: datetime | None = None, force: bool = False) ->
 
             job.checked = ts
             try:
-                update = job_sources.check(job, now)
+                updates = job_sources.check(job, now)
             except job_sources.CheckError as exc:
                 if str(exc) != job.check_error:
                     _event(db, key, ts, "check_error", {"error": str(exc)})
                 job.check_error = str(exc)
             else:
                 job.check_error = None
-                apply(db, job, update, ts)
+                for update in updates:
+                    apply(db, job, update, ts)
         _save(db, job)
         return job
 
