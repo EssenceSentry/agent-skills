@@ -20,11 +20,14 @@ Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
     - The first real scan of 1,887 notes found 3 false positives, all content hashes; a narrow allowlist covers them.
     - The vault commit is local only, not pushed yet.
   - `ax usage` and `ax usage guard`. On a Team seat, Claude's allowance comes from `/usage`; Codex's comes from rollout logs.
-  - `ax hooks install`, `ax schedule install` and `ax skills link` are dry-run-first. They are not applied yet.
-- **Next:**
-  - Push the vault and the `ax-workbench` branch.
-  - Apply hooks, the schedule and the skill links.
-  - Then steps 6–8: runs, research ledger, dashboard.
+  - `ax hooks install`, `ax schedule install` and `ax skills link` are dry-run-first.
+- **Live 2026-10-24:**
+  - The vault is pushed to the private `agent-vault` repo.
+  - Hooks are in Claude Code and Codex. Codex needs `/hooks` once to trust them.
+  - A launchd job (`com.ax.sync`) syncs every 30 minutes.
+  - `session-recall` is linked into both tools.
+  - The vault is committed and pushed by hand (`ax vault commit && ax vault push`) until the schedule gets `--with-vault`.
+- **Next:** steps 6–8: runs, research ledger, dashboard.
 
 ## Goal
 
