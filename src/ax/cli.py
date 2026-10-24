@@ -182,16 +182,16 @@ def vault_commit():
     """Commit every vault change, unless gitleaks finds a secret in it."""
     try:
         result = vault_module.commit(load())
-    except vault_module.ScanFailed as exc:
-        typer.echo(f"secret scan failed, nothing committed: {exc}")
+    except (vault_module.ScanFailed, vault_module.NotAVault) as exc:
+        typer.echo(f"nothing committed: {exc}")
         raise typer.Exit(1) from None
     if result.findings:
         typer.echo(f"gitleaks found {len(result.findings)} possible secrets; nothing committed:")
         for f in result.findings:
             typer.echo(f"    {f.rule}  {f.file}:{f.line}  {f.fingerprint}")
         typer.echo(
-            "Teach ax to redact the shape (then `ax sync`), or, for a false positive,"
-            " add its fingerprint to the vault's .gitleaksignore."
+            "Teach ax to redact the shape and run `ax sync`; for a false positive, narrow"
+            " the allowlist in ax's own templates/gitleaks.toml (never the vault's .gitleaksignore)."
         )
         raise typer.Exit(1)
     typer.echo(f"committed {result.notes} notes" if result.committed else "nothing to commit")
@@ -202,7 +202,12 @@ def vault_push():
     """Push the vault, only to a GitHub repository confirmed to be private."""
     try:
         vault_module.push(load())
-    except vault_module.UnsafeRemote as exc:
+    except (
+        vault_module.UnsafeRemote,
+        vault_module.UnsafeContent,
+        vault_module.ScanFailed,
+        vault_module.NotAVault,
+    ) as exc:
         typer.echo(f"not pushed: {exc}")
         raise typer.Exit(1) from None
     typer.echo("pushed")

@@ -1,12 +1,15 @@
-# Secret scan for the vault, used by `ax vault commit`. It keeps gitleaks'
-# default rules and allows only fields known to hold content hashes, which
-# the generic-api-key rule mistakes for keys. Keep this list narrow: every
-# entry here is a place a real key could hide.
+# Secret scan for the vault, used by `ax vault commit` and `ax vault push`.
+# It ships with ax and is never read from the vault, so vault content cannot
+# weaken it. It keeps gitleaks' default rules and allows only fields known to
+# hold content hashes, which the generic-api-key rule mistakes for keys. The
+# exception applies to that rule's match alone, never to a whole line: keep it
+# that narrow, since every entry is a place a real key could hide.
 
 [extend]
 useDefault = true
 
 [[allowlists]]
 description = "Content hashes in cache and training-key fields"
-regexTarget = "line"
-regexes = ['''"(input_cache_key|prompt_cache_key|training_keys_path)"\s*:\s*"[0-9a-fA-F/._-]+"''']
+targetRules = ["generic-api-key"]
+regexTarget = "match"
+regexes = ['''^"?(input_cache_key|prompt_cache_key|training_keys_path)"?\s*[:=]\s*"?[0-9a-fA-F/._-]+"?$''']
