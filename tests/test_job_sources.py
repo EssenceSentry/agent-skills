@@ -332,3 +332,29 @@ def test_cli_watch_refuses_options_that_do_not_apply(env, tmp_path):
     )  # fmt: skip
     assert result.exit_code == 2
     assert "--type doesn't apply to a file job" in result.stderr
+
+
+def test_a_slow_aws_check_does_not_block_other_jobs(env, aws):
+    import time as clock
+
+    fake = aws(describe_processing_job=[processing("InProgress")])
+    jobs.watch(env.config, "sagemaker", "merge-1")
+
+    def slow(args, *, region=None, profile=None):
+        clock.sleep(1.5)
+        return processing("Completed")
+
+    job_sources.run_aws = slow
+    try:
+        checker = threading.Thread(
+            target=lambda: jobs.refresh(env.config, "merge-1", now=later(30))
+        )
+        checker.start()
+        clock.sleep(0.2)
+        started = clock.time()
+        jobs.new(env.config, "other")
+        assert clock.time() - started < 1.0
+        checker.join()
+    finally:
+        job_sources.run_aws = fake
+    assert jobs.get(env.config, "merge-1").status == "done"

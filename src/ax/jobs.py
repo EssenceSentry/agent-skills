@@ -9,6 +9,7 @@ A job is a key with a status, a stage and progress. Producers feed it in two way
 State lives in `jobs.db`, apart from `ax.db`, which a parser change rebuilds.
 """
 
+import copy
 import json
 import os
 import re
@@ -310,9 +311,12 @@ def parse_line(raw: dict) -> Update:
         update.message = raw["message"]
     if "exit" in raw:
         code = raw["exit"]
-        update.status = "done" if code == 0 else "failed"
-        if code != 0 and not update.message:
-            update.message = f"exited with code {code}"
+        if isinstance(code, bool) or not isinstance(code, int):
+            update.events.append(("bad_line", {"reason": "exit must be an integer", "line": raw}))
+        else:
+            update.status = "done" if code == 0 else "failed"
+            if code != 0 and not update.message:
+                update.message = f"exited with code {code}"
     elif "status" in raw:
         update.status = normalize_status(raw["status"])
         if update.status is None:
@@ -384,32 +388,66 @@ def apply(db, job: Job, update: Update, ts: str) -> None:
 
 
 def refresh(config, key, *, now: datetime | None = None, force: bool = False) -> Job | None:
-    """Read new events-file lines and, when due, ask the job's source."""
+    """Read new events-file lines and, when due, ask the job's source.
+
+    Local checks run inside the write transaction. An AWS check can take a minute, so
+    it runs outside it: the job is claimed by stamping `checked`, which keeps other
+    refreshes from repeating the call, and the answer is applied in a second
+    transaction.
+    """
+    from ax import job_sources
+
     now = now or datetime.now(UTC)
     ts = now_iso(now)
-    with connect(config) as db, _transaction(db):
-        job = _load(db, key)
-        if job is None:
-            return None
-        lines, job.offset = read_lines(events_path(config, key), job.offset)
-        for update in lines:
-            apply(db, job, update, ts)
-        if job.kind in SOURCE_KINDS and not job.terminal and (force or _due(job, now)):
-            from ax import job_sources
+    with connect(config) as db:
+        with _transaction(db):
+            job = _load(db, key)
+            if job is None:
+                return None
+            lines, job.offset = read_lines(events_path(config, key), job.offset)
+            for update in lines:
+                apply(db, job, update, ts)
+            due = job.kind in SOURCE_KINDS and not job.terminal and (force or _due(job, now))
+            slow = due and job_sources.MIN_INTERVAL.get(job.kind, 0) > 0
+            if due:
+                job.checked = ts
+                if not slow:
+                    _record_check(db, job, ts, *_run_check(job, now))
+            _save(db, job)
+        if not slow:
+            return job
+        checked = Job(**{**asdict(job), "spec": copy.deepcopy(job.spec)})
+        updates, error = _run_check(checked, now)
+        with _transaction(db):
+            job = _load(db, key)
+            if job is None:
+                return None
+            if not job.terminal:
+                if error is None:
+                    job.spec = checked.spec
+                _record_check(db, job, ts, updates, error)
+                _save(db, job)
+            return job
 
-            job.checked = ts
-            try:
-                updates = job_sources.check(job, now)
-            except job_sources.CheckError as exc:
-                if str(exc) != job.check_error:
-                    _event(db, key, ts, "check_error", {"error": str(exc)})
-                job.check_error = str(exc)
-            else:
-                job.check_error = None
-                for update in updates:
-                    apply(db, job, update, ts)
-        _save(db, job)
-        return job
+
+def _run_check(job: Job, now: datetime) -> tuple[list[Update], str | None]:
+    from ax import job_sources
+
+    try:
+        return job_sources.check(job, now), None
+    except job_sources.CheckError as exc:
+        return [], str(exc)
+
+
+def _record_check(db, job: Job, ts: str, updates: list[Update], error: str | None) -> None:
+    if error is not None:
+        if error != job.check_error:
+            _event(db, job.key, ts, "check_error", {"error": error})
+        job.check_error = error
+        return
+    job.check_error = None
+    for update in updates:
+        apply(db, job, update, ts)
 
 
 def _due(job: Job, now: datetime) -> bool:

@@ -208,3 +208,11 @@ def test_latest_events_come_back_in_order(env):
     jobs.refresh(env.config, "score")
     latest = jobs.events(env.config, "score", limit=2, latest=True)
     assert [e["data"]["done"] for e in latest] == [4, 5]
+
+
+def test_an_exit_code_must_be_a_number(env):
+    jobs.new(env.config, "score")
+    append(jobs.events_path(env.config, "score"), {"exit": "0"})
+    job = jobs.refresh(env.config, "score")
+    assert job.status == "running"
+    assert any(e["type"] == "bad_line" for e in jobs.events(env.config, "score"))
