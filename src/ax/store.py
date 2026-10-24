@@ -268,6 +268,16 @@ class Store:
             hits.append(hit)
         return hits
 
+    def recent_sessions(self, limit: int = 15) -> list[dict]:
+        rows = self.db.execute(
+            # Conversations with a person: not headless `claude -p` workers, not empty threads.
+            "SELECT * FROM sessions WHERE kind = 'main' AND note_path IS NOT NULL "
+            "AND user_turns > 0 AND COALESCE(entrypoint, '') != 'sdk-cli' "
+            "ORDER BY ended DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def subagents_since(self, since: str) -> list[dict]:
         rows = self.db.execute(
             "SELECT * FROM sessions WHERE kind = 'subagent' AND ended >= ? ORDER BY ended DESC",

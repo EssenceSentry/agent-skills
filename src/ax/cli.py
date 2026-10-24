@@ -416,6 +416,27 @@ def exp_abandon(
     typer.echo(f"{exp_id} abandoned")
 
 
+@app.command()
+def serve(
+    port: int = typer.Option(8765, help="Port on 127.0.0.1."),
+    open_browser: bool = typer.Option(False, "--open", help="Open the page in your browser."),
+):
+    """A local dashboard of usage, runs, research campaigns and recent sessions."""
+    from ax import serve as serve_module
+
+    server = serve_module.make_server(load(), port=port)
+    url = f"http://127.0.0.1:{server.server_address[1]}/"
+    typer.echo(f"ax dashboard at {url} (Ctrl-C to stop)")
+    if open_browser:
+        import webbrowser
+
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        server.shutdown()
+
+
 @vault_app.command("init")
 def vault_init():
     """Add the starter Obsidian views and Home note where they are missing."""

@@ -32,6 +32,7 @@ take effect at once; after a change to the dependencies, run the same command wi
 | `ax runs` (`watch`, `show`, `stop`) | Delegated, background and subagent runs from both tools in one list |
 | `ax exp` (`init`, `propose`, `list`, `start`, `finish`, `abandon`) | Research campaigns whose experiments must pass a value gate |
 | `ax usage` / `ax usage guard` | Allowance left per tool and window, a forecast to reset, and a guard for scripts (exit 0 safe, 1 below, 69 unknown) |
+| `ax serve [--open]` | A local dashboard of usage, runs, campaigns and recent sessions |
 | `ax vault init` / `commit` / `push` | Starter Obsidian views; a commit gitleaks has scanned; a push only to a private GitHub repo |
 | `ax hooks install` | Hooks in Claude Code and Codex that sync when a session ends |
 | `ax schedule install` | A launchd job that syncs every 30 minutes |
