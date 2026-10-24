@@ -1023,9 +1023,14 @@ def profile_check(as_json: bool = _JSON):
             )
         )
     else:
-        for f in findings:
-            where = f"{f.path}:{f.line}" if f.line else f"{f.path}"
-            typer.echo(f"{f.kind:<9} {f.rule or '-':<22} {where}\n          {f.message}")
+        groups: dict = {}
+        for f in findings:  # one line per finding, however many copies of a skill repeat it
+            groups.setdefault((f.kind, f.rule, f.message), []).append(f)
+        for (kind, rule, message), same in groups.items():
+            first = same[0]
+            where = f"{first.path}:{first.line}" if first.line else f"{first.path}"
+            more = f" (and {len(same) - 1} more copies)" if len(same) > 1 else ""
+            typer.echo(f"{kind:<12} {rule or '-':<22} {where}{more}\n             {message}")
         if not findings:
             typer.echo("no conflicts")
     if any(f.kind in ("conflict", "setting") for f in findings):

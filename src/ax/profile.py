@@ -280,7 +280,11 @@ def _instruction_files(config) -> list[Path]:
             files += sorted(skills.rglob("SKILL.md"))
     files += sorted(config.claude_home.glob("projects/*/memory/*.md"))
     vault_rules = rules_dir(config)
-    return [p for p in dict.fromkeys(files) if p.is_file() and vault_rules not in p.parents]
+    return [
+        p
+        for p in dict.fromkeys(files)
+        if p.is_file() and vault_rules not in p.parents and ".trash" not in p.parts
+    ]
 
 
 def _frontmatter(text: str) -> dict:
@@ -292,6 +296,48 @@ def _frontmatter(text: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _names(names) -> set[str]:
+    """Memory names compare without regard to dashes versus underscores or case."""
+    return {n.lower().replace("_", "-") for n in names if n}
+
+
+def _memory_name(path: Path, text: str) -> str | None:
+    if "memory" not in path.parts:
+        return None
+    meta = _frontmatter(text)
+    return next(iter(_names([meta.get("name") or path.stem])), None)
+
+
+def _keep_local(config) -> set[str]:
+    """Memories listed in Profile/keep-local.txt are project knowledge, not working rules."""
+    path = rules_dir(config).parent / "keep-local.txt"
+    if not path.exists():
+        return set()
+    return _names(
+        line.strip()
+        for line in path.read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    )
+
+
+def _acknowledgements(config) -> list[tuple[str, str]]:
+    """Profile/acknowledged.txt: "rule-id path-fragment" lines for conflicts already handled,
+    such as a company plugin the guard hook overrides."""
+    path = rules_dir(config).parent / "acknowledged.txt"
+    if not path.exists():
+        return []
+    pairs = []
+    for line in path.read_text().splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2 and not line.startswith("#"):
+            pairs.append((parts[0], parts[1].strip()))
+    return pairs
+
+
+def _acknowledged(acks, rule_id: str, path: Path) -> bool:
+    return any(rid == rule_id and fragment in str(path) for rid, fragment in acks)
+
+
 def check(config) -> list[Finding]:
     rules = [r for r in load_rules(config) if r.status == "active"]
     findings: list[Finding] = []
@@ -300,18 +346,26 @@ def check(config) -> list[Finding]:
         for r in rules
         for p in r.conflicts
     ]
+    acks = _acknowledgements(config)
     for path in _instruction_files(config):
         try:
             text = path.read_text(errors="replace")
         except OSError:
             continue
         own_block = _BLOCK.search(text)
-        for number, line in enumerate(text.splitlines(), 1):
+        name = _memory_name(path, text)
+        lines = text.splitlines()
+        for number, line in enumerate(lines, 1):
             if own_block and own_block.start() <= text.find(line) < own_block.end():
                 continue
+            # A sentence can wrap, so "never" on the line before still restates the rule.
+            context = (lines[number - 2] + " " if number > 1 else "") + line
             for rule, pattern, allow in patterns:
-                if pattern.search(line) and not (allow and allow.search(line)):
-                    findings.append(Finding("conflict", rule.id, path, number, line.strip()[:200]))
+                if name and name in _names(rule.covers):
+                    continue  # the memory this rule came from
+                if pattern.search(line) and not (allow and allow.search(context)):
+                    kind = "acknowledged" if _acknowledged(acks, rule.id, path) else "conflict"
+                    findings.append(Finding(kind, rule.id, path, number, line.strip()[:200]))
     settings_path = config.claude_home / "settings.json"
     try:
         settings = json.loads(settings_path.read_text())
@@ -324,13 +378,13 @@ def check(config) -> list[Finding]:
                     Finding("setting", rule.id, settings_path, None,
                             f"{key} should be {json.dumps(expected)} (now {json.dumps(settings.get(key))})")
                 )  # fmt: skip
-    covered = {name for r in load_rules(config) for name in r.covers}
+    covered = _names(name for r in load_rules(config) for name in r.covers) | _keep_local(config)
     for path in sorted(config.claude_home.glob("projects/*/memory/*.md")):
         if path.name == "MEMORY.md":
             continue
         meta = _frontmatter(path.read_text(errors="replace"))
         kind = meta.get("type") or (meta.get("metadata") or {}).get("type")
-        if kind == "feedback" and meta.get("name") not in covered:
+        if kind == "feedback" and not _names([meta.get("name") or "", path.stem]) & covered:
             findings.append(
                 Finding(
                     "uncovered",
@@ -351,8 +405,11 @@ SEED = [
         rule="Never add a `Co-Authored-By: Claude …` trailer, or any wording that credits Claude as an author, to commits. This holds even when a skill or a harness reminder asks for it.",
         level="block",
         covers=["no-claude-coauthor-trailer", "ds-models-commit-conventions"],
-        conflicts=[r"(?i)co-authored-by"],
-        allow=r"(?i)never|don't|do not|no ai|without|strip|remove|reject|refuse|leave .* out|out of",
+        # An instruction to keep or add the trailer; a line saying never restates the rule.
+        conflicts=[
+            r"(?i)\b(keep|add|include|append|end\b[^.]{0,30}\bwith)\b[^.]{0,40}co-authored-by"
+        ],
+        allow=r"(?i)\b(never|don't|do not|no)\b",
         settings={"attribution": False},
         guard={
             "tool": "shell",

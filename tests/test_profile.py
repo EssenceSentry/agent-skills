@@ -19,6 +19,7 @@ def home(env, tmp_path):
     env.config_path.write_text(
         env.config_path.read_text()
         + f'agents_home = "{agents}"\n\n[profile]\nrepos_root = "{tmp_path / "Repos"}"\n'
+        + "extra_dirs = []\n"
     )
     env.config = load(env.config_path)
     env.repo = repo
@@ -98,7 +99,10 @@ def test_check_finds_instructions_that_contradict_a_rule(home):
     profile.seed(home.config)
     skill = home.claude_home / "skills" / "commit-guidelines" / "SKILL.md"
     skill.parent.mkdir(parents=True)
-    skill.write_text("# Commits\n\n- **Keep the `Co-Authored-By: … Claude …` trailer on.**\n")
+    skill.write_text(
+        "# Commits\n\n- **Keep the `Co-Authored-By: … Claude …` trailer on.** It is the only "
+        "reliable way AI assistance gets attributed; without it, measurement falls back.\n"
+    )
     (home.claude_home / "settings.json").write_text(json.dumps({"attribution": False}))
     found = profile.check(home.config)
     conflicts = [f for f in found if f.kind == "conflict"]
@@ -140,3 +144,46 @@ def test_cli_list_compile_and_check(home):
     assert (home.claude_home / "CLAUDE.md").exists()
     (home.claude_home / "settings.json").write_text("{}")
     assert cli(home, "check").exit_code == 1
+
+
+def test_a_sentence_that_restates_the_rule_across_lines_is_not_a_conflict(home):
+    profile.seed(home.config)
+    memory = home.claude_home / "projects" / "-Users-me-Repos-y" / "memory"
+    memory.mkdir(parents=True)
+    (memory / "conventions.md").write_text(
+        "---\nname: conventions\ntype: project\n---\nCommit on main. Never add a\n"
+        "`Co-Authored-By: Claude ...` trailer to any commit message.\n"
+    )
+    assert not [f for f in profile.check(home.config) if f.kind == "conflict"]
+
+
+def test_a_rules_own_memories_and_kept_local_memories_are_not_reported(home):
+    profile.seed(home.config)
+    memory = home.claude_home / "projects" / "-Users-me-Repos-z" / "memory"
+    memory.mkdir(parents=True)
+    (memory / "feedback_exploratory_pacing.md").write_text(
+        "---\nname: feedback-exploratory-pacing\ntype: feedback\n---\nOffer, don't push.\n"
+    )
+    (memory / "query-style.md").write_text("---\nname: query-style\ntype: feedback\n---\nx\n")
+    (profile.rules_dir(home.config).parent / "keep-local.txt").write_text(
+        "# project knowledge\nquery-style\n"
+    )
+    assert not [f for f in profile.check(home.config) if f.kind == "uncovered"]
+
+
+def test_trash_is_skipped_and_acknowledged_conflicts_do_not_fail(home):
+    profile.seed(home.config)
+    line = "- **Keep the `Co-Authored-By: … Claude …` trailer on.**\n"
+    for folder in ("pixability-dev", ".trash/123/pixability-dev"):
+        skill = home.claude_home / "plugins" / folder / "skills" / "commit-guidelines" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text(line)
+    (home.claude_home / "settings.json").write_text(json.dumps({"attribution": False}))
+    conflicts = [f for f in profile.check(home.config) if f.kind == "conflict"]
+    assert len(conflicts) == 1 and ".trash" not in str(conflicts[0].path)
+    (profile.rules_dir(home.config).parent / "acknowledged.txt").write_text(
+        "# conflicts the guard hook handles\nno-coauthor-trailer pixability-dev/skills/commit-guidelines\n"
+    )
+    found = profile.check(home.config)
+    assert [f.kind for f in found if f.rule == "no-coauthor-trailer"] == ["acknowledged"]
+    assert cli(home, "check").exit_code == 0
