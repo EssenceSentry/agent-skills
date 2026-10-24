@@ -27,7 +27,18 @@ Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
   - A launchd job (`com.ax.sync`) syncs every 30 minutes.
   - `session-recall` is linked into both tools.
   - The vault is committed and pushed by hand (`ax vault commit && ax vault push`) until the schedule gets `--with-vault`.
-- **Next:** steps 6–8: runs, research ledger, dashboard.
+- **Steps 6–8 built 2026-10-24.**
+  - `ax runs`: delegation helper runs found through Spotlight, Claude background sessions, and subagents of both tools; 1,403 runs on this Mac.
+  - `ax exp` and the `research-director` skill:
+    - Each experiment is a vault note that has passed the value gate.
+    - Open proposals are ranked by value × P(change) per hour.
+    - Replaying the youtube-optimization studies ranks the two gating studies (0.62 and 0.50) far above the long shot (0.02).
+  - `ax serve`: a localhost dashboard (standard library only; it refuses foreign Host names).
+- **Deferred:**
+  - Run notes in `Runs/`.
+  - Cheap handoffs and supervisor agents.
+  - `ax mcp`.
+  - Linking `research-director` into both tools (needs `ax skills link research-director --apply`).
 
 ## Goal
 
