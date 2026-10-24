@@ -1142,6 +1142,134 @@ def brief_cmd(
     typer.echo(f"after approval: {shlex.join(plan['command'])}")
 
 
+learn_app = typer.Typer(
+    no_args_is_help=True, help="Propose profile rules from your corrections, for approval."
+)
+app.add_typer(learn_app, name="learn")
+
+
+@learn_app.command("scan")
+def learn_scan():
+    """Collect correction candidates from both tools' sessions and Codex's memories (no model)."""
+    from ax import learn
+
+    config = load()
+    found = learn.scan(config)
+    path = learn.save_candidates(config, found)
+    by_signal = {}
+    for c in found:
+        for signal in c["signals"]:
+            by_signal[signal] = by_signal.get(signal, 0) + 1
+    detail = ", ".join(f"{n} {name}" for name, n in sorted(by_signal.items()))
+    typer.echo(f"{len(found)} candidates ({detail}) in {path}")
+
+
+@learn_app.command("label")
+def learn_label(
+    model: str = typer.Option("haiku", help="The Claude model that labels candidates."),
+    limit: int = typer.Option(None, help="Label at most this many new candidates (a pilot)."),
+    batch: int = typer.Option(20, help="Candidates per model call."),
+    workers: int = typer.Option(4, help="Model calls at once."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Count what would be sent."),
+):
+    """Label new candidates with Claude through `claude -p`, redacting them first."""
+    from ax import learn
+
+    config = load()
+    candidates = learn.load_candidates(config)
+    if not candidates:
+        typer.echo("no candidates; run `ax learn scan` first", err=True)
+        raise typer.Exit(1)
+    labels = learn.load_labels(config)
+    todo = [c for c in candidates if c["id"] not in labels][: limit or None]
+    calls = -(-len(todo) // batch)
+    if dry_run:
+        typer.echo(f"would label {len(todo)} candidates in {calls} calls to {model}")
+        return
+    labels = learn.label(
+        config, todo, model=learn.claude_model(model), batch=batch, workers=workers
+    )
+    kept = sum(1 for c in candidates if labels.get(c["id"], {}).get("lasting"))
+    typer.echo(f"{len(labels)} labelled, {kept} of them lasting rules")
+
+
+def _learn_inputs():
+    from ax import learn
+
+    config = load()
+    return config, learn.load_candidates(config), learn.load_labels(config)
+
+
+@learn_app.command("propose")
+def learn_propose():
+    """Write proposal notes for groups with enough support, and report reinforced rules."""
+    from ax import learn
+
+    config, candidates, labels = _learn_inputs()
+    for rule in learn.propose(config, candidates, labels):
+        typer.echo(f"proposed {rule.id} ({rule.scope}): {rule.rule}")
+    for rule_id, counts in sorted(learn.reinforcement(config, candidates, labels).items()):
+        typer.echo(
+            f"reinforces {rule_id}: {counts['support']} sessions, "
+            f"{counts['recurrences']} after it was added"
+        )
+
+
+@learn_app.command("list")
+def learn_list(as_json: bool = typer.Option(False, "--json", help="Machine-readable output.")):
+    """Proposals waiting for your decision."""
+    found = [r for r in profile_module.load_rules(load()) if r.status == "proposed"]
+    if as_json:
+        typer.echo(json.dumps([r.to_dict() for r in found], indent=2))
+        return
+    for rule in found:
+        typer.echo(f"{rule.id:<32} {rule.scope:<22} {rule.rule}")
+    if not found:
+        typer.echo("no proposals")
+
+
+@learn_app.command("accept")
+def learn_accept(rule_id: str = typer.Argument(...)):
+    """Make a proposal an active rule; edit its note first if the wording is off."""
+    from ax import learn
+
+    try:
+        rule = learn.accept(load(), rule_id)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"accepted {rule.id}; run `ax profile compile --apply` to load it")
+
+
+@learn_app.command("reject")
+def learn_reject(rule_id: str = typer.Argument(...)):
+    """Drop a proposal; it returns only if its support doubles."""
+    from ax import learn
+
+    try:
+        learn.reject(load(), rule_id)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"rejected {rule_id}")
+
+
+@learn_app.command("recall")
+def learn_recall(as_json: bool = typer.Option(False, "--json", help="Machine-readable output.")):
+    """How many active rules the labelled corrections rediscover."""
+    from ax import learn
+
+    found = learn.recall(*_learn_inputs())
+    if as_json:
+        typer.echo(json.dumps(found, indent=2))
+        return
+    total = len(found["found"]) + len(found["missed"])
+    typer.echo(f"rediscovered {len(found['found'])} of {total} active rules")
+    for name in ("found", "missed"):
+        if found[name]:
+            typer.echo(f"  {name}: {', '.join(found[name])}")
+
+
 profile_app = typer.Typer(no_args_is_help=True, help="One set of working rules for both tools.")
 app.add_typer(profile_app, name="profile")
 
