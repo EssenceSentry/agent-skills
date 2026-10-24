@@ -72,6 +72,16 @@ CREATE TABLE IF NOT EXISTS unknown_records (
     PRIMARY KEY (session_key, record_type)
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS usage_snapshots (
+    provider TEXT NOT NULL,
+    window TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    used REAL NOT NULL,
+    resets_at TEXT,
+    window_minutes INTEGER,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (provider, window, observed_at)
+);
 """
 
 
@@ -242,6 +252,20 @@ class Store:
         rows = self.db.execute(
             "SELECT provider, kind, COUNT(*) AS n, SUM(note_path IS NOT NULL) AS rendered "
             "FROM sessions GROUP BY provider, kind ORDER BY provider, kind"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_usage(self, provider, window, observed_at, used, resets_at, window_minutes) -> None:
+        self.db.execute(
+            "INSERT OR IGNORE INTO usage_snapshots VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (provider, window, observed_at, used, resets_at, window_minutes, _now()),
+        )
+
+    def usage_history(self, provider: str, window: str) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT observed_at, used, resets_at FROM usage_snapshots "
+            "WHERE provider = ? AND window = ? ORDER BY observed_at",
+            (provider, window),
         ).fetchall()
         return [dict(r) for r in rows]
 

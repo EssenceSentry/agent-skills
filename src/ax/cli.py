@@ -1,11 +1,13 @@
 """The ax command line."""
 
 import json
+from datetime import UTC, datetime
 
 import typer
 
 from ax import search as search_module
 from ax import sync as sync_module
+from ax import usage as usage_module
 from ax import vault as vault_module
 from ax.config import load
 from ax.store import Store
@@ -13,6 +15,83 @@ from ax.store import Store
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 vault_app = typer.Typer(no_args_is_help=True, help="Commit and push the vault safely.")
 app.add_typer(vault_app, name="vault")
+usage_app = typer.Typer(invoke_without_command=True, help="Remaining allowance and forecasts.")
+app.add_typer(usage_app, name="usage")
+
+_CACHED = typer.Option(False, "--cached", help="Use the last readings; don't ask Claude /usage.")
+
+
+def _windows(config, cached: bool):
+    windows = usage_module.claude_windows(config, refresh=not cached)
+    windows += usage_module.codex_windows(config.codex_home)
+    usage_module.record(config, windows)
+    return windows
+
+
+@usage_app.callback()
+def usage_show(
+    ctx: typer.Context,
+    cached: bool = _CACHED,
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+):
+    """Show used and remaining allowance per tool and window, with a forecast to reset."""
+    if ctx.invoked_subcommand:
+        return
+    config = usage_module.load_config()
+    now = datetime.now(UTC)
+    rows = []
+    for w in _windows(config, cached):
+        history = usage_module.history(config, w.provider, w.name)
+        rows.append((w, usage_module.forecast(w, history, now)))
+    if as_json:
+        typer.echo(json.dumps([_usage_json(w, f) for w, f in rows], indent=2, default=str))
+        return
+    for w, f in rows:
+        typer.echo(_usage_line(w, f, now))
+
+
+@usage_app.command("guard")
+def usage_guard(
+    provider: str = typer.Option(..., help="claude or codex."),
+    window: str = typer.Option("weekly", help="session, weekly or weekly_fable."),
+    min_remaining: float = typer.Option(None, help="Percent that must be left; default: reserve."),
+    cached: bool = _CACHED,
+):
+    """Exit 0 when enough allowance is left, 1 when not, 69 when it can't be known."""
+    config = usage_module.load_config()
+    if min_remaining is None:
+        min_remaining = usage_module.reserve_for(config, provider, window)
+    code = usage_module.guard(_windows(config, cached), provider, window, min_remaining)
+    verdict = {0: "safe", 1: "below threshold", 69: "unknown"}[code]
+    typer.echo(f"{provider} {window}: {verdict} (needs {min_remaining:g}% left)")
+    raise typer.Exit(code)
+
+
+def _usage_line(w, f, now) -> str:
+    head = f"{w.provider:<6} {w.name:<12}"
+    if w.used is None:
+        return f"{head} unknown ({w.status})"
+    line = f"{head} {w.used:.0f}% used · {100 - w.used:.0f}% left"
+    if w.resets_at:
+        left = w.resets_at - now
+        hours = int(left.total_seconds() // 3600)
+        line += f" · resets {w.resets_at.astimezone():%a %H:%M} (in {hours // 24}d {hours % 24}h)"
+    if f:
+        if f.lasts:
+            low, high = round(f.projected_low), round(f.projected_high)
+            pace = f"{low}%" if low == high else f"{low}–{high}%"
+            line += f" · on pace for {pace} at reset"
+        elif f.runs_out_at:
+            line += f" · may run out {f.runs_out_at.astimezone():%a %H:%M}"
+    if w.status != "fresh":
+        line += f" [{w.status}]"
+    return line
+
+
+def _usage_json(w, f) -> dict:
+    out = {**w.__dict__, "remaining": None if w.used is None else 100 - w.used}
+    out["forecast"] = f.__dict__ if f else None
+    return out
 
 
 @vault_app.command("init")
