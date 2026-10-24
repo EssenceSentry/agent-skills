@@ -13,8 +13,11 @@ import copy
 import json
 import os
 import re
+import shlex
 import shutil
 import sqlite3
+import subprocess
+import sys
 import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -29,6 +32,8 @@ TERMINAL = frozenset({"done", "failed", "stopped", "ended"})
 # `ax job wait` exit codes; 69 (no such job) matches `ax usage guard`'s "unknown".
 WAIT_CODES = {"done": 0, "failed": 1, "stopped": 2, "ended": 2, "stalled": 3, "timeout": 124}
 SOURCE_KINDS = ("file", "pid", "sagemaker", "seamless")
+# Kinds ax checks itself: the watchable sources plus `ax job run`, whose runner is a process.
+CHECKED_KINDS = (*SOURCE_KINDS, "run")
 
 _KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 _STATUS_WORDS = {
@@ -269,6 +274,60 @@ def watch(config, kind, ref, *, key=None, label=None, options=None, cwd=None, en
     return refresh(config, key, force=True)
 
 
+def run(
+    config, argv, *, key=None, label=None, cwd=None, stdin: bytes | None = None, env=None
+) -> Job:
+    """Start `argv` detached under a runner that records its exit code, and register it.
+
+    `stdin`, such as a heredoc piped into `ax job run`, is saved and replayed to the
+    command. Output goes to the job's output.log.
+    """
+    from ax import job_sources
+
+    if not argv:
+        raise ValueError("give the command to run after --")
+    cwd = cwd or os.getcwd()
+    key = key or _run_key(config, argv[0])
+    folder = jobs_dir(config) / check_key(key)
+    log = folder / "output.log"
+    spec = {
+        "argv": list(argv),
+        "log": str(log),
+        "events": str(events_path(config, key)),
+        "pid": None,
+        "start": None,
+    }
+    job = _register(config, key, "run", shlex.join(argv), label=label, spec=spec, cwd=cwd, env=env)
+    if job.spec.get("pid"):
+        return job  # already started under this key
+    stdin_file = "-"
+    if stdin:
+        (folder / "stdin").write_bytes(stdin)
+        stdin_file = str(folder / "stdin")
+    runner = subprocess.Popen(
+        [sys.executable, "-m", "ax.job_runner", str(events_path(config, key)), str(log), stdin_file, cwd, "--", *argv],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )  # fmt: skip
+    with connect(config) as db, _transaction(db):
+        job = _load(db, key)
+        job.spec = {**job.spec, "pid": runner.pid, "start": job_sources.process_start(runner.pid)}
+        _save(db, job)
+    return refresh(config, key, force=True)
+
+
+def _run_key(config, program: str) -> str:
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", os.path.basename(program)).strip(".-_") or "run"
+    base = f"{stem[:40]}-{datetime.now():%m%d-%H%M%S}"
+    key, n = base, 1
+    while get(config, key):
+        n += 1
+        key = f"{base}-{n}"
+    return key
+
+
 def get(config, key) -> Job | None:
     with connect(config) as db:
         return _load(db, key)
@@ -407,7 +466,7 @@ def refresh(config, key, *, now: datetime | None = None, force: bool = False) ->
             lines, job.offset = read_lines(events_path(config, key), job.offset)
             for update in lines:
                 apply(db, job, update, ts)
-            due = job.kind in SOURCE_KINDS and not job.terminal and (force or _due(job, now))
+            due = job.kind in CHECKED_KINDS and not job.terminal and (force or _due(job, now))
             slow = due and job_sources.MIN_INTERVAL.get(job.kind, 0) > 0
             if due:
                 job.checked = ts

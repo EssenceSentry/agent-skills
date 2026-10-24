@@ -1,9 +1,13 @@
 """The ax command line."""
 
 import difflib
+import io
 import json
 import os
+import select
+import stat
 import subprocess
+import sys
 import time
 from datetime import UTC, datetime
 
@@ -701,6 +705,48 @@ def job_watch(
     typer.echo(job.key)
     if job.check_error:
         typer.echo(f"warning: {job.check_error}", err=True)
+
+
+def _piped_stdin() -> bytes | None:
+    """Bytes piped into ax, such as a heredoc; None for a terminal or an idle pipe.
+
+    An agent's shell may leave stdin as an open pipe nobody writes to, so a pipe is
+    read only if data is ready almost at once.
+    """
+    stream = sys.stdin
+    if stream is None or stream.isatty():
+        return None
+    try:
+        mode = os.fstat(stream.fileno()).st_mode
+    except (OSError, ValueError, io.UnsupportedOperation):
+        return stream.buffer.read() or None  # an in-memory stream, as in tests
+    if stat.S_ISREG(mode):
+        return stream.buffer.read() or None
+    if stat.S_ISFIFO(mode) and select.select([stream], [], [], 0.2)[0]:
+        return stream.buffer.read() or None
+    return None
+
+
+@job_app.command("run")
+def job_run(
+    command: list[str] = typer.Argument(..., help="The command, after --."),
+    key: str = typer.Option(None, help="Name the job; defaults to the program and the time."),
+    label: str = typer.Option(None, help="A human description."),
+    no_stdin: bool = typer.Option(False, "--no-stdin", help="Don't pass piped input on."),
+    as_json: bool = _JSON,
+):
+    """Start a command detached, record its exit code, and print the job's key.
+
+    A heredoc piped in is replayed to the command: ax job run -- python - <<'PY' ... PY.
+    The command can report progress by appending JSON lines to $AX_JOB_FILE.
+    """
+    config = _jobs_config()
+    stdin = None if no_stdin else _piped_stdin()
+    job = _job_or_exit(lambda: jobs_module.run(config, command, key=key, label=label, stdin=stdin))
+    if as_json:
+        typer.echo(json.dumps({**job.to_dict(), "output_log": job.spec["log"]}, indent=2))
+    else:
+        typer.echo(job.key)
 
 
 @job_app.command("ls")

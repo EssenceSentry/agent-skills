@@ -19,7 +19,7 @@ from pathlib import Path
 from ax.jobs import Job, Update, normalize_status, number, read_lines
 
 # Seconds between checks of one job; AWS calls are spaced out, local ones are free.
-MIN_INTERVAL = {"file": 0, "pid": 0, "sagemaker": 20, "seamless": 20}
+MIN_INTERVAL = {"file": 0, "pid": 0, "run": 0, "sagemaker": 20, "seamless": 20}
 SAGEMAKER_TYPES = ("processing", "training", "transform")
 SEAMLESS_PREFIX = "SEAMLESS_PROGRESS "
 SEAMLESS_LOG_GROUP = "/aws/sagemaker/ProcessingJobs"
@@ -137,6 +137,7 @@ def check(job: Job, now: datetime) -> list[Update]:
     return {
         "file": _check_file,
         "pid": _check_pid,
+        "run": _check_run,
         "sagemaker": _check_sagemaker,
         "seamless": _check_seamless,
     }[job.kind](job)
@@ -225,6 +226,23 @@ def _check_pid(job: Job) -> list[Update]:
     if current and current != started:
         return [Update(status="ended", message=f"process {pid} ended and its number was reused")]
     return []
+
+
+def _check_run(job: Job) -> list[Update]:
+    """An `ax job run` runner gone without writing its exit line was killed.
+
+    The runner writes that line just before it exits, so lines that arrived after
+    this refresh read the events file are read again before calling the job ended.
+    """
+    if job.spec.get("pid") is None or not _check_pid(job):
+        return []
+    late, job.offset = read_lines(Path(job.spec["events"]), job.offset)
+    if any(update.status for update in late):
+        return late
+    return [
+        *late,
+        Update(status="ended", message="the runner was killed before the command finished"),
+    ]
 
 
 # sagemaker
