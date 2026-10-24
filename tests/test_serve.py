@@ -144,3 +144,28 @@ def test_requests_for_other_host_names_are_refused(env, state, monkeypatch):
     finally:
         server.shutdown()
     assert refused.value.code == 403
+
+
+def test_the_jobs_panel_shows_running_and_recent_jobs(env):
+    from ax import jobs
+
+    jobs.new(env.config, "score-1", total=40, unit="rows", label="Score <i>rows</i>")
+    now = datetime.now(UTC)
+    with jobs.connect(env.config) as db:
+        for minutes, done in ((6, 4), (4, 8), (2, 12), (0, 16)):
+            job = jobs._load(db, "score-1")
+            jobs.apply(
+                db, job, jobs.Update(done=done), jobs.now_iso(now - timedelta(minutes=minutes))
+            )
+            jobs._save(db, job)
+    jobs.new(env.config, "old")
+    with jobs.connect(env.config) as db:
+        long_ago = jobs.now_iso(now - timedelta(days=3))
+        db.execute("UPDATE jobs SET status = 'done', finished = ?, updated = ? WHERE key = 'old'",
+                   (long_ago, long_ago))  # fmt: skip
+    state = serve.collect_state(env.config, usage_of=fake_usage, runs_of=fake_runs)
+    [row] = state["jobs"]
+    assert row["key"] == "score-1" and row["percent"] == 40 and row["eta"].startswith("~")
+    page = serve.render_body(state)
+    assert "score-1" in page and "16/40 rows" in page
+    assert "<i>rows</i>" not in page and "&lt;i&gt;rows&lt;/i&gt;" in page

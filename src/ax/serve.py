@@ -1,4 +1,4 @@
-"""A localhost dashboard: usage, runs, campaigns and recent sessions.
+"""A localhost dashboard: usage, jobs, runs, campaigns and recent sessions.
 
 Standard library only. The server binds to 127.0.0.1, renders everything on
 the server with every value HTML-escaped, and the page swaps in a fresh
@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote
 
-from ax import exp, runs, usage
+from ax import exp, job_eta, job_follow, jobs, runs, usage
 from ax.config import Config
 from ax.config import load as load_config
 from ax.store import Store
@@ -23,6 +23,8 @@ __all__ = ["Path", "load_config"]
 
 _REFRESH_SECONDS = 5
 _USAGE_TTL = 60  # Claude's helper is a subprocess; don't run it on every refresh.
+_JOBS_SHOWN = 12
+_FINISHED_SHOWN_FOR = 86400  # seconds a finished job stays on the panel
 _usage_cache: dict = {"at": 0.0, "value": None}
 
 
@@ -30,6 +32,7 @@ def collect_state(config: Config, *, usage_of=None, runs_of=None) -> dict:
     state = {
         "generated": datetime.now(UTC).isoformat(timespec="seconds"),
         "usage": [],
+        "jobs": [],
         "runs": [],
         "sessions": [],
         "campaigns": [],
@@ -38,6 +41,7 @@ def collect_state(config: Config, *, usage_of=None, runs_of=None) -> dict:
     }
     sections = {
         "usage": lambda: _usage_rows(config, usage_of or _cached_usage),
+        "jobs": lambda: _jobs(config),
         "runs": lambda: [_run_row(r) for r in (runs_of or _runs)(config)],
         "sessions": lambda: _sessions(config),
         "campaigns": lambda: _campaigns(config),
@@ -74,6 +78,8 @@ def render_body(state: dict) -> str:
         notes = "".join(f"<li>{e(x)}</li>" for x in state["errors"])
         parts.append(f'<section class="notice"><ul>{notes}</ul></section>')
     parts.append(f'<section class="meters">{"".join(_meter(w) for w in state["usage"])}</section>')
+    if state["jobs"]:
+        parts.append(_panel("Jobs", _jobs_table(state["jobs"]), ""))
     parts.append('<div class="columns">')
     parts.append(_panel("Runs", _runs_table(state["runs"]), "No active or recent runs."))
     parts.append(
@@ -141,6 +147,37 @@ def _usage_rows(config: Config, usage_of) -> list[dict]:
             }
         )
     return rows
+
+
+def _jobs(config: Config) -> list[dict]:
+    """Running jobs and those that ended in the last day, as stored: the page never
+    refreshes a job itself, so a view never calls AWS. Followers and the background
+    poller keep them current."""
+    now = datetime.now(UTC)
+    rows = []
+    for job in jobs.list_jobs(config, include_finished=True, refresh_active=False):
+        ended = jobs.parse_iso(job.finished) if job.finished else None
+        if ended and (now - ended).total_seconds() > _FINISHED_SHOWN_FOR:
+            continue
+        eta = None if job.terminal else job_eta.estimate(config, job, now)
+        follower = job_follow.running(config, job.key)
+        rows.append(
+            {
+                "key": job.key,
+                "label": job.label or (f"{job.kind} {job.ref}" if job.ref else job.kind),
+                "status": job.status,
+                "stage": job.stage,
+                "progress": jobs.progress_text(job),
+                "percent": round(100 * job.done / job.total) if job.total and job.done else None,
+                "eta": eta["text"] if eta else None,
+                "check_error": job.check_error,
+                "updated": job.updated,
+                "link": follower.get("link") if follower else None,
+            }
+        )
+    running = [r for r in rows if r["status"] == "running"]
+    ended = sorted((r for r in rows if r["status"] != "running"), key=lambda r: r["updated"])
+    return (running + ended[::-1])[:_JOBS_SHOWN]
 
 
 def _runs(config: Config):
@@ -226,6 +263,29 @@ def _runs_table(rows: list[dict]) -> str:
         for r in rows[:20]
     )
     return f"<table>{body}</table>"
+
+
+def _jobs_table(rows: list[dict]) -> str:
+    e = html.escape
+    out = []
+    for r in rows:
+        bar = ""
+        if r["percent"] is not None:
+            bar = f'<div class="meter"><span style="width:{min(r["percent"], 100)}%"></span></div>'
+        detail = " · ".join(
+            x for x in (r["progress"] if r["progress"] != "-" else "", r["eta"], r["stage"]) if x
+        )
+        key = e(r["key"])
+        if r["link"]:
+            key = f'<a href="{e(r["link"])}" target="_blank" rel="noopener noreferrer">{key}</a>'
+        warn = f'<div class="warn small">{e(r["check_error"])}</div>' if r["check_error"] else ""
+        out.append(
+            f'<tr><td><span class="state {e(r["status"])}">{e(r["status"])}</span></td>'
+            f'<td><strong>{key}</strong> <span class="muted small">{e(_short(r["label"], 70))}'
+            f'</span>{bar}<div class="muted small">{e(detail)}{" · " if detail else ""}'
+            f"updated {e(_ago(r['updated']))}</div>{warn}</td></tr>"
+        )
+    return f"<table>{''.join(out)}</table>"
 
 
 def _campaign(c: dict) -> str:
@@ -323,7 +383,8 @@ tr:first-child td { border-top:none; }
 .state { display:inline-block; font-size:12px; padding:1px 8px; border-radius:999px;
   border:1px solid var(--line); color:var(--muted); white-space:nowrap; }
 .state.running, .state.waiting { color:var(--accent); border-color:var(--accent); }
-.state.lost, .state.failed { color:var(--high); border-color:var(--high); }
+.state.lost, .state.failed, .state.ended { color:var(--high); border-color:var(--high); }
+td .meter { margin:6px 0 4px; max-width:420px; }
 .campaign + .campaign { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
 .top { margin:8px 0 0; padding-left:0; list-style:none; }
 .top li { margin:4px 0; } .score { font-variant-numeric:tabular-nums; color:var(--accent);
