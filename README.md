@@ -37,9 +37,32 @@ take effect at once; after a change to the dependencies, run the same command wi
 | `ax hooks install` | Hooks in Claude Code and Codex that sync when a session ends |
 | `ax schedule install` | A launchd job that syncs every 30 minutes |
 | `ax skills link NAME…` | Link this repository's skills into both tools |
+| `ax job` (`new`, `watch`, `run`, `ls`, `show`, `wait`, `follow`, `unfollow`, `poll`, `forget`) | Long jobs any agent can register and wait on; see below |
 
-The last three print what they would change and do nothing without
-`--apply`.
+`hooks install`, `schedule install` and `skills link` print what they would change
+and do nothing without `--apply`.
+
+### Jobs
+
+`ax job` tracks long work wherever it was started, with nothing to import in the
+job's own environment.
+
+- **Register:**
+  - `ax job new KEY` prints an events file. A producer appends JSON lines to it: `{"done": 10, "total": 40}`, `{"stage": "scoring"}`, `{"status": "done"}`, `{"exit": 0}`.
+  - `ax job watch file|pid|sagemaker|seamless REF` lets ax check the job itself.
+  - `ax job run -- CMD` starts a command detached and records its exit code. A heredoc piped in is replayed to the command, and the command finds its events file in `$AX_JOB_FILE`.
+- **Wait:** `ax job wait KEY` blocks without polling an agent. Exit codes:
+  - 0: done;
+  - 1: failed;
+  - 2: stopped or ended;
+  - 3: stalled;
+  - 124: timed out;
+  - 69: no such job.
+- **Follow:** `ax job follow KEY --share none|lan|cloudflare --notify --detach`, or `--share` and `--notify` on `new`, `watch` and `run`.
+  - It serves a token-protected, read-only page for the job, optionally through a Cloudflare quick tunnel.
+  - It sends ntfy messages for the start, progress, new stages, stalls and the end.
+  - It stops two minutes after the job ends.
+  - Set the ntfy topic in `[notify] topic` in `config.toml`, or in `AX_NTFY_TOPIC`. On ntfy.sh the topic name is the only password, and messages carry the dashboard link.
 
 Paths default to `~/.claude`, `~/.codex`, `~/Vaults/agents` and
 `~/.local/share/ax`; override them in `~/.config/ax/config.toml` (`[paths]`),

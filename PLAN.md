@@ -41,6 +41,14 @@ Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
     - an idle stdin pipe, which returns in 0.36 s;
     - the file protocol from bash.
   - SageMaker and Seamless have been tested only against recorded AWS responses so far, not yet against a real job.
+- **Follower built 2026-10-24:**
+  - `ax job follow` with the dashboard, LAN or Cloudflare sharing, and ntfy. 258 tests pass.
+  - A live run on a phone-sized screen:
+    - a synthetic heredoc job shared through a real quick tunnel;
+    - 401 without the token; the link set a Secure, HttpOnly cookie; a foreign host name got 403;
+    - seven ntfy messages reached a local stand-in server, each opening the public link;
+    - the follower and cloudflared exited after the linger.
+  - Not yet sent to a real ntfy topic.
 - **Deferred:**
   - Run notes in `Runs/`.
   - Cheap handoffs and supervisor agents.
