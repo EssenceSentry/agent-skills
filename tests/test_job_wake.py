@@ -1,4 +1,5 @@
 import json
+import subprocess
 from datetime import UTC, datetime
 
 import pytest
@@ -8,13 +9,27 @@ from ax import job_follow, job_wake, jobs
 from ax.cli import app
 
 
+class Child:
+    def __init__(self, code=None):
+        self.pid, self.code = 4242, code
+
+    def wait(self, timeout=None):
+        if self.code is None:
+            raise subprocess.TimeoutExpired("agent", timeout)
+        return self.code
+
+
 class Spawned:
-    def __init__(self):
-        self.calls = []
+    """Records each launch; the child keeps running unless `code` says it exited."""
+
+    def __init__(self, code=None, output=""):
+        self.calls, self.code, self.output = [], code, output
 
     def __call__(self, argv, *, cwd, log, env):
         self.calls.append({"argv": argv, "cwd": cwd, "log": log, "env": env})
-        return 4242
+        with open(log, "a") as f:
+            f.write(self.output)
+        return Child(self.code)
 
 
 def on_path(name):
@@ -41,8 +56,10 @@ def test_auto_wakes_the_session_that_registered_the_job(env):
     spawn = Spawned()
     codex = ended_job(env, "a", agent={"CODEX_THREAD_ID": "th-1"})
     woke = job_wake.wake(env.config, codex, spawn=spawn, which=on_path)
-    assert spawn.calls[0]["argv"][:4] == ["/bin/codex", "exec", "resume", "th-1"]
-    assert spawn.calls[0]["argv"][4].startswith("[ax job]")
+    # Codex refuses an untrusted folder outside git unless told; the job's folder may be one.
+    argv = spawn.calls[0]["argv"]
+    assert argv[:5] == ["/bin/codex", "exec", "resume", "--skip-git-repo-check", "th-1"]
+    assert argv[5].startswith("[ax job]")
     assert woke["agent"] == "codex" and woke["pid"] == 4242
     claude = ended_job(env, "b", agent={"CLAUDE_CODE_SESSION_ID": "s-1"})
     job_wake.wake(env.config, claude, spawn=spawn, which=on_path)
@@ -74,6 +91,14 @@ def test_a_job_without_a_session_or_cli_cannot_be_woken(env):
         job_wake.wake(env.config, job, spawn=Spawned(), which=lambda name: None)
     with pytest.raises(job_wake.WakeError, match="no claude session"):
         job_wake.wake(env.config, job, "claude", spawn=Spawned(), which=on_path)
+
+
+def test_an_agent_that_exits_at_once_reports_why(env):
+    job = ended_job(env, agent={"CLAUDE_CODE_SESSION_ID": "s-1"})
+    spawn = Spawned(code=1, output="Workspace not trusted. Run `claude` in /x once.\n")
+    with pytest.raises(job_wake.WakeError, match="Workspace not trusted"):
+        job_wake.wake(env.config, job, spawn=spawn, which=on_path)
+    assert not [e for e in jobs.events(env.config, "score") if e["type"] == "woke"]
 
 
 class Timeline:
@@ -123,4 +148,4 @@ def test_cli_wake_dry_run_prints_the_command(env):
         app, ["job", "wake", "score", "--dry-run"], env={"AX_CONFIG": str(env.config_path)}
     )
     assert result.exit_code == 0, result.output
-    assert "codex exec resume th-1" in result.output
+    assert "exec resume --skip-git-repo-check th-1 <note>" in result.output

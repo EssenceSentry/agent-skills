@@ -1,7 +1,8 @@
 """Wake the agent session that registered a job, with a short note on how it ended.
 
 The note goes in as a new turn of that session:
-- Codex: `codex exec resume <thread> <note>` runs one turn without a terminal.
+- Codex: `codex exec resume <thread> <note>` runs one turn without a terminal, in
+  the folder the job was registered from, which need not be a git repository.
 - Claude Code: `claude --bg --resume <session> <note>` continues the session in the
   background, or a copy of it when the session is still open (Claude Code says so).
 
@@ -14,6 +15,7 @@ import os
 import shlex
 import shutil
 import subprocess
+from pathlib import Path
 
 from ax import jobs
 
@@ -74,7 +76,7 @@ def choose(job, agent: str = "auto") -> tuple[str, str]:
 
 def command(agent: str, session: str, note: str, binary: str) -> list[str]:
     if agent == "codex":
-        return [binary, "exec", "resume", session, note]
+        return [binary, "exec", "resume", "--skip-git-repo-check", session, note]
     return [binary, "--bg", "--resume", session, note]
 
 
@@ -86,9 +88,9 @@ def clean_env(environ) -> dict:
     }
 
 
-def _spawn(argv, *, cwd, log, env) -> int:
+def _spawn(argv, *, cwd, log, env) -> subprocess.Popen:
     with open(log, "ab") as out:
-        child = subprocess.Popen(
+        return subprocess.Popen(
             argv,
             cwd=cwd,
             env=env,
@@ -97,7 +99,15 @@ def _spawn(argv, *, cwd, log, env) -> int:
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-    return child.pid
+
+
+def _last_line(log: str) -> str:
+    try:
+        text = Path(log).read_text(errors="replace")
+    except OSError:
+        return ""
+    lines = [line for line in text.splitlines() if line.strip()]
+    return lines[-1] if lines else ""
 
 
 def plan(config, job, agent: str = "auto", *, which=shutil.which, require=True) -> dict:
@@ -114,12 +124,31 @@ def plan(config, job, agent: str = "auto", *, which=shutil.which, require=True) 
 
 
 def wake(
-    config, job, agent: str = "auto", *, spawn=_spawn, which=shutil.which, environ=None
+    config,
+    job,
+    agent: str = "auto",
+    *,
+    spawn=_spawn,
+    which=shutil.which,
+    environ=None,
+    settle: float = 5.0,
 ) -> dict:
-    """Start the agent's resumed turn in the background and record it on the job."""
+    """Start the agent's resumed turn in the background and record it on the job.
+
+    A refusal comes back within a second or two (an untrusted folder, an unknown
+    session), so the launch is given `settle` seconds to fail before it counts.
+    """
     found = plan(config, job, agent, which=which)
+    agent = found["agent"]
     env = clean_env(os.environ if environ is None else environ)
-    found["pid"] = spawn(found["argv"], cwd=found["cwd"], log=found["log"], env=env)
+    child = spawn(found["argv"], cwd=found["cwd"], log=found["log"], env=env)
+    try:
+        code = child.wait(timeout=settle)
+    except subprocess.TimeoutExpired:
+        code = None
+    if code:
+        raise WakeError(f"{agent} exited with {code}: {_last_line(found['log'])}")
+    found["pid"] = child.pid
     jobs.record_event(
         config,
         job.key,
@@ -130,4 +159,4 @@ def wake(
 
 
 def describe(found: dict) -> str:
-    return shlex.join(found["argv"][:4]) + " <note>"
+    return shlex.join(found["argv"][:-1]) + " <note>"
