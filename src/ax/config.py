@@ -22,6 +22,8 @@ class Config:
     claude_usage_script: Path | None = None
     # Percent of a window to keep free, e.g. (("claude.weekly", 25),); guards default to it.
     reserve: tuple[tuple[str, float], ...] = ()
+    # Folders holding delegation run directories; empty means ask Spotlight.
+    run_roots: tuple[Path, ...] = ()
 
     @property
     def db_path(self) -> Path:
@@ -39,6 +41,7 @@ def load(path: Path | None = None) -> Config:
     paths = raw.get("paths", {})
     sync = raw.get("sync", {})
     usage = raw.get("usage", {})
+    runs = raw.get("runs", {})
 
     def p(key, default):
         return Path(paths.get(key, default)).expanduser()
@@ -57,4 +60,5 @@ def load(path: Path | None = None) -> Config:
         ),
         claude_usage_script=Path(script).expanduser() if script else None,
         reserve=tuple((k, float(v)) for k, v in usage.get("reserve", {}).items()),
+        run_roots=tuple(Path(r).expanduser() for r in runs.get("roots", ())),
     )

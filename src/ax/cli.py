@@ -4,11 +4,13 @@ import difflib
 import json
 import os
 import subprocess
+import time
 from datetime import UTC, datetime
 
 import typer
 
 from ax import glue
+from ax import runs as runs_module
 from ax import search as search_module
 from ax import sync as sync_module
 from ax import usage as usage_module
@@ -21,6 +23,100 @@ vault_app = typer.Typer(no_args_is_help=True, help="Commit and push the vault sa
 app.add_typer(vault_app, name="vault")
 usage_app = typer.Typer(invoke_without_command=True, help="Remaining allowance and forecasts.")
 app.add_typer(usage_app, name="usage")
+runs_app = typer.Typer(invoke_without_command=True, help="Delegated and background runs.")
+app.add_typer(runs_app, name="runs")
+_SINCE = typer.Option(1.0, help="Days back to include finished runs.")
+_ALL = typer.Option(False, "--all", help="Include finished runs of any age.")
+
+
+def _collect(since: float, all_: bool):
+    config = runs_module.load_config()
+    return runs_module.collect(config, since_days=36500 if all_ else since)
+
+
+def _ago(when) -> str:
+    if not when:
+        return "?"
+    seconds = int((datetime.now(UTC) - when).total_seconds())
+    for size, unit in ((86400, "d"), (3600, "h"), (60, "m")):
+        if seconds >= size:
+            return f"{seconds // size}{unit} ago"
+    return "now"
+
+
+def _runs_table(found) -> str:
+    lines = [f"{'id':<9} {'source':<17} {'state':<12} {'project':<16} {'updated':<9} title"]
+    for r in found:
+        lines.append(
+            f"{r.id:<9} {r.source:<17} {r.state:<12} {r.project[:16]:<16} {_ago(r.updated):<9} "
+            f"{r.title[:60]}"
+        )
+    return "\n".join(lines)
+
+
+@runs_app.callback()
+def runs_list(
+    ctx: typer.Context,
+    since: float = _SINCE,
+    all_: bool = _ALL,
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+):
+    """List running runs and recently finished ones, newest first."""
+    if ctx.invoked_subcommand:
+        return
+    found = _collect(since, all_)
+    if as_json:
+        rows = [{**r.__dict__, "active": r.active} for r in found]
+        typer.echo(json.dumps(rows, indent=2, default=str))
+    else:
+        typer.echo(_runs_table(found) if found else "no runs")
+
+
+@runs_app.command("watch")
+def runs_watch(interval: float = typer.Option(3.0, help="Seconds between refreshes.")):
+    """Refresh the list of active and recent runs until Ctrl-C."""
+    try:
+        while True:
+            found = _collect(1.0, False)
+            typer.clear()
+            typer.echo(f"ax runs · {datetime.now():%H:%M:%S} · Ctrl-C to stop\n")
+            typer.echo(_runs_table(found) if found else "no runs")
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        pass
+
+
+@runs_app.command("show")
+def runs_show(run_id: str = typer.Argument(..., help="An id, or its start, from `ax runs`.")):
+    """Details of one run: where it lives, its note and the start of its brief."""
+    run = runs_module.find(_collect(1.0, True), run_id)
+    if not run:
+        typer.echo(f"no single run matches {run_id}")
+        raise typer.Exit(1)
+    for key, value in run.__dict__.items():
+        if value is not None:
+            typer.echo(f"{key:<11} {value}")
+    brief = run.path / "brief.md" if run.path and run.path.is_dir() else None
+    if brief and brief.exists():
+        typer.echo("\nbrief:")
+        for line in brief.read_text(errors="replace").splitlines()[:15]:
+            typer.echo(f"    {line}")
+
+
+@runs_app.command("stop")
+def runs_stop(run_id: str = typer.Argument(..., help="An id, or its start, from `ax runs`.")):
+    """Ask a running delegation helper to stop; its own runner ends its processes."""
+    run = runs_module.find(_collect(1.0, True), run_id)
+    if not run:
+        typer.echo(f"no single run matches {run_id}")
+        raise typer.Exit(1)
+    try:
+        runs_module.stop(run)
+    except runs_module.CannotStop as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1) from None
+    typer.echo(f"asked {run.id} to stop")
+
 
 _CACHED = typer.Option(False, "--cached", help="Use the last readings; don't ask Claude /usage.")
 

@@ -268,6 +268,13 @@ class Store:
             hits.append(hit)
         return hits
 
+    def subagents_since(self, since: str) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT * FROM sessions WHERE kind = 'subagent' AND ended >= ? ORDER BY ended DESC",
+            (since,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def unknown_totals(self) -> list[dict]:
         rows = self.db.execute(
             "SELECT provider, record_type, SUM(count) AS count, MAX(version) AS version "
