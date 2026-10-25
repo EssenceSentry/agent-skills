@@ -491,6 +491,34 @@ Follow-ups get proposed and then lost between conversations ("an umbrella skill 
 - **Who adds:** the user, or an agent when the user asks to save something for later or declines a proposed next step with "not now" and wants it kept. Agents never add to-dos on their own initiative, so the list stays the user's.
 - **Left out for now:** due dates, priorities and an MCP tool (agents in both tools have a shell).
 
+### 16. The ax app: one place for people, built with atelier (agreed 2026-10-25)
+
+Most of ax is for agents, but approvals, reviews, watching work and catching up on it are the user's. Today that is split between a plain `ax serve` page, one small dashboard per job, and Obsidian. One atelier app replaces them.
+
+- **What it is:** an app generated from atelier (kinds monitor and review station, theme `instrument`), its code in `ui/` in this repository. Its built pages ship inside the ax package, so `ax serve` runs it without Node; CI fails when the build is out of date.
+- **How it talks to ax:** `ax serve` hosts the pages plus a JSON API and a live-update stream (server-sent events), on 127.0.0.1 with a token like the job dashboards' and the Origin check qmd uses. Every endpoint calls the same Python functions as the CLI, so an action in the app does exactly what its command does.
+- **Screens, built in this order, each useful alone:**
+  1. **Now:**
+     - waiting for you: rule proposals and review flags, to-dos, failed jobs or ones a health check flagged, usage near a limit;
+     - jobs running, with progress, estimate and log;
+     - recent conversations with handles.
+     - Actions: accept or reject a proposal; keep, retire or guard a rule; mark a to-do done or drop it, or add one. Each asks for confirmation.
+  2. **Reader:** any vault note rendered as Markdown, with `[[wiki links]]` and `> [!note]` callouts resolved to app pages. It is read-only; edit notes in VS Code.
+  3. **Conversations:** one search box (`ax find`, by source), and a page per conversation with its outline, the conversations it builds on and those built on it, its to-dos and its full note in the reader. The Haiku card is fetched on request, marked as a model call.
+  4. **Rules and trends:**
+     - rules with maturity, confidence and the evidence behind each;
+     - frustration moments with their lessons;
+     - the scorecard's weeks as charts.
+- **Later:** jobs fold into the app and their own dashboards go; access from the phone through the sharing jobs already use; `ax serve` as a login service.
+
+### 17. Retire Obsidian as the interface (agreed 2026-10-25)
+
+The vault stays: plain Markdown in a git repository, readable in VS Code and in the app's reader. Obsidian as the way to see it goes, once the app covers each part.
+
+- **Remove:** the Bases views (Sessions, Rules, Experiments, Todos), the Home note, the starter `.obsidian` settings, and `ax vault init`'s job of writing them. `ax vault init` keeps the folder structure and git setup. The scorecard note goes when the Trends screen exists.
+- **Keep:** the notes and their frontmatter, `[[wiki links]]` (the reader resolves them, and VS Code shows them as text), `ax vault commit` and `push`. Nothing in the vault is deleted without the user: removing the old views and Home from the user's vault is a step the user approves.
+- **Docs:** README, skills and PLAN stop pointing at Obsidian once the app replaces each part.
+
 ## Schedule
 
 ### Saturday, afternoon and evening
