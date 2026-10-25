@@ -82,12 +82,16 @@ command has `--help`; most take `--json` for agents.
 - `ax doctor`: archive health. `ax serve`: the ax app for the user (what waits,
   usage and credits, jobs, conversations, a vault reader); `--share cloudflare
   --notify` reaches their phone.
+- `ax app` (`start`, `stop`, `status`, `open`, `service`): the app served in the
+  background at http://127.0.0.1:8765/, where the user can install it. Start it when
+  the user wants the app; `service --apply` keeps it running from login.
 
 ## What you may run alone, and what needs the user
 
 - **Alone:** find, search, recall (outline), here, job show and wait, todo list,
   todo add or done when the user asked, scorecard, usage, runs, profile list and
-  check, learn list and review, doctor, any `--help` or `--dry-run`.
+  check, learn list and review, doctor, app start, status and open, any `--help` or
+  `--dry-run`.
 - **Ask first:** anything that spends (`learn label`, `lab run`, `recall --for` or
   `--card`, briefs that launch workers, `index setup`), changes the user's rules or
   tools (`learn accept|reject|keep|retire|guard`, `profile add` or `compile

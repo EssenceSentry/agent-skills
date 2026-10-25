@@ -18,6 +18,7 @@ from ax.config import Config
 
 LABEL = "com.ax.sync"
 JOBS_LABEL = "com.ax.jobs"
+APP_LABEL = "com.ax.app"
 _EVENTS = ("SessionEnd", "Stop")
 # Codex gives SessionEnd hooks at most 3 seconds; ours only starts a background sync.
 _TIMEOUT = {"claude": 5, "codex": 3}
@@ -160,6 +161,23 @@ def plan_jobs_service(config: Config, *, ax: str, launch_agents: Path) -> list[C
         "StandardErrorPath": log,
     }
     path = launch_agents / f"{JOBS_LABEL}.plist"
+    before = path.read_text() if path.exists() else None
+    return [Change(path, before, plistlib.dumps(plist).decode())]
+
+
+def plan_app_service(config: Config, *, ax: str, launch_agents: Path, port: int) -> list[Change]:
+    """A launchd agent that keeps `ax serve` running from login, restarted whenever it stops."""
+    log = str(config.data / "app" / "serve.log")
+    plist = {
+        "Label": APP_LABEL,
+        "ProgramArguments": [ax, "serve", "--port", str(port)],
+        "KeepAlive": True,
+        "RunAtLoad": True,
+        "EnvironmentVariables": {"PATH": _launchd_path()},
+        "StandardOutPath": log,
+        "StandardErrorPath": log,
+    }
+    path = launch_agents / f"{APP_LABEL}.plist"
     before = path.read_text() if path.exists() else None
     return [Change(path, before, plistlib.dumps(plist).decode())]
 

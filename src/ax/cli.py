@@ -564,6 +564,109 @@ def serve(
         server.server_close()
 
 
+app_cmd = typer.Typer(
+    no_args_is_help=True,
+    help="The ax app, served in the background so it's always there to open or install.",
+)
+app.add_typer(app_cmd, name="app")
+_APP_PORT = typer.Option(
+    8765, help="Port on 127.0.0.1; an installed app needs it to stay the same."
+)
+
+
+@app_cmd.command("start")
+def app_start(port: int = _APP_PORT):
+    """Serve the app in the background, unless it already answers; prints its address."""
+    from ax import app_daemon
+
+    try:
+        found = app_daemon.start(load(), port=port)
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"{'started' if found['started'] else 'already running'}: {found['url']}")
+
+
+@app_cmd.command("stop")
+def app_stop():
+    """Stop the server `ax app start` began. The launchd service, if loaded, restarts it."""
+    from ax import app_daemon
+
+    config = load()
+    if not app_daemon.stop(config):
+        typer.echo("no server started by `ax app start` is running")
+        return
+    note = " (launchd restarts it: `ax app service --remove --apply` stops it for good)"
+    service = app_daemon.status(config)["service"]
+    typer.echo(f"stopped{note if service else ''}")
+
+
+@app_cmd.command("status")
+def app_status(
+    port: int = _APP_PORT,
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+):
+    """Whether the app answers, where, and whether launchd keeps it running."""
+    from ax import app_daemon
+
+    found = app_daemon.status(load(), port=port)
+    if as_json:
+        typer.echo(json.dumps(found, indent=2))
+        return
+    state = "running" if found["running"] else "not running"
+    service = "kept running by launchd" if found["service"] else "no launchd service"
+    typer.echo(f"{state} at {found['url']} · {service}")
+
+
+@app_cmd.command("open")
+def app_open(port: int = _APP_PORT):
+    """Start the app if needed and open it in the browser, where it can be installed."""
+    from ax import app_daemon
+
+    try:
+        found = app_daemon.start(load(), port=port)
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    app_daemon.open_in_browser(found["url"])
+    typer.echo(f"opened {found['url']}")
+
+
+@app_cmd.command("service")
+def app_service(
+    port: int = _APP_PORT,
+    apply: bool = typer.Option(False, "--apply", help="Write and load it; otherwise preview."),
+    remove: bool = typer.Option(False, "--remove", help="Unload and delete it."),
+):
+    """Keep `ax serve` running from login with launchd (com.ax.app), restarted if it stops."""
+    config = load()
+    path = glue.launch_agents_dir() / f"{glue.APP_LABEL}.plist"
+    domain = f"gui/{os.getuid()}"
+    if remove:
+        if not apply:
+            typer.echo(
+                f"would unload and delete {path}"
+                if path.exists()
+                else f"nothing would change: {path} is not there"
+            )
+            return
+        subprocess.run(["launchctl", "bootout", domain, str(path)], capture_output=True)
+        path.unlink(missing_ok=True)
+        typer.echo(f"removed {glue.APP_LABEL}")
+        return
+    changes = glue.plan_app_service(
+        config, ax=glue.ax_path(), launch_agents=glue.launch_agents_dir(), port=port
+    )
+    _report(changes, apply)
+    if apply:
+        from ax import app_daemon
+
+        app_daemon.stop(config)  # launchd takes over from a server `ax app start` began
+        subprocess.run(["launchctl", "bootout", domain, str(path)], capture_output=True)
+        subprocess.run(["launchctl", "bootstrap", domain, str(path)], check=True)
+        typer.echo(f"loaded {glue.APP_LABEL}; it serves http://127.0.0.1:{port}/")
+
+
 @vault_app.command("init")
 def vault_init(
     refresh: bool = typer.Option(
