@@ -245,3 +245,9 @@ def test_cli_scan_and_list(archive):
     assert "candidates" in scanned.output
     assert (archive.config.data / "learn" / "candidates.jsonl").exists()
     assert run("list").exit_code == 0
+
+
+def test_calls_counts_episodes_in_smaller_batches():
+    plain = [candidate(str(i), "s", "demo") for i in range(21)]
+    angry = [candidate(f"f{i}", "s", "demo", signals=["frustration"]) for i in range(6)]
+    assert learn.calls(plain + angry, batch=20) == 2 + 2

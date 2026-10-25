@@ -1282,7 +1282,7 @@ def learn_label(
         raise typer.Exit(1)
     labels = learn.load_labels(config)
     todo = learn.unlabelled(candidates, labels)[: limit or None]
-    calls = -(-len(todo) // batch)
+    calls = learn.calls(todo, batch=batch)
     if dry_run:
         typer.echo(f"would label {len(todo)} candidates in {calls} calls to {model}")
         return

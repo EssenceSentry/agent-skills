@@ -585,6 +585,12 @@ def unlabelled(candidates, labels) -> list:
     ]
 
 
+def calls(todo, *, batch: int = 20) -> int:
+    """How many model calls labelling `todo` takes: episodes go EPISODE_BATCH at a time."""
+    episodes = sum("frustration" in c["signals"] for c in todo)
+    return -(-(len(todo) - episodes) // batch) + -(-episodes // EPISODE_BATCH)
+
+
 def label(config, candidates, *, model=None, batch: int = 20, workers: int = 4) -> dict:
     """Label every candidate that needs it (see `unlabelled`); returns all labels."""
     labels = load_labels(config)
