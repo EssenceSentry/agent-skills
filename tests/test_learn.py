@@ -74,6 +74,85 @@ def test_scan_reads_only_the_users_own_corrections(archive):
     assert memory["project"] == "auto-classifier" and "breaking changes" in memory["text"]
 
 
+def test_scan_finds_frustration_explicit_requests_and_praise(env):
+    with Store(env.config.db_path) as store:
+        session(store.db, "f1")
+        messages(store.db, "f1",
+                 ("user", "Train the model on the reviewed rows and report the AUC on the test split."),
+                 ("assistant", "Starting the run."),
+                 ("tool", "ran `uv run python train.py --all-rows`"),
+                 ("assistant", "Done: AUC 0.97 on all rows."),
+                 ("user", "Very disappointing! You trained on the test rows."),
+                 ("assistant", "I added the plotting cell; titles are gone and the axes are labelled."),
+                 ("user", "Perfect, that's exactly how I want plots."),
+                 ("assistant", "Pushed the branch and opened the dashboard for you to review."),
+                 ("user", "Great, now run the audit."),
+                 ("user", "Remember: the testing split is never used for training."))  # fmt: skip
+        store.commit()
+    found = {c["text"]: c for c in learn.scan(env.config)}
+    angry = found["Very disappointing! You trained on the test rows."]
+    assert angry["signals"] == ["frustration"]
+    assert angry["episode"].startswith("user: Train the model on the reviewed rows")
+    assert "tool: uv run python train.py --all-rows" in angry["episode"]
+    assert "agent: Done: AUC 0.97 on all rows." in angry["episode"]
+    assert angry["commands"] == ["uv run python train.py --all-rows"]
+    praised = found["Perfect, that's exactly how I want plots."]
+    assert praised["signals"] == ["praise"] and "titles are gone" in praised["context"]
+    assert "Great, now run the audit." not in found  # praise that only moves on
+    told = found["Remember: the testing split is never used for training."]
+    assert told["signals"] == ["explicit", "phrase"]
+
+
+@pytest.mark.parametrize(
+    "text, marked",
+    [
+        ("I'm very disappointed with you.", True),
+        ("Why did you run it on everything?!", True),
+        ("DO NOT TOUCH THE CACHE FOLDER", True),
+        ("How many times do I have to say it", True),
+        ("You just had to run the repository that was proven to work!", True),
+        ("Run the AWS S3 sync with the KMS key.", False),
+        ("This looks good, thanks!", False),
+    ],
+)
+def test_frustration_markers(text, marked):
+    assert bool(learn.frustrated(text)) is marked
+
+
+def test_scan_reads_the_reason_for_a_rejected_tool_call(env):
+    said = (
+        "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if "
+        "it was a file edit, the new_string was NOT written to the file). To tell you how to "
+        "proceed, the user said:\nNever force-push; open a pull request instead."
+    )
+    records = [
+        {"type": "assistant", "timestamp": "2026-10-02T10:00:00Z", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash",
+             "input": {"command": "git push --force origin main"}}]}},
+        {"type": "user", "timestamp": "2026-10-02T10:00:05Z", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": said}]}},
+        {"type": "assistant", "timestamp": "2026-10-02T10:01:00Z", "message": {"content": [
+            {"type": "tool_use", "id": "t2", "name": "Edit", "input": {"file_path": "/x/a.py"}}]}},
+        {"type": "user", "timestamp": "2026-10-02T10:01:05Z", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t2",
+             "content": "The user doesn't want to proceed with this tool use."}]}},
+    ]  # fmt: skip
+    transcript = env.root / "rejected.jsonl"
+    transcript.write_text("".join(json.dumps(r) + "\n" for r in records))
+    with Store(env.config.db_path) as store:
+        session(store.db, "c1", provider="claude", entrypoint="claude-desktop")
+        store.db.execute("UPDATE sessions SET source_path = ? WHERE key = 'c1'", (str(transcript),))
+        store.commit()
+    [found] = [c for c in learn.scan(env.config) if c["source"] == "rejection"]
+    assert found["text"] == "Never force-push; open a pull request instead."
+    assert found["signals"] == ["rejection"] and found["commands"] == [
+        "git push --force origin main"
+    ]
+    assert "git push --force origin main" in found["context"] and found["ts"].startswith(
+        "2026-10-02"
+    )
+
+
 class FakeModel:
     def __init__(self, label):
         self.label, self.prompts = label, []
@@ -85,8 +164,8 @@ class FakeModel:
         return json.dumps([{**self.label(i), "id": i} for i in ids])
 
 
-def keep(topic, rule="Leave unrelated files alone.", kind="preference", scope="global"):
-    return {"kind": kind, "lasting": True, "rule": rule, "topic": topic, "scope": scope}
+def keep(topic, rule="Leave unrelated files alone.", kind="preference", scope="global", **more):
+    return {"kind": kind, "lasting": True, "rule": rule, "topic": topic, "scope": scope, **more}
 
 
 def test_label_redacts_batches_and_never_labels_twice(archive):
@@ -102,10 +181,23 @@ def test_label_redacts_batches_and_never_labels_twice(archive):
     assert again.prompts == []
 
 
-def candidate(cid, session_key, project, text="t", ts="2026-10-10T10:00:00Z"):
+def test_frustration_moments_are_labelled_with_their_episode(archive):
+    angry = {
+        **candidate("f", "s1", "demo", text="Very disappointing!", signals=["frustration"]),
+        "episode": "user: Train on the reviewed rows\ntool: python train.py --all-rows",
+    }
+    cs = [angry, candidate("p", "s2", "demo")]
+    model = FakeModel(lambda i: keep("test-split", frustrated=i == "f"))
+    labels = learn.label(archive.config, cs, model=model)
+    assert labels["f"]["frustrated"] is True and labels["p"]["frustrated"] is False
+    [prompt] = [p for p in model.prompts if "train.py --all-rows" in p]
+    assert '"id": "p"' not in prompt
+
+
+def candidate(cid, session_key, project, text="t", ts="2026-10-10T10:00:00Z", signals=("phrase",)):
     return {"id": cid, "session": session_key, "project": project, "provider": "codex",
             "ts": ts, "text": text, "note": f"Sessions/{session_key}.md", "source": "message",
-            "signals": ["phrase"], "context": ""}  # fmt: skip
+            "signals": list(signals), "context": "", "commands": []}  # fmt: skip
 
 
 def test_two_sessions_make_a_repo_proposal_and_two_projects_a_global_one(archive):
@@ -127,6 +219,23 @@ def test_two_sessions_make_a_repo_proposal_and_two_projects_a_global_one(archive
     assert (
         "2 sessions" in proposed["no-shims"].why and "[[Sessions/s3]]" in proposed["no-shims"].why
     )
+
+
+def test_one_explicit_request_or_one_frustration_moment_is_enough(archive):
+    cs = [candidate("a", "s1", "demo", signals=["explicit"]),
+          candidate("b", "s2", "demo", signals=["frustration"]),
+          candidate("c", "s3", "demo", signals=["frustration"]),
+          candidate("d", "s4", "demo")]  # fmt: skip
+    labels = {
+        "a": keep("split-roles", "Never train on the testing split."),
+        "b": keep("check-long-runs", "Check results before a long run goes on.", frustrated=True),
+        "c": keep("tabs", "Use tabs.", frustrated=False),
+        "d": keep("spaces", "Use spaces."),
+    }  # fmt: skip
+    found = {p.id: p for p in learn.propose(archive.config, cs, labels)}
+    assert set(found) == {"split-roles", "check-long-runs"}
+    assert "1 frustration moment" in found["check-long-runs"].why
+    assert "asked to remember" in found["split-roles"].why
 
 
 def test_a_group_that_restates_an_active_rule_reinforces_it(archive):

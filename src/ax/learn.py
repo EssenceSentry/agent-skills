@@ -1,22 +1,28 @@
 """Propose profile rules from the user's own corrections in both tools, for approval.
 
 The learner reads only what the user wrote: messages in human sessions of Claude Code
-and Codex (never headless workers, subagents or the forum's characters), plus the
-preference signals Codex already extracted into its raw memories. It never changes
-the profile on its own: proposals are rule notes with status "proposed", settled with
-`ax learn accept` or `ax learn reject`.
+and Codex (never headless workers, subagents or the forum's characters), the reasons
+the user gave when refusing a Claude tool call, plus the preference signals Codex
+already extracted into its raw memories. It never changes the profile on its own:
+proposals are rule notes with status "proposed", settled with `ax learn accept` or
+`ax learn reject`.
 
 1. scan, with no model: messages with correction phrases, the message right after an
-   interruption, and Codex's preference signals. Pasted plans, attached-file headers
-   and form answers are skipped.
+   interruption, explicit requests to remember something, praise for what the agent
+   had just done (unless it only moves on to the next task), frustration markers with
+   the episode that led to them, tool-rejection reasons, and Codex's preference
+   signals. Pasted plans, attached-file headers and form answers are skipped.
 2. label, with Claude Haiku through `claude -p`, redacted first: a kind, a one-sentence
    rule, a topic slug (an existing rule's id when it restates one), a scope, and
-   whether losing it would cause a repeat mistake. Labels are cached; nothing is
-   labelled twice.
-3. propose: labels are grouped by topic and wording. A group needs two sessions to
-   become a proposal and two projects to be global. A group that restates an active
-   rule reinforces it instead, and quotes dated after the rule was added count as
-   recurrences. A rejected proposal returns only once its support has doubled.
+   whether losing it would cause a repeat mistake. A frustration moment is labelled
+   from its whole episode: the model confirms the frustration and names the lesson.
+   Labels are cached; nothing is labelled twice.
+3. propose: labels are grouped by topic and wording. A group needs a support of two to
+   become a proposal, where a session counts once, an explicit request twice and a
+   confirmed frustration moment three times, and two projects to be global. A group
+   that restates an active rule reinforces it instead, and quotes dated after the rule
+   was added count as recurrences. A rejected proposal returns only once its support
+   has doubled.
 """
 
 import hashlib
@@ -38,10 +44,20 @@ KINDS = (
     "preference", "never-rule", "quality-bar", "domain-fact", "workflow", "environment-fix",
     "permission", "none",
 )  # fmt: skip
-MIN_SESSIONS = 2
+# One session's evidence counts once, an explicit request to remember twice and a confirmed
+# frustration moment three times; a group needs MIN_SUPPORT to become a proposal.
+WEIGHTS = {"frustration": 3, "explicit": 2}
+MIN_SUPPORT = 2
 MIN_PROJECTS_GLOBAL = 2
 QUOTES = 3
 MAX_MESSAGE = 2000
+EPISODE_BATCH = 5
+EPISODE_CHARS = 4000
+_TURN_CHARS = 600
+_REQUEST_CHARS = 60  # a user message this long starts the work an episode covers
+_EPISODE_REQUESTS = 3  # look back at most this many user messages for that start
+_COMMANDS = 10
+_MIN_PRAISED = 25  # praise needs this much of the agent's turn to say what it praises
 _HEADLESS = ("sdk-cli", "codex_exec", "requirements_forum")
 _BOILERPLATE = (
     "PLEASE IMPLEMENT THIS PLAN", '[{"questionItemId"', "Complete only the supplied assignment",
@@ -55,6 +71,35 @@ _CORRECTION = re.compile(
     r"not what i asked|why did you|you should(?:n'?t)? have|no need to|remember to|always|"
     r"must not|shouldn'?t|stop doing)\b"
 )
+_EXPLICIT = re.compile(
+    r"(?i)(?:^|[.!?\n]\s*)(?:please\s+)?remember\b(?:\s+(?:this|that))?\s*[:,]|\bremember to\b"
+    r"|\bfrom now on\b|\bgoing forward\b|\bin (?:the )?future\b|\bkeep in mind\b"
+    r"|\bfor future (?:sessions|reference)\b"
+)
+_FRUSTRATION = re.compile(
+    r"(?i)\b(?:disappoint\w*|frustrat\w*|unacceptable|ridiculous|terrible|awful|useless|pathetic"
+    r"|sloppy|careless|wtf|what the (?:hell|heck|fuck)|for (?:god'?s|christ'?s) sake|seriously"
+    r"|come on|how many times|i (?:already|just) (?:told|said|asked)|you (?:just )?had to"
+    r"|you (?:broke|ruined|wasted|destroyed)|waste of (?:my )?time|not again)\b|!!|\?!|!\?"
+)
+_SHOUT = re.compile(r"\b[A-Z]{2,}(?:\s+[A-Z]{2,}){2,}\b")
+_PRAISE = re.compile(
+    r"(?i)^\W*(?:great|perfect|excellent|awesome|amazing|nice|beautiful|brilliant|fantastic"
+    r"|good job|well done|love (?:it|this)|exactly|that'?s (?:it|perfect|great|exactly))\b"
+)
+# Praise followed by the next task is an acknowledgement, not an approach to repeat.
+_PIVOT = re.compile(
+    r"(?i)^\W*(?:now|next|then|also|and|but|so|ok(?:ay)?|let'?s|can you|could you|would you"
+    r"|please|go ahead|proceed|continue|run|do|make|add|fix|commit|push|merge|create|write"
+    r"|implement|build|start)\b"
+)
+_REASON = re.compile(
+    r"(?i)\b(?:because|that'?s (?:exactly )?(?:how|what)|this is (?:exactly )?(?:how|what)"
+    r"|i (?:like|love|prefer|want)|keep (?:doing|it)|like this|this way|the way you)\b"
+)
+_RAN = re.compile(r"ran (?:[\w.-]+ )?(`+) ?(.*?) ?\1$")
+_REJECTED = "The user doesn't want to proceed with this tool use."
+_SAID = "the user said:\n"
 _STOP = frozenset(
     re.findall(
         r"\S+",
@@ -97,7 +142,73 @@ def _messages(config):
         ]
 
 
-def _candidate(row: dict, text: str, signals: list, context: str) -> dict:
+def frustrated(text: str) -> bool:
+    """Whether a message carries a frustration marker; the labeller confirms it."""
+    return bool(_FRUSTRATION.search(text) or _SHOUT.search(text))
+
+
+def _praise(text: str, context: str) -> bool:
+    match = _PRAISE.match(text)
+    if not match or len(context.strip()) < _MIN_PRAISED:
+        return False
+    if _REASON.search(text):
+        return True
+    return not _PIVOT.match(text[match.end() :].lstrip(" ,.!:;-"))
+
+
+def _signals(text: str, context: str, interrupted: bool) -> list[str]:
+    found = []
+    if frustrated(text):
+        found.append("frustration")
+    if _EXPLICIT.search(text):
+        found.append("explicit")
+    if interrupted:
+        found.append("interrupted")
+    if _praise(text, context):
+        found.append("praise")
+    if _CORRECTION.search(_BENIGN.sub("", text)):
+        found.append("phrase")
+    return found
+
+
+def _squash(text: str, limit: int, *, tail: bool = False) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= limit:
+        return text
+    return "…" + text[-limit:] if tail else text[:limit] + "…"
+
+
+def _episode(turns: list) -> str:
+    """The turns since the request that started the work a message reacts to."""
+    start, asked = 0, 0
+    for i in range(len(turns) - 1, -1, -1):
+        if turns[i][0] != "user":
+            continue
+        asked += 1
+        if len(turns[i][1]) >= _REQUEST_CHARS or asked == _EPISODE_REQUESTS:
+            start = i
+            break
+    lines = [
+        f"tool: {text}" if role == "tool" else
+        f"user: {_squash(text, _TURN_CHARS)}" if role == "user" else
+        f"agent: {_squash(text, _TURN_CHARS, tail=True)}"
+        for role, text in turns[start:]
+    ]  # fmt: skip
+    text = "\n".join(lines)
+    if len(text) <= EPISODE_CHARS:
+        return text
+    head = lines[0]
+    rest = text[-(EPISODE_CHARS - len(head)) :]
+    return head + "\n…\n" + rest[rest.find("\n") + 1 :]
+
+
+def _command(text: str) -> str | None:
+    """The command in an archived "ran `…`" tool line."""
+    match = _RAN.match(text)
+    return match.group(2) if match else None
+
+
+def _candidate(row: dict, text: str, signals: list, context: str, commands: list) -> dict:
     return {
         "id": f"m{row['id']}",
         "source": "message",
@@ -109,17 +220,26 @@ def _candidate(row: dict, text: str, signals: list, context: str) -> dict:
         "text": text,
         "context": context[-300:],
         "signals": signals,
+        "commands": commands[-_COMMANDS:],
     }
 
 
 def _from_messages(config) -> list[dict]:
-    found, session, context, interrupted = [], None, "", False
+    found, session = [], None
     for row in _messages(config):
         if row["session_key"] != session:
-            session, context, interrupted = row["session_key"], "", False
+            session, context, interrupted, turns, commands = row["session_key"], "", False, [], []
+        if row["role"] == "assistant":
+            context = row["text"]
+            turns.append(("assistant", row["text"]))
+            continue
+        if row["role"] == "tool":
+            command = _command(row["text"])
+            if command:
+                commands.append(command)
+            turns.append(("tool", command or row["text"]))
+            continue
         if row["role"] != "user":
-            if row["role"] == "assistant":
-                context = row["text"]
             continue
         raw = row["text"].strip()
         if raw.startswith(_INTERRUPTED):
@@ -127,14 +247,124 @@ def _from_messages(config) -> list[dict]:
             continue
         text = _request(raw)
         if not text or text.startswith(_BOILERPLATE) or len(text) > MAX_MESSAGE:
-            interrupted = False
+            turns.append(("user", text or raw))
+            interrupted, commands = False, []
             continue
-        signals = ["interrupted"] if interrupted else []
-        if _CORRECTION.search(_BENIGN.sub("", text)) and not signals:
-            signals = ["phrase"]
-        interrupted = False
+        signals = _signals(text, context, interrupted)
         if signals:
-            found.append(_candidate(row, text, signals, context))
+            candidate = _candidate(row, text, signals, context, commands)
+            if "frustration" in signals:
+                candidate["episode"] = _episode([*turns, ("user", text)])
+            found.append(candidate)
+        turns.append(("user", text))
+        interrupted, commands = False, []
+    return found
+
+
+def _human_claude_sessions(config) -> list[dict]:
+    from ax.store import Store
+
+    if not config.db_path.exists():
+        return []
+    marks = ", ".join("?" for _ in _HEADLESS)
+    with Store(config.db_path) as store:
+        return [
+            dict(r)
+            for r in store.db.execute(
+                "SELECT session_id, project, note_path, source_path FROM sessions "
+                "WHERE provider = 'claude' AND kind = 'main' AND source_path IS NOT NULL "
+                f"AND COALESCE(entrypoint, '') NOT IN ({marks})",
+                _HEADLESS,
+            )
+        ]
+
+
+def _tool_call(block: dict) -> tuple[str, str | None]:
+    """A tool call as one line, and its shell command when it has one."""
+    from ax.sources.common import first_line
+
+    args = block.get("input") if isinstance(block.get("input"), dict) else {}
+    command = args.get("command") if isinstance(args.get("command"), str) else None
+    detail = command or args.get("file_path") or args.get("url") or ""
+    summary = f"{block.get('name') or 'tool'} {first_line(str(detail))}".strip()
+    return summary, first_line(command) if command else None
+
+
+def _read_rejections(path: Path) -> list[dict]:
+    calls, found = {}, []
+    with path.open(errors="replace") as f:
+        for line in f:
+            if '"tool_use"' not in line and _REJECTED not in line:
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            message = record.get("message") if isinstance(record.get("message"), dict) else {}
+            content = message.get("content")
+            for block in content if isinstance(content, list) else []:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_use":
+                    calls[block.get("id")] = _tool_call(block)
+                    continue
+                result = block.get("content")
+                if isinstance(result, list):
+                    result = "\n".join(c.get("text", "") for c in result if isinstance(c, dict))
+                if not (isinstance(result, str) and result.startswith(_REJECTED)):
+                    continue
+                if _SAID not in result:
+                    continue
+                summary, command = calls.get(block.get("tool_use_id"), ("", None))
+                found.append(
+                    {
+                        "call": str(block.get("tool_use_id")),
+                        "ts": record.get("timestamp"),
+                        "text": result.split(_SAID, 1)[1].strip(),
+                        "summary": summary,
+                        "command": command,
+                    }
+                )
+    return found
+
+
+def _from_rejections(config) -> list[dict]:
+    """The reasons the user gave when refusing a Claude tool call, cached per transcript."""
+    cache_path = folder(config) / "rejections.json"
+    try:
+        cache = json.loads(cache_path.read_text())
+    except (OSError, ValueError):
+        cache = {}
+    found = []
+    for s in _human_claude_sessions(config):
+        path = Path(s["source_path"])
+        if not path.is_file():
+            continue
+        stat = path.stat()
+        stamp = f"{stat.st_size}:{stat.st_mtime_ns}"
+        if cache.get(str(path), {}).get("stamp") != stamp:
+            cache[str(path)] = {"stamp": stamp, "found": _read_rejections(path)}
+        for r in cache[str(path)]["found"]:
+            if not r["text"] or len(r["text"]) > MAX_MESSAGE:
+                continue
+            digest = hashlib.sha1(f"{s['session_id']}\n{r['call']}".encode()).hexdigest()[:12]
+            found.append(
+                {
+                    "id": f"r{digest}",
+                    "source": "rejection",
+                    "session": s["session_id"],
+                    "project": s["project"],
+                    "provider": "claude",
+                    "ts": r["ts"],
+                    "note": s["note_path"],
+                    "text": r["text"],
+                    "context": f"refused tool call: {r['summary']}",
+                    "signals": ["rejection"],
+                    "commands": [r["command"]] if r["command"] else [],
+                }
+            )
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(cache))
     return found
 
 
@@ -173,6 +403,7 @@ def _from_codex_memories(config) -> list[dict]:
                         "text": bullet.strip(),
                         "context": "",
                         "signals": ["codex-memory"],
+                        "commands": [],
                     }
                 )
     return found
@@ -180,7 +411,7 @@ def _from_codex_memories(config) -> list[dict]:
 
 def scan(config) -> list[dict]:
     """Every candidate in the archive and Codex's memories, without calling a model."""
-    return _from_messages(config) + _from_codex_memories(config)
+    return _from_messages(config) + _from_rejections(config) + _from_codex_memories(config)
 
 
 def save_candidates(config, candidates: list[dict]) -> Path:
@@ -200,13 +431,7 @@ def load_candidates(config) -> list[dict]:
 # 2. label
 
 
-_PROMPT = """You label messages a user wrote to their coding agents (Claude Code and Codex).
-Each item is one message, with the end of the agent's previous turn as context. Decide
-whether the message states a lasting preference or rule about how agents should work
-for this user.
-
-Return only a JSON array with one object per item:
-- "id": the item's id
+_FIELDS = """- "id": the item's id
 - "kind": one of preference, never-rule, quality-bar, domain-fact, workflow,
   environment-fix, permission, none. Use none for a one-off instruction, a question,
   thanks, or anything not meant to hold beyond the task at hand.
@@ -215,7 +440,39 @@ Return only a JSON array with one object per item:
 - "topic": a kebab-case slug of two to four words naming the rule. If it restates one
   of the existing rules below, use that rule's id.
 - "scope": "global" if it applies to any project, "repo" if it is specific to this
-  codebase
+  codebase"""
+
+_PROMPT = """You label messages a user wrote to their coding agents (Claude Code and Codex).
+Each item is one message, with the end of the agent's previous turn as context. Decide
+whether the message states a lasting preference or rule about how agents should work
+for this user. An item's signals say how it was found: "explicit" means the user asked
+for it to be remembered; "praise" means the user approved what the agent had just done,
+so the rule is that approach, if it is general; "rejection" means the user refused a
+tool call (the context names it) and this is the reason they gave.
+
+Return only a JSON array with one object per item:
+{fields}
+
+Existing rules:
+{rules}
+
+Items:
+{items}
+"""
+
+_EPISODE_PROMPT = """You read episodes from a user's work with coding agents (Claude Code
+and Codex). Each episode is the request that started the work, what the agent said and
+ran ("tool:" lines are commands and tool calls), and the user's message at the end,
+which may show frustration or disappointment with the agent.
+
+Return only a JSON array with one object per item:
+- "frustrated": true if the final message expresses real frustration or disappointment
+  with the agent, even when it is phrased politely; false for a joke, a quote, plain
+  emphasis, or frustration with something other than the agent
+{fields}
+For "rule", give the lesson that would have prevented this episode: what the agent
+should do differently next time, judged from what went wrong in the episode and not
+only from the final message.
 
 Existing rules:
 {rules}
@@ -225,15 +482,20 @@ Items:
 """
 
 
-def _prompt(config, batch: list[dict]) -> str:
+def _existing_rules(config) -> str:
     rules = "\n".join(
         f"- {r.id}: {r.rule}" for r in profile.load_rules(config) if r.status != "retired"
     )
+    return rules or "(none yet)"
+
+
+def _prompt(config, batch: list[dict]) -> str:
     items = "\n".join(
         json.dumps(
             {
                 "id": c["id"],
                 "project": c["project"],
+                "signals": c["signals"],
                 "context": redact(c["context"]),
                 "message": redact(c["text"]),
             },
@@ -241,7 +503,23 @@ def _prompt(config, batch: list[dict]) -> str:
         )
         for c in batch
     )
-    return _PROMPT.format(rules=rules or "(none yet)", items=items)
+    return _PROMPT.format(fields=_FIELDS, rules=_existing_rules(config), items=items)
+
+
+def _episode_prompt(config, batch: list[dict]) -> str:
+    items = "\n".join(
+        json.dumps(
+            {
+                "id": c["id"],
+                "project": c["project"],
+                "episode": redact(c.get("episode") or c["context"]),
+                "message": redact(c["text"]),
+            },
+            ensure_ascii=False,
+        )
+        for c in batch
+    )
+    return _EPISODE_PROMPT.format(fields=_FIELDS, rules=_existing_rules(config), items=items)
 
 
 def claude_model(model: str = "haiku"):
@@ -284,6 +562,7 @@ def _clean_label(raw: dict) -> dict:
         "rule": str(raw.get("rule") or "").strip(),
         "topic": topic,
         "scope": "repo" if raw.get("scope") == "repo" else "global",
+        "frustrated": raw.get("frustrated") is True,
     }
 
 
@@ -303,8 +582,9 @@ def label(config, candidates, *, model=None, batch: int = 20, workers: int = 4) 
     path.parent.mkdir(parents=True, exist_ok=True)
     lock = threading.Lock()
 
-    def run(chunk):
-        answer = _parse(model(_prompt(config, chunk)))
+    def run(job):
+        chunk, build = job
+        answer = _parse(model(build(config, chunk)))
         wanted = {c["id"] for c in chunk}
         with lock:
             for raw in answer:
@@ -314,9 +594,15 @@ def label(config, candidates, *, model=None, batch: int = 20, workers: int = 4) 
             tmp.write_text(json.dumps(labels, indent=1))
             tmp.replace(path)
 
-    chunks = [todo[i : i + batch] for i in range(0, len(todo), batch)]
+    episodes = [c for c in todo if "frustration" in c["signals"]]
+    plain = [c for c in todo if "frustration" not in c["signals"]]
+    jobs = [(plain[i : i + batch], _prompt) for i in range(0, len(plain), batch)]
+    jobs += [
+        (episodes[i : i + EPISODE_BATCH], _episode_prompt)
+        for i in range(0, len(episodes), EPISODE_BATCH)
+    ]
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        list(pool.map(run, chunks))
+        list(pool.map(run, jobs))
     return labels
 
 
@@ -340,6 +626,15 @@ def _overlap(a: set, b: set) -> float:
     return len(a & b) / min(len(a), len(b)) if a and b else 0.0
 
 
+def weight(candidate: dict, label: dict) -> int:
+    """How much one candidate counts toward a group's support."""
+    if "frustration" in candidate["signals"] and label.get("frustrated"):
+        return WEIGHTS["frustration"]
+    if "explicit" in candidate["signals"]:
+        return WEIGHTS["explicit"]
+    return 1
+
+
 @dataclass
 class Group:
     topic: str
@@ -348,6 +643,14 @@ class Group:
     @property
     def sessions(self) -> set:
         return {c["session"] for c, _ in self.members}
+
+    @property
+    def support(self) -> int:
+        """Each session counts once, at the weight of its strongest candidate."""
+        best: dict = {}
+        for c, lab in self.members:
+            best[c["session"]] = max(best.get(c["session"], 0), weight(c, lab))
+        return sum(best.values())
 
     @property
     def projects(self) -> set:
@@ -415,17 +718,43 @@ def _link(note: str | None) -> str:
     return f"[[{note.removesuffix('.md')}]]" if note else "(no archived note)"
 
 
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _strong(group: Group) -> list[str]:
+    moments = sum(
+        "frustration" in c["signals"] and lab.get("frustrated") for c, lab in group.members
+    )
+    asked = sum("explicit" in c["signals"] for c, _ in group.members)
+    found = [_plural(moments, "frustration moment")] if moments else []
+    if asked:
+        found.append(f"asked to remember {_plural(asked, 'time')}")
+    return found
+
+
 def _why(group: Group, kinds: Counter) -> str:
-    quotes = sorted(group.members, key=lambda m: m[0]["ts"] or "", reverse=True)[:QUOTES]
+    # Strong evidence first: it is what a reviewer most needs to see.
+    quotes = sorted(
+        group.members,
+        key=lambda m: (weight(*m), m[0]["ts"] or ""),
+        reverse=True,
+    )[:QUOTES]
+    strong = "; ".join(_strong(group))
     lines = [
-        f"Proposed by `ax learn` on {date.today().isoformat()} from {len(group.sessions)} "
-        f"sessions in {len(group.projects) or 1} project(s) (kind: {kinds.most_common(1)[0][0]}).",
+        f"Proposed by `ax learn` on {date.today().isoformat()} from "
+        f"{_plural(len(group.sessions), 'session')} in {len(group.projects) or 1} project(s) "
+        f"(kind: {kinds.most_common(1)[0][0]}{'; ' + strong if strong else ''}).",
         "",
         "Evidence:",
     ]
-    for c, _ in quotes:
+    for c, lab in quotes:
         quote = re.sub(r"\s+", " ", redact(c["text"]))[:240]
-        lines.append(f'- {_link(c["note"])} {str(c["ts"] or "")[:10]}: "{quote}"')
+        line = f'- {_link(c["note"])} {str(c["ts"] or "")[:10]}: "{quote}"'
+        if c.get("episode") and lab.get("frustrated"):
+            request = c["episode"].split("\n", 1)[0].removeprefix("user: ")
+            line += f' (after: "{_squash(redact(request), 160)}")'
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -437,14 +766,14 @@ def propose(config, candidates, labels) -> list:
     taken = {r.id for r in rules}
     written = []
     for group in groups(candidates, labels):
-        if len(group.sessions) < MIN_SESSIONS:
+        if group.support < MIN_SUPPORT:
             continue
         settled = [r for r in rules if r.status in ("active", "retired") and _matches(group, r)]
         if settled:
             continue
         pending = next((r for r in rules if r.status == "proposed" and _matches(group, r)), None)
         rid = pending.id if pending else _rule_id(group.topic, taken)
-        if rid in rejected and len(group.sessions) < 2 * rejected[rid]["sessions"]:
+        if rid in rejected and group.support < 2 * rejected[rid]["support"]:
             continue
         kinds = Counter(lab["kind"] for _, lab in group.members)
         projects = Counter(c["project"] for c, _ in group.members if c["project"])
@@ -462,6 +791,7 @@ def propose(config, candidates, labels) -> list:
         )  # fmt: skip
         taken.add(rid)
         proposals[rid] = {
+            "support": group.support,
             "sessions": len(group.sessions),
             "projects": len(group.projects),
             "kind": kinds.most_common(1)[0][0],
@@ -516,8 +846,8 @@ def accept(config, rule_id: str):
 
 def reject(config, rule_id: str) -> None:
     rule = _proposed(config, rule_id)
-    support = _ledger(config, "proposals.json").get(rule_id, {}).get("sessions", MIN_SESSIONS)
+    support = _ledger(config, "proposals.json").get(rule_id, {}).get("support", MIN_SUPPORT)
     rejected = _ledger(config, "rejected.json")
-    rejected[rule_id] = {"sessions": support, "date": date.today().isoformat()}
+    rejected[rule_id] = {"support": support, "date": date.today().isoformat()}
     _save_ledger(config, "rejected.json", rejected)
     rule.path.unlink()
