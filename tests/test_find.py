@@ -20,8 +20,7 @@ def indexed(env, tmp_path):
         (repos / name / ".git").mkdir(parents=True)
     (repos / "notes-only").mkdir()
     env.config_path.write_text(
-        env.config_path.read_text()
-        + f'\n[profile]\nrepos_root = "{repos}"\n[find]\nqmd_config_dir = "{tmp_path / "qmd"}"\n'
+        env.config_path.read_text() + f'\n[profile]\nrepos_root = "{repos}"\n'
     )
     env.config = load(env.config_path)
     sync_module.sync(env.config)
@@ -145,9 +144,6 @@ def test_evaluation_counts_questions_answered_in_the_top_k(indexed, monkeypatch,
 
 
 def test_sync_refreshes_the_index_when_it_wrote_notes(env, tmp_path, monkeypatch):
-    env.config_path.write_text(
-        env.config_path.read_text() + f'\n[find]\nqmd_config_dir = "{tmp_path / "qmd"}"\n'
-    )
     refreshed = []
     monkeypatch.setattr(find, "refresh", lambda config: refreshed.append(config))
     run = {"AX_CONFIG": str(env.config_path)}

@@ -37,6 +37,7 @@ def env(tmp_path):
     vault.mkdir()
     config_path = tmp_path / "config.toml"
     config_path.write_text(
+        f'[find]\nqmd_config_dir = "{tmp_path / "qmd"}"\n'
         "[paths]\n"
         f'vault = "{vault}"\n'
         f'data = "{tmp_path / "data"}"\n'
@@ -106,3 +107,14 @@ def no_model_calls(monkeypatch):
     monkeypatch.setattr(learn, "claude_model", refuse)
     yield
     assert not asked, "a test reached the real model"
+
+
+@pytest.fixture(autouse=True)
+def no_search_tools(monkeypatch):
+    """Tests never run the real qmd or Semble: one that needs them passes its own runner."""
+    from ax import find
+
+    def refuse(argv, **kwargs):
+        raise AssertionError(f"a test ran the real {argv[0]}")
+
+    monkeypatch.setattr(find, "_run", refuse)
