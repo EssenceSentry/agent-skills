@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from ax.config import load
+from ax.store import Store
+from learning import messages, session
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CLAUDE_SESSION = "11111111-1111-4111-8111-111111111111"
@@ -51,3 +53,37 @@ def env(tmp_path):
         claude_main=claude_home / CLAUDE_MAIN.relative_to(FIXTURES / "claude"),
         codex_main=codex_home / CODEX_MAIN.relative_to(FIXTURES / "codex"),
     )
+
+
+@pytest.fixture
+def archive(env):
+    """An archive with corrections in human sessions, a worker, a subagent and Codex memories."""
+    with Store(env.config.db_path) as store:
+        db = store.db
+        session(db, "s1")
+        messages(db, "s1", ("assistant", "I also tidied the typings folder."),
+                 ("user", "Don't touch files unrelated to what I asked for."),
+                 ("user", "Thanks, looks good."))  # fmt: skip
+        session(db, "s2", project="other")
+        messages(db, "s2", ("assistant", "Running uv sync now."),
+                 ("user", "[Request interrupted by user]"),
+                 ("user", "Use the bootstrap script, it keeps the editable install."))  # fmt: skip
+        session(db, "worker", entrypoint="sdk-cli")
+        messages(db, "worker", ("user", "Never commit anything; you are a delegated worker."))
+        session(db, "sub", kind="subagent")
+        messages(db, "sub", ("user", "Do not edit files."))
+        session(db, "s3")
+        messages(db, "s3", ("user", "PLEASE IMPLEMENT THIS PLAN: never do X"),
+                 ("user", "# Files mentioned by the user:\n\n## a.txt: /x/a.txt\n\n"
+                          "## My request for Codex:\nStop adding compatibility shims."),
+                 ("user", "I don't know, maybe."))  # fmt: skip
+        store.commit()
+    memories = env.config.codex_home / "memories"
+    memories.mkdir(parents=True, exist_ok=True)
+    (memories / "raw_memories.md").write_text(
+        "# Raw Memories\n\n## Thread `t-1`\nupdated_at: 2026-09-01T10:00:00+00:00\n"
+        "cwd: /Users/me/Repos/auto-classifier\n\n### Task 1: Scope\n\nPreference signals:\n"
+        '- the user said: "I don\'t care about breaking changes" -> drop backward '
+        "compatibility shims\n\nReusable knowledge:\n- not a preference\n"
+    )
+    return env

@@ -6,56 +6,7 @@ from typer.testing import CliRunner
 from ax import learn, profile
 from ax.cli import app
 from ax.store import Store
-
-
-def session(db, key, *, project="demo", entrypoint="codex_vscode", kind="main", provider="codex"):
-    db.execute(
-        "INSERT INTO sessions (key, provider, session_id, kind, title, project, entrypoint, "
-        "started, ended, note_path, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (key, provider, key, kind, f"Title {key}", project, entrypoint, "2026-10-01T10:00:00Z",
-         "2026-10-01T11:00:00Z", f"Sessions/{key}.md", "2026-10-01T11:00:00Z"),
-    )  # fmt: skip
-
-
-def messages(db, key, *pairs):
-    for seq, (role, text) in enumerate(pairs):
-        db.execute(
-            "INSERT INTO messages (session_key, seq, ts, role, text) VALUES (?, ?, ?, ?, ?)",
-            (key, seq, f"2026-10-0{1 + seq % 9}T10:00:00Z", role, text),
-        )
-
-
-@pytest.fixture
-def archive(env):
-    with Store(env.config.db_path) as store:
-        db = store.db
-        session(db, "s1")
-        messages(db, "s1", ("assistant", "I also tidied the typings folder."),
-                 ("user", "Don't touch files unrelated to what I asked for."),
-                 ("user", "Thanks, looks good."))  # fmt: skip
-        session(db, "s2", project="other")
-        messages(db, "s2", ("assistant", "Running uv sync now."),
-                 ("user", "[Request interrupted by user]"),
-                 ("user", "Use the bootstrap script, it keeps the editable install."))  # fmt: skip
-        session(db, "worker", entrypoint="sdk-cli")
-        messages(db, "worker", ("user", "Never commit anything; you are a delegated worker."))
-        session(db, "sub", kind="subagent")
-        messages(db, "sub", ("user", "Do not edit files."))
-        session(db, "s3")
-        messages(db, "s3", ("user", "PLEASE IMPLEMENT THIS PLAN: never do X"),
-                 ("user", "# Files mentioned by the user:\n\n## a.txt: /x/a.txt\n\n"
-                          "## My request for Codex:\nStop adding compatibility shims."),
-                 ("user", "I don't know, maybe."))  # fmt: skip
-        store.commit()
-    memories = env.config.codex_home / "memories"
-    memories.mkdir(parents=True, exist_ok=True)
-    (memories / "raw_memories.md").write_text(
-        "# Raw Memories\n\n## Thread `t-1`\nupdated_at: 2026-09-01T10:00:00+00:00\n"
-        "cwd: /Users/me/Repos/auto-classifier\n\n### Task 1: Scope\n\nPreference signals:\n"
-        '- the user said: "I don\'t care about breaking changes" -> drop backward '
-        "compatibility shims\n\nReusable knowledge:\n- not a preference\n"
-    )
-    return env
+from learning import candidate, keep, messages, session
 
 
 def test_scan_reads_only_the_users_own_corrections(archive):
@@ -164,10 +115,6 @@ class FakeModel:
         return json.dumps([{**self.label(i), "id": i} for i in ids])
 
 
-def keep(topic, rule="Leave unrelated files alone.", kind="preference", scope="global", **more):
-    return {"kind": kind, "lasting": True, "rule": rule, "topic": topic, "scope": scope, **more}
-
-
 def test_label_redacts_batches_and_never_labels_twice(archive):
     candidates = learn.scan(archive.config)
     candidates[0]["text"] += " token=ghp_abcdefghijklmnopqrstuvwxyz0123456789"
@@ -192,12 +139,6 @@ def test_frustration_moments_are_labelled_with_their_episode(archive):
     assert labels["f"]["frustrated"] is True and labels["p"]["frustrated"] is False
     [prompt] = [p for p in model.prompts if "train.py --all-rows" in p]
     assert '"id": "p"' not in prompt
-
-
-def candidate(cid, session_key, project, text="t", ts="2026-10-10T10:00:00Z", signals=("phrase",)):
-    return {"id": cid, "session": session_key, "project": project, "provider": "codex",
-            "ts": ts, "text": text, "note": f"Sessions/{session_key}.md", "source": "message",
-            "signals": list(signals), "context": "", "commands": []}  # fmt: skip
 
 
 def test_two_sessions_make_a_repo_proposal_and_two_projects_a_global_one(archive):
