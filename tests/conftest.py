@@ -118,3 +118,4 @@ def no_search_tools(monkeypatch):
         raise AssertionError(f"a test ran the real {argv[0]}")
 
     monkeypatch.setattr(find, "_run", refuse)
+    monkeypatch.setattr(find, "_daemon_up", lambda config: False)  # nor a real qmd daemon
