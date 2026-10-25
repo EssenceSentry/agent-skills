@@ -259,9 +259,13 @@ def hooks_start(tool: str = typer.Option("claude", help="claude or codex: the to
     except ValueError:
         payload = {}
     try:
-        from ax import digest
+        from ax import digest, memshare
 
-        text = digest.build(load(), cwd=payload.get("cwd"), exclude=payload.get("session_id"))
+        config = load()
+        parts = [digest.build(config, cwd=payload.get("cwd"), exclude=payload.get("session_id"))]
+        if tool == "claude":  # Codex reads its own memories
+            parts.append(memshare.codex_summary(config))
+        text = "\n\n".join(p for p in parts if p)
     except Exception:  # a hook must never stop a conversation from starting
         return
     if text:
@@ -549,6 +553,10 @@ def sync(quiet: bool = typer.Option(False, "--quiet", "-q", help="Print nothing 
     try:
         with sync_module.lock(config):  # syncs from many sessions must not write notes at once
             updated, unreadable = learn_life.after_sync(config)
+            if config.share_memories:
+                from ax import memshare
+
+                memshare.export(config)  # Claude's memories, for Codex to merge
             if report.written and config.find_refresh_on_sync and find.ready(config):
                 try:
                     find.refresh(config)  # new notes become findable

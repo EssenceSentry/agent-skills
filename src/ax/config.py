@@ -43,6 +43,8 @@ class Config:
     find_qmd_dir: Path = Path("~/.config/qmd").expanduser()
     find_refresh_on_sync: bool = True
     find_qmd_port: int = 8181  # where `ax index serve` keeps qmd's daemon
+    # `ax sync` copies Claude's memories into Codex's ad-hoc memory notes unless false.
+    share_memories: bool = True
 
     @property
     def db_path(self) -> Path:
@@ -109,4 +111,5 @@ def load(path: Path | None = None) -> Config:
         find_qmd_dir=Path(finding.get("qmd_config_dir", qmd_dir)).expanduser(),
         find_refresh_on_sync=bool(finding.get("refresh_on_sync", True)),
         find_qmd_port=int(finding.get("qmd_port", 8181)),
+        share_memories=bool(raw.get("memory", {}).get("share", True)),
     )
