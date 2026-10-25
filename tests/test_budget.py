@@ -242,3 +242,10 @@ def test_close_and_bad_input(ax):
     missing = ax("add", "annotations", "1")
     assert missing.exit_code == 2 and "no open budget annotations" in missing.output
     assert ax("show").output.strip() == "no open budgets"
+
+
+def test_a_line_says_how_far_over_a_budget_went(data):
+    made(data, cap=10)
+    budget.add(data, "annotations", 10.5, intent="worth it")
+    line = budget.line(budget.status(data, "annotations"))
+    assert line.startswith("annotations: 10.5 of 10 usd, 0.5 over · over its limit")

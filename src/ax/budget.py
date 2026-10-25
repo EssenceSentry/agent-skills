@@ -85,8 +85,9 @@ def line(b: dict) -> str:
     state = {"near": " · near its limit", "over": " · over its limit"}.get(b["state"], "")
     extra = [f"set by {b['owner']}" if b["owner"] else "",
              f"measures {b['path']}" if b["path"] else "", b["why"] or ""]  # fmt: skip
+    left = f"{number(-b['left'])} over" if b["left"] < 0 else f"{number(b['left'])} left"
     return (f"{b['name']}: {number(b['spent'])} of {number(b['cap'])} {b['unit']}{held}, "
-            f"{number(b['left'])} left{state}" + "".join(f" · {x}" for x in extra if x))  # fmt: skip
+            f"{left}{state}" + "".join(f" · {x}" for x in extra if x))  # fmt: skip
 
 
 def folder_size(path: str) -> int:
