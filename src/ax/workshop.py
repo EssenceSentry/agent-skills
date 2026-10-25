@@ -533,7 +533,7 @@ class ProcessRunner:
     def _argv(self, agent: Agent, brief_path, run_dir) -> list[str]:
         s = self.s
         if agent.tool == "claude":
-            return [self.python, str(self.scripts / "worker.py"), "start",
+            return [self.python, str(self.scripts / "worker.py"), "run",
                     "--cwd", str(self.dossier), "--brief", str(brief_path),
                     "--run-dir", str(run_dir), "--model", s.claude_model, "--effort", s.effort,
                     "--profile", "read", "--max-cost-usd", str(s.claude_budget_usd),
@@ -769,13 +769,16 @@ def _window_key(found: Opening) -> str:
     return f"{found.tool}:{found.resets_at.isoformat(timespec='minutes')}"
 
 
-def remember(config, ready: list, work: Load, share: dict) -> None:
+def remember(config, ready: list, work: Load, share: dict, *, took: bool = True) -> None:
+    """Count a run in its windows; only a run that finished something (`took`) marks
+    its work as taken, so a run that failed leaves it to the next one."""
     state = load_state(config)
     for found in ready:
         window = state.setdefault("windows", {}).setdefault(
             _window_key(found), {"covered": [], "runs": 0}
         )
-        window["covered"] = sorted(set(window["covered"]) | keys(work))
+        if took:
+            window["covered"] = sorted(set(window["covered"]) | keys(work))
         window["runs"] += 1
     for tool, measured in share.items():  # an even mix of the last estimate and this run
         old = state.setdefault("share", {}).get(tool)
@@ -900,11 +903,18 @@ def run(config, *, dry_run=False, readings=None, runner=None, now=None, clock=No
         stop_file=stop_file(config),
     )  # fmt: skip
     written = write(config, outcome, work, now=now)
-    remember(config, ready, work, outcome.share)
-    ended = f"stopped early: {outcome.stopped}. " if outcome.stopped else ""
-    tell("Rules workshop finished",
-         f"{ended}{len(written.proposals)} proposal(s) and {len(written.retire)} suggested "
-         f"retirement(s) wait in the app; report: {written.report.name}")  # fmt: skip
+    took = any(r.status == "completed" for r in outcome.results)
+    remember(config, ready, work, outcome.share, took=took)
+    failed = not took and not outcome.stopped
+    if failed:
+        tell("Rules workshop failed",
+             f"none of its {len(crew.agents)} agents finished; the next sync tries again. "
+             f"Report: {written.report.name}")  # fmt: skip
+    else:
+        ended = f"stopped early: {outcome.stopped}. " if outcome.stopped else ""
+        tell("Rules workshop finished",
+             f"{ended}{len(written.proposals)} proposal(s) and {len(written.retire)} "
+             f"suggested retirement(s) wait in the app; report: {written.report.name}")  # fmt: skip
     return {**summary, "proposals": written.proposals, "retire": written.retire,
             "skipped": written.skipped, "report": str(written.report),
-            "stopped": outcome.stopped}  # fmt: skip
+            "stopped": outcome.stopped, "failed": failed}  # fmt: skip

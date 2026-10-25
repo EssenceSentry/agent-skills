@@ -678,6 +678,9 @@ def workshop_run(
     if found.get("dry_run") or not found["team"]:
         typer.echo(f"material and briefs (dossier, briefs) in {found['folder']}")
         return
+    if found.get("failed"):
+        typer.echo(f"no agent finished; see their runner.log files under {found['folder']}")
+        raise typer.Exit(1)  # so the run's job ends failed
     typer.echo(f"{len(found['proposals'])} proposal(s); report {found['report']}")
 
 

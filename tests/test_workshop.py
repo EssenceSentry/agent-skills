@@ -409,7 +409,7 @@ def test_the_process_runner_starts_each_tool_s_worker_with_its_model_and_effort(
     import json
 
     argv = json.loads((root / "agents" / "claude-designer-1" / "run" / "argv.json").read_text())
-    assert argv[0] == "start" and argv[argv.index("--cwd") + 1] == str(root / "dossier")
+    assert argv[0] == "run" and argv[argv.index("--cwd") + 1] == str(root / "dossier")
     for flag, value in (("--model", "opus"), ("--effort", "high"), ("--profile", "read"),
                         ("--max-cost-usd", "40.0"), ("--timeout", "2700")):  # fmt: skip
         assert argv[argv.index(flag) + 1] == value
@@ -419,6 +419,65 @@ def test_the_process_runner_starts_each_tool_s_worker_with_its_model_and_effort(
                         ("--permission", "read-only")):  # fmt: skip
         assert argv[argv.index(flag) + 1] == value
     assert (root / "agents" / "codex-critic" / "brief.md").read_text() == "the brief"
+
+
+FAKE_CLAUDE = """#!/usr/bin/env python3
+import json, sys
+args = sys.argv[1:]
+if "--help" in args:
+    print("--safe-mode --tools --max-budget-usd --output-format --session-id"); sys.exit()
+if args == ["--version"]:
+    print("2.1.283 (fake)"); sys.exit()
+if args == ["auth", "status"]:
+    print(json.dumps({"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty"}))
+    sys.exit()
+sys.stdin.read()
+sid = args[args.index("--session-id") + 1]
+print(json.dumps({"type": "system", "subtype": "init", "session_id": sid}), flush=True)
+print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "session_id": sid,
+                  "result": '{"drafts": []}', "total_cost_usd": 1.5}), flush=True)
+"""
+
+FAKE_CODEX = """#!/usr/bin/env python3
+import json, sys
+args = sys.argv[1:]
+if args == ["--version"]:
+    print("codex-cli 9.9.9"); sys.exit()
+if args == ["exec", "--help"]:
+    print("--json --output-last-message --model"); sys.exit()
+if args == ["login", "status"]:
+    print("Logged in using ChatGPT"); sys.exit()
+sys.stdin.read()
+open(args[args.index("-o") + 1], "w").write('{"verdicts": []}')
+print(json.dumps({"type": "thread.started",
+                  "thread_id": "01a12649-f07b-72f0-aee7-76217e23999e"}), flush=True)
+print(json.dumps({"type": "turn.completed", "usage": {"output_tokens": 1}}), flush=True)
+"""
+
+
+def test_agents_start_through_the_real_delegation_scripts(tmp_path, monkeypatch):
+    """The fake worker above takes any arguments; this runs the real worker scripts, with
+    fake Claude and Codex programs, so a launch they would refuse fails here."""
+    import os
+
+    folder = tmp_path / "bin"
+    folder.mkdir()
+    for name, text in (("claude", FAKE_CLAUDE), ("codex", FAKE_CODEX)):
+        (folder / name).write_text(text)
+        (folder / name).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{folder}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+    dossier = tmp_path / "dossier"
+    dossier.mkdir()
+    runner = workshop.ProcessRunner(SETTINGS, dossier)
+    claude = workshop.Agent("claude-designer-1", "designer", "claude", 1)
+    codex = workshop.Agent("codex-critic", "critic", "codex", 2)
+    handles = [runner.start(a, "the brief", tmp_path / "agents" / a.key) for a in (claude, codex)]
+    for handle in handles:
+        wait_for(runner, handle)
+    logs = [(tmp_path / "agents" / a.key / "runner.log").read_text() for a in (claude, codex)]
+    assert runner.result(handles[0]) == ("completed", '{"drafts": []}', 1.5), logs[0]
+    assert runner.result(handles[1])[:2] == ("completed", '{"verdicts": []}'), logs[1]
 
 
 def test_stopping_an_agent_asks_its_runner_to_stop(scripts):
@@ -634,6 +693,42 @@ def test_a_run_supervises_writes_tells_the_user_and_remembers_the_window(work):
     [window] = state["windows"].values()
     # What the run read from disk: the flag and the waiting proposal.
     assert window["runs"] == 1 and {"flag:bootstrap", "proposal:say-less"} <= set(window["covered"])
+
+
+class FailingRunner(FakeRunner):
+    def result(self, agent):
+        return "failed", "", None
+
+
+def test_a_run_whose_agents_all_fail_leaves_the_work_open_and_says_it_failed(work):
+    env, _ = work
+    told, clock = [], Clock()
+    found = workshop.run(env.config, readings=spare(), runner=FailingRunner(), now=NOW,
+                         clock=clock, sleep=clock.sleep,
+                         notify=lambda title, message: told.append(title))  # fmt: skip
+    assert found["failed"] and found["proposals"] == []
+    assert told == ["Rules workshop started", "Rules workshop failed"]
+    windows = workshop.load_state(env.config).get("windows", {})
+    assert all(not w["covered"] for w in windows.values())
+    started = []
+    workshop.maybe_start(env.config, readings=spare(), now=NOW,
+                         launch=lambda c, k, label: started.append(k))  # fmt: skip
+    assert started  # the next sync tries again
+
+
+def test_a_failed_run_fails_its_job(work, monkeypatch):
+    from typer.testing import CliRunner
+
+    from ax.cli import app as cli
+
+    env, _ = work
+    monkeypatch.setenv("AX_CONFIG", str(env.config_path))
+    monkeypatch.setattr(workshop, "run", lambda config, dry_run=False: {
+        "team": [{"key": "claude-solo", "role": "solo", "items": 3, "consolidates": False}],
+        "reason": "one agent", "folder": "f", "dry_run": False, "proposals": [], "retire": [],
+        "report": "r.md", "stopped": None, "failed": True})  # fmt: skip
+    result = CliRunner().invoke(cli, ["workshop", "run"])
+    assert result.exit_code == 1 and "no agent finished" in result.output
 
 
 def test_stop_asks_a_running_workshop_to_stop(env):
