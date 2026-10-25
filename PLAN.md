@@ -51,7 +51,7 @@ Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
   - Not yet sent to a real ntfy topic.
 - **The finished product built 2026-10-24** (the "Your agent layer" doc; 383 tests pass):
   - **Profile:** ten rules in the vault, compiled into both tools; `ax profile check` found the pixability-dev trailer conflict. A rule reaches delegated workers only when it names `workers`.
-  - **Guards:** `ax-guard` in both tools, cc-safety-net, and a Claude Stop check for "tests pass" claims without a test run. Claude's commit attribution is off. A live false positive (a heredoc that only mentioned a forbidden command) led to `where: command` guards that ignore heredoc bodies and quoted text.
+  - **Guards:** `ax-guard` in both tools, cc-safety-net (disabled since 2026-10-25), and a Claude Stop check for "tests pass" claims without a test run. Claude's commit attribution is off. A live false positive (a heredoc that only mentioned a forbidden command) led to `where: command` guards that ignore heredoc bodies and quoted text.
   - **Jobs:** finish estimates (a Gamma rate posterior with change detection, a history prior and a calibration report; on simulated jobs the 80% interval covered 84% of steady runs, 55% of predictions made before an undetected rate change). Wake-ups through `codex exec resume` and `claude --bg --resume`, both live-tested. Also `ax job service`, Runwatch and Tools MCP sources, tqdm bars from `run`, a Jobs panel in `ax serve` and the `jobs` skill. In Runwatch, the stale-attention fix and an `ax job wait` section in its skill (branch `fix/stale-attention-after-retry`).
   - **Briefs:** `ax brief` and generated worker definitions; a live probe confirmed Codex applies a profile file's `developer_instructions`. The drifted `~/.codex/skills/delegation` copy is in `~/.local/share/ax/backups/`, and the repo skill is linked into both tools.
   - **Learner:** 1,489 candidates (1,210 phrase matches, 6 after interruptions, 273 Codex preference signals) labelled by Haiku. It rediscovered 8 of the 10 rules (missed: no-green-ui, ds-models-uv) and proposed 12, waiting for review in `ax learn list`.
@@ -89,6 +89,7 @@ Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
   - **Access:** a token kept owner-only in the data folder, then a Strict, HttpOnly cookie; actions need JSON from the app's own origin. `ax serve --share cloudflare --notify` opens a quick tunnel for the phone and sends the link by ntfy; that link carries a token that dies with the run. Not yet tried live: it publishes the vault's reader through the tunnel.
 - **The app installable and always served, 2026-10-25:** the app is a progressive web app (manifest, icons, a service worker that opens it from its last page while the server restarts; Chromium reports no installability errors). `ax app start|stop|status|open` runs it in the background for any agent, and `ax app service --apply` loads launchd's `com.ax.app`, which keeps `ax serve` on 127.0.0.1:8765 from login (tested: a killed server was back within a second). On this Mac the app now opens without a token, so an installed app works whatever storage its browser gives it; through the tunnel every request still needs the run's token.
 - **The rules workshop built 2026-10-25** (component 18): `ax workshop status|run|stop`, the check after every scheduled sync, the supervisor over the delegation runners, the validated writer and the per-window record; accepting a workshop merge retires what it replaces, and a suggested retirement shows under "Rules to review". Not yet run for real: it waits for a spare last day.
+- **Friction without walls built 2026-10-25** (component 19): `ax-guard` pauses the main agent before irreversible actions and passes it on `AX_INTENT`, stops subagents and workers, and enforces the limits main agents set with `ax policy`; checked live against the installed guard. CC Safety Net is disabled in Claude Code (`enabledPlugins`) and Codex (`[plugins."cc-safety-net@cc-marketplace"] enabled = false`), from each tool's next session.
 - **Deferred:**
   - Rules matched per prompt (UserPromptSubmit): the ten rules fit in the always-loaded block, so retrieval waits until the profile grows.
   - The stop check for Codex, whose transcript has another format.
@@ -542,37 +543,22 @@ A weekly window that ends its week with allowance left resets it unused. The wor
 - **Commands:** `ax workshop status` (whether a run would start now, with how many agents and why), `ax workshop run [--dry-run]`, `ax workshop stop`; config `[workshop]` with `enabled`, `floor` and `max_agents`.
 - **Build order, test-first:** the condition and the sizing (with `status` and `--dry-run`); the supervisor, with fake runners in tests; the validated writer for proposals and the report; the schedule check; the app's view; then a live `--dry-run` on the real archive before the first real run.
 
-### 19. Friction without walls: undo, speed bumps, and policies agents set (agreed 2026-10-25)
+### 19. Friction without walls: pauses, and limits agents set (agreed and built 2026-10-25)
 
-The aim is to catch mistakes before they cost anything, without taking autonomy from the agent the user talks to. CC Safety Net does the opposite. Only the user can loosen its rules, it blocks commands that merely mention a secret, and it ends with "don't work around this". So it goes, and ax carries the friction.
+The aim is to catch mistakes before they cost anything, without taking autonomy from the agent the user talks to. CC Safety Net does the opposite. Only the user can loosen its rules, it blocks commands that merely mention a secret, and it ends with "don't work around this". It is off in both tools now, and ax carries the friction. A stop that makes the agent state its intent is enough to prevent catastrophic errors, so there are no undo snapshots.
 
 - **Who gets what:**
-  - **The main agent** (the conversation the user is in, with the whole context): no walls from the user. It gets undo snapshots always, one-step speed bumps only for irreversible actions, and the rules it sets for itself.
-  - **Subagents and delegated workers** (partial context): the policy the main agent sets when it delegates (the paths they may touch, the commands they may not run, no pushes). These are hard stops for that agent only, written into its brief so it knows them up front. Undo snapshots still apply underneath.
-- **Undo snapshots, for everyone:** before a local destructive command, ax saves what it would lose, then lets it run.
-  - **Git:** a backup ref before `git reset --hard`, `git checkout -- .`, `git restore`, `git clean`, `git branch -D` and `git stash drop|clear`.
-  - **Files:** a copy in a trash folder before `rm` of files git can't bring back (untracked, or outside a repository).
-  - **Undo:** snapshots expire after 14 days. `ax undo` lists and restores them, and the app shows recent destructive actions with a Restore button.
-- **Speed bumps, for the main agent's irreversible actions:** a force push, deleting a remote branch, deleting cloud resources (such as `aws s3 rm|rb` or SageMaker deletes), dropping a table, sending a message. The first try stops once and says what is at stake. Running it again with a stated reason (`AX_INTENT="…"`) lets it through, and the reason is logged.
-- **Policies agents edit:**
-  - **The main agent's own rules:** it adds or relaxes them when the user asks, as ordinary profile notes.
-  - **The user's `block` rules:** they become speed bumps for the main agent and stay hard stops for subagents.
-  - **Subagent policies:** the main agent sets them when it delegates (`ax brief --policy`). Where the guard can't see a subagent, the delegation runner's permission profile carries the policy.
-  - **No lock:** no policy file is shut off from agents.
+  - **The main agent** (the conversation the user is in, with the whole context) pauses once before an irreversible action or one a `block` rule names, and goes on when it says why: `AX_INTENT="…" <command>`. The reason is logged.
+  - **Subagents and delegated workers** (partial context) are stopped by the same, and by the limits their main agent sets with `ax policy add` (this conversation's subagents, or `--all`). They are told to report back to the agent that started them.
+- **Telling them apart (probed 2026-10-25):** Claude Code marks a subagent's calls with `agent_id` and keeps the parent's `session_id`. Codex sends no agent fields, but its transcript's first line names an `exec` worker (`source: exec`) or a subagent (`source: {subagent: …}`). Headless `claude -p --safe-mode` workers never call the hook, so their runner's tool list and their brief's Limits section carry their limits.
+- **Irreversible actions:** a reset, checkout or clean that would lose work (none pauses on a clean tree), a stash drop, a forced branch delete, a force push or remote delete, a forced worktree removal, history pruning, a recursive `rm` outside disposable folders, `find -delete`, cloud deletes, dropped tables, GitHub deletes.
 - **Productivity principles:**
-  - **What a command does, not what it mentions:** a script that only searches for the text ".env" is not reading a secret.
-  - **Ordinary work never meets friction:** reads, searches, tests and edits inside a repository pass untouched. Friction is only for deleting what git can't restore and for actions that leave the machine.
-  - **One step to continue:** every pause says what is at stake and how to proceed. It never says "ask the user" or "don't work around this".
-  - **Fail open:** a malformed rule or an error in the guard lets the command through and reports itself.
-  - **Friction is measured:** the scorecard counts pauses and overrides, and a rule the agent keeps overriding is flagged for review (the learner already tracks overrides).
-- **Removing CC Safety Net:** from Claude Code (`enabledPlugins`) and from Codex (its plugin and hook), once the undo snapshots and speed bumps cover what it guarded. Codex then asks the user to trust its hooks again with `/hooks`.
-- **Build order, test-first:**
-  1. **Check who is calling:** whether the guard can tell the main agent from its subagents and workers in both tools. That covers Claude Code's hook input for subagents started with its Agent tool, headless `claude -p --safe-mode` workers (which may skip hooks), and Codex's subagents and `codex exec` workers. The answer decides where subagent policies are enforced.
-  2. **Undo:** snapshots, `ax undo`, and the app's list.
-  3. **Speed bumps.**
-  4. **Subagent policies:** set through briefs and the runners.
-  5. **Measuring friction:** scorecard counts and override flags.
-  6. **Removal:** CC Safety Net taken out.
+  - **What a command does, not what it mentions:** heredoc bodies and quoted text are skipped.
+  - **Ordinary work never meets friction:** reads, searches, tests and edits pass untouched.
+  - **One step to continue:** a pause never says "ask the user" or "don't work around this".
+  - **Fail open:** a guard error lets the command through and logs itself.
+  - **Friction is measured:** the scorecard counts pauses, stops and reasons given; a rule the agent keeps passing counts against it and is flagged for review.
+- **Policies agents edit:** the main agent's own rules are profile notes, and `ax policy` limits can be added and lifted by agents. No file is locked away from them.
 
 ## Schedule
 

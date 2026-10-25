@@ -48,6 +48,7 @@ take effect at once; after a change to the dependencies, run the same command wi
 | `ax job` (`new`, `watch`, `run`, `describe`, `ls`, `show`, `wait`, `follow`, `unfollow`, `wake`, `poll`, `service`, `eta-report`, `forget`) | Long jobs any agent can register and wait on; see below |
 | `ax profile` (`seed`, `list`, `add`, `compile`, `check`) | One set of working rules, compiled into both tools, their guard and their workers |
 | `ax brief KIND` | A brief for a delegated worker that carries those rules, and its launch plan |
+| `ax policy` (`add`, `list`, `remove`) | Limits the main agent sets for its subagents and workers, for this conversation or all; they never bind the main agent |
 | `ax learn` (`scan`, `label`, `propose`, `fixes`, `tidy`, `guards`, `list`, `accept`, `reject`, `review`, `keep`, `retire`, `guard`, `recall`) | Rule proposals from your own corrections, for your approval, and each rule's lifecycle |
 | `ax scorecard` | Corrections, nudges, guard blocks, worker denials, recurring errors and cost, by week |
 | `ax workshop` (`status`, `run [--dry-run]`, `stop`) | The rules workshop: on a weekly window's spare last day, the scheduled sync starts Opus 5.5 or Sol 6.1 agents, sized by the rule work and the allowance above a 3% floor, to consolidate and design the rules; their work lands as proposals and a report in `Workshops/` |
@@ -95,11 +96,24 @@ workers need it too), its level (advice, check or block) and its evidence.
   and Codex profiles `~/.codex/ax-*.config.toml` (`codex exec --profile ax-review`).
 - `ax profile check` finds instructions elsewhere (skills, plugins, memories) that
   contradict a rule, and feedback memories no rule covers.
-- `ax-guard` runs before every shell command in both tools and blocks what a
-  block-level rule forbids, saying why. A guard with `where: command` ignores heredoc
-  bodies and quoted text, so a script or doc that only mentions a forbidden command
-  passes. As Claude's Stop hook it also keeps Claude working, once, when a reply says
-  tests pass but no test ran in that turn.
+- `ax-guard` runs before every shell command in both tools. It tells the main agent
+  (the conversation the user is in) from subagents and workers: Claude marks a
+  subagent's calls with `agent_id`, and a Codex transcript's first line names an
+  `exec` worker or a subagent.
+  - **The main agent pauses** once before what it can't undo (a reset or clean
+    that would lose work, a force push, a remote or cloud delete, a recursive `rm`
+    outside disposable folders, a dropped table) or what a `block` rule names, and is
+    told what is at stake. Run again with `AX_INTENT="why"` in front, the command goes
+    through and the reason is logged. Nothing pauses when nothing would be lost.
+  - **Subagents and workers are stopped** by the same, and by the limits the main
+    agent sets with `ax policy add`, and are told to report back. Headless Claude
+    workers run without hooks, so their runner's tool list and brief carry them.
+  - **Only what runs counts:** heredoc bodies and quoted text are skipped, so a
+    command that merely mentions something passes. A guard error lets the command
+    through and logs itself. The scorecard counts pauses, stops and reasons given,
+    and a rule the agent keeps passing is flagged for review.
+  - **The stop check:** as Claude's Stop hook it also keeps Claude working, once,
+    when a reply says tests pass but no test ran in that turn.
 
 ### Delegated work
 
