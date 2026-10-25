@@ -47,10 +47,12 @@ def _object(answer: str) -> dict:
 
 
 def _pairs(found: dict, name: str, first: str, second: str) -> list[tuple]:
+    """The model's pairs whose two ids are strings; anything else is ignored."""
     pairs = found.get(name)
     return [
-        (p.get(first), p.get(second), str(p.get("why") or "").strip())
-        for p in pairs if isinstance(p, dict)
+        (p[first], p[second], str(p.get("why") or "").strip())
+        for p in pairs
+        if isinstance(p, dict) and isinstance(p.get(first), str) and isinstance(p.get(second), str)
     ] if isinstance(pairs, list) else []  # fmt: skip
 
 

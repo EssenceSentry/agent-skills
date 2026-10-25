@@ -120,3 +120,11 @@ def test_a_proposal_accepted_while_tidy_waits_is_not_merged_away(archive):
 
     report = learn_tidy.tidy(archive.config, model=accepting)
     assert report.merged == [] and rules(archive)["no-multilabel-compat"].status == "active"
+
+
+def test_ids_that_are_not_strings_are_ignored(archive):
+    compat(archive)
+    model = answer(duplicates=[{"keep": ["no-backward-compatibility"], "drop": "no-multilabel-compat"}],
+                   contradictions=[{"a": {"x": 1}, "b": "no-backward-compatibility"}])  # fmt: skip
+    report = learn_tidy.tidy(archive.config, model=model)
+    assert report.merged == [] and report.flagged == []
