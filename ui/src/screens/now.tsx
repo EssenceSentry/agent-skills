@@ -4,6 +4,7 @@ import {
   Copy,
   ExternalLink,
   FileText,
+  FileWarning,
   Gauge,
   Lightbulb,
   ListTodo,
@@ -49,6 +50,7 @@ const GROUPS: { kind: Waiting["kind"]; title: string }[] = [
   { kind: "budget", title: "Over a budget" },
   { kind: "proposal", title: "Rule proposals" },
   { kind: "review", title: "Rules to review" },
+  { kind: "instruction", title: "Instructions to check" },
   { kind: "todo", title: "To-dos" },
 ]
 
@@ -80,6 +82,14 @@ const ACTIONS: Record<ActionName, ActionSpec> = {
     variant: "outline",
     question: "Reject this rule?",
     explain: () => "Its note stays, marked rejected, under Decided.",
+    immediate: true,
+  },
+  dismiss: {
+    label: "Dismiss",
+    api: "instruction-dismiss",
+    variant: "outline",
+    question: "Dismiss this warning?",
+    explain: () => "It leaves the list; the workshop's report keeps it.",
     immediate: true,
   },
   restore: {
@@ -218,6 +228,7 @@ function KindIcon({ item }: { item: Waiting }) {
     budget: Wallet,
     proposal: Lightbulb,
     review: RefreshCcw,
+    instruction: FileWarning,
     todo: ListTodo,
   }[item.kind]
   const tone = { usage: "text-warning", budget: "text-critical" }[item.kind as string]
@@ -233,6 +244,7 @@ function eyebrow(item: Waiting) {
   if (item.kind === "todo") return `To-do ${item.id}`
   if (item.kind === "usage") return "Usage"
   if (item.kind === "budget") return "Budget"
+  if (item.kind === "instruction") return `Workshop warning ${item.id}`
   return item.id
 }
 

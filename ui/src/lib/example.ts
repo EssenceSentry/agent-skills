@@ -114,6 +114,15 @@ export const exampleNow: NowState = {
       actions: [],
     },
     {
+      kind: "instruction",
+      id: "W1",
+      title:
+        "~/Repos/ds-models/AGENTS.md: Says to work on feature branches, but you commit on main.",
+      detail: "Say to commit on main, and only when asked.",
+      note: null,
+      actions: ["dismiss"],
+    },
+    {
       kind: "todo",
       id: "T1",
       title: "Approve the start hook in Codex with /hooks",

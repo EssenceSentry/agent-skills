@@ -27,6 +27,7 @@ export type ActionName =
   | "accept"
   | "reject"
   | "restore"
+  | "dismiss"
   | "keep"
   | "retire"
   | "guard"
@@ -34,7 +35,7 @@ export type ActionName =
   | "drop"
 
 export type Waiting = {
-  kind: "job" | "usage" | "budget" | "proposal" | "review" | "todo"
+  kind: "job" | "usage" | "budget" | "proposal" | "review" | "instruction" | "todo"
   id: string
   title: string
   detail: string
