@@ -335,3 +335,37 @@ def test_repo_rules_recognize_a_renamed_clone_by_its_origin(rules, tmp_path):
     (other / ".git").mkdir(parents=True)
     (other / ".git" / "config").write_text('[remote "origin"]\n\turl = https://x/y/other.git\n')
     assert blocked(rules, "uv sync", str(other)) is None
+
+
+@pytest.mark.parametrize(
+    ("commands", "claim", "blocks"),
+    [
+        # Mentioning a test tool isn't running one.
+        (["rg -n pytest pyproject.toml"], "All tests pass.", True),
+        (["cat tox.ini"], "All tests pass.", True),
+        (['echo "run pytest later"'], "All tests pass.", True),
+        # Running one through a wrapper is.
+        (["cd lib && uv run --with pytest-cov pytest -q"], "All tests pass.", False),
+        ([".venv/bin/python -m pytest tests"], "12 passed.", False),
+        (["FOO=1 npm run test"], "All tests pass.", False),
+        (["make check"], "Tests pass.", False),
+        # A hedge counts only in the sentence that makes the claim.
+        ([], "All tests pass. I did not run the formatter.", True),
+        ([], "Unit tests pass; integration tests weren't run.", True),
+        ([], "The tests passed in the earlier run; I haven't rerun them.", False),
+    ],
+)  # fmt: skip
+def test_the_stop_check_reads_what_ran_and_what_was_claimed(env, tmp_path, commands, claim, blocks):
+    records = [user("Fix it.")]
+    for command in commands:
+        records += [assistant(command=command), tool_result()]
+    records.append(assistant(claim))
+    assert (stop(env, transcript(tmp_path, *records)) is not None) is blocks
+
+
+def test_notices_and_meta_records_do_not_start_a_new_turn(env, tmp_path):
+    meta = {"type": "user", "isMeta": True, "message": {"role": "user", "content": "Caveat: x"}}
+    notice = user("<task-notification>job done</task-notification>")
+    path = transcript(tmp_path, user("Fix it."), assistant(command="uv run pytest"), tool_result(),
+                      meta, notice, assistant("Done; all tests pass."))  # fmt: skip
+    assert stop(env, path) is None

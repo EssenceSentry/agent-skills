@@ -6,9 +6,10 @@ and logs the block so the scorecard can count it. Both tools send `tool_name` "B
 with the command in `tool_input.command` and accept the same denial, so one script
 serves both.
 
-When Claude stops (`--event stop`), it reads the turn from the transcript: if the last
-reply says tests pass but no test command ran since the user's last message, it asks
-Claude to keep working, once.
+When Claude stops (`--event stop`), it reads the turn from the transcript: if a
+sentence of the last reply says tests pass, without saying they weren't run or ran
+earlier, and no command since the user's last prompt ran a test suite, it asks Claude to
+keep working, once.
 
 It runs before every shell command, so it stays on the standard library and reads the
 rules `ax profile compile --apply` prebuilds as JSON instead of the vault's notes. Bad
@@ -166,11 +167,60 @@ _TESTS_PASS = re.compile(
     r"(?i)\b(?:all |the )?tests? (?:now |all |still )?pass(?:es|ed)?\b|\b\d+ (?:tests? )?passed\b"
     r"|\btests? (?:are|is) (?:green|passing)\b"
 )
-_TEST_RUN = re.compile(
-    r"(?i)\b(?:pytest|unittest|npm (?:run )?test|yarn test|pnpm test|bun test|go test|cargo test"
-    r"|jest|vitest|tox|nox|make (?:test|check)|mvn test|gradle test|pre-commit run)\b"
+# Test runners by program name; with a project tool, the subcommand that runs tests.
+_RUNNERS = {"pytest", "py.test", "unittest", "tox", "nox", "jest", "vitest", "pytest-watch"}
+_SUBCOMMANDS = {
+    "npm": {"test"}, "yarn": {"test"}, "pnpm": {"test"}, "bun": {"test"}, "deno": {"test"},
+    "go": {"test"}, "cargo": {"test"}, "mvn": {"test", "verify"}, "gradle": {"test"},
+    "make": {"test", "check"}, "pre-commit": {"run"},
+}  # fmt: skip
+# Programs that only show or search text: a runner's name in their arguments isn't a run.
+_READERS = {
+    "rg", "grep", "cat", "head", "tail", "sed", "awk", "less", "more", "ls", "echo", "printf",
+    "find", "git", "wc", "diff", "file", "stat", "which", "open", "code",
+}  # fmt: skip
+_HEDGE = re.compile(
+    r"(?i)\b(?:didn'?t|did not|haven'?t|have not|weren'?t|were not|wasn'?t|was not|not)\s+"
+    r"(?:yet\s+)?(?:been\s+)?(?:run|re-?run|execut\w*)\b"
+    r"|\b(?:earlier|previously|last (?:run|time)|before (?:the|this|your))\b"
 )
-_NOT_RUN = re.compile(r"(?i)\b(?:didn'?t|did not|haven'?t|have not|not) (?:run|re-?run)\b")
+_SENTENCE = re.compile(r"(?<=[.!?;])\s+|\n+")
+
+
+def ran_tests(command: str) -> bool:
+    """Whether a shell command runs a test suite, rather than only naming a test tool."""
+    for segment in re.split(r"&&|\|\||[;|\n]", code_only(command)):
+        words = [w.rsplit("/", 1)[-1] for w in segment.split()]
+        words = [w for w in words if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", w)]
+        if not words or words[0] in _READERS:
+            continue
+        if _RUNNERS & set(words):
+            return True
+        if _SUBCOMMANDS.get(words[0], set()) & set(words[1:4]):
+            return True
+    return False
+
+
+def _unhedged_claim(text: str) -> bool:
+    """Whether a sentence says tests pass without saying they weren't run or ran earlier."""
+    return any(
+        _TESTS_PASS.search(sentence) and not _HEDGE.search(sentence)
+        for sentence in _SENTENCE.split(text)
+    )
+
+
+def _prompt(record: dict, content) -> bool:
+    """Whether a user record is a real prompt, not a tool result, notice or meta record."""
+    if record.get("isMeta"):
+        return False
+    if isinstance(content, list):
+        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+            return False
+        content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
+    if not isinstance(content, str):
+        return False
+    content = content.strip()
+    return bool(content) and not content.startswith(("<", "[Request interrupted"))
 
 
 def _turn(transcript: Path) -> tuple[str, list[str]]:
@@ -186,10 +236,7 @@ def _turn(transcript: Path) -> tuple[str, list[str]]:
             continue
         content = message.get("content")
         if record.get("type") == "user":
-            is_result = isinstance(content, list) and any(
-                isinstance(b, dict) and b.get("type") == "tool_result" for b in content
-            )
-            if not is_result:
+            if _prompt(record, content):
                 text, commands = "", []
         elif record.get("type") == "assistant" and isinstance(content, list):
             for block in content:
@@ -215,9 +262,7 @@ def stop_check(payload: dict) -> str | None:
         text, commands = _turn(Path(path))
     except (OSError, ValueError):
         return None
-    if not _TESTS_PASS.search(text) or _NOT_RUN.search(text):
-        return None
-    if any(_TEST_RUN.search(c) for c in commands):
+    if not _unhedged_claim(text) or any(ran_tests(c) for c in commands):
         return None
     return (
         "You said tests pass, but no test command ran since the user's last message. "
