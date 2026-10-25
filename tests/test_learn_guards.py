@@ -170,3 +170,31 @@ def test_violations_may_be_named_by_number(archive, pushes):
         archive.config, pushes, model=answers(reply(violations=[2, 3])), now=NOW
     )
     assert result.status == "guarded" and (result.caught, result.evidence) == (2, 2)
+
+
+def test_commands_run_through_codex_exec_code_are_read():
+    code = ('const r = await tools.exec_command({cmd:"git push --force origin main", '
+            '"max_output_tokens": 500});\nawait tools.exec_command({cmd:"echo \\"hi\\""});')  # fmt: skip
+    record = {"type": "response_item", "timestamp": "2026-10-06T16:17:06.368Z",
+              "payload": {"type": "custom_tool_call", "name": "exec", "input": code}}  # fmt: skip
+    assert learn_guards._commands_in(record) == ["git push --force origin main", 'echo "hi"']
+
+
+def test_evidence_commands_are_those_of_the_turn_before_the_correction(recent, tmp_path):
+    def call(ts, command):
+        use = {"type": "tool_use", "id": ts, "name": "Bash", "input": {"command": command}}
+        return {"type": "assistant", "timestamp": ts, "message": {"content": [use]}}
+
+    path = tmp_path / "turn.jsonl"
+    path.write_text("".join(json.dumps(call(ts, cmd)) + "\n" for ts, cmd in [
+        ("2026-10-10T09:00:00Z", "git status"),
+        ("2026-10-10T10:05:00Z", "git push --force origin main"),
+        ("2026-10-10T10:06:00Z", "git log -1")]))  # fmt: skip
+    with Store(recent.config.db_path) as store:
+        session(store.db, "turn", provider="claude", entrypoint="claude-desktop")
+        store.db.execute("UPDATE sessions SET source_path = ? WHERE key = 'turn'", (str(path),))
+        store.commit()
+    said = {**candidate("x", "turn", "demo", ts="2026-10-10T10:10:00.000000+00:00"),
+            "after": "2026-10-10T10:00:00.000000+00:00"}  # fmt: skip
+    [found] = learn_guards._with_whole_commands(recent.config, [said])
+    assert found["commands"] == ["git push --force origin main", "git log -1"]

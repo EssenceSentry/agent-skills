@@ -63,8 +63,13 @@ class Result:
     hits: list = field(default_factory=list)
 
 
-def _transcript_commands(path: Path) -> list[str]:
-    """Shell commands as they ran, whole, from a Claude or a Codex transcript.
+# Codex's `exec` tool runs JavaScript that calls the shell as tools.exec_command({cmd: "…"}).
+_EXEC_CMD = re.compile(r'exec_command\(\s*\{\s*"?cmd"?\s*:\s*("(?:[^"\\]|\\.)*")')
+
+
+def _transcript_commands(path: Path) -> list[tuple]:
+    """Shell commands as they ran, whole and with their time, from a Claude or a Codex
+    transcript.
 
     The archive keeps only each command's first line, cut at 100 characters, and the
     guard matches the whole command, so patterns are tested on these.
@@ -79,7 +84,8 @@ def _transcript_commands(path: Path) -> list[str]:
                     record = json.loads(line)
                 except ValueError:
                     continue
-                found += _commands_in(record) if isinstance(record, dict) else []
+                if isinstance(record, dict):
+                    found += [(record.get("timestamp"), c) for c in _commands_in(record)]
     except OSError:
         return []
     return found
@@ -102,6 +108,12 @@ def _commands_in(record: dict) -> list[str]:
             args = {}
         if isinstance(args, dict) and isinstance(args.get("cmd"), str):
             found.append(args["cmd"])
+    if payload.get("type") == "custom_tool_call" and payload.get("name") == "exec":
+        for literal in _EXEC_CMD.findall(str(payload.get("input") or "")):
+            try:
+                found.append(json.loads(literal))
+            except ValueError:
+                continue
     return found
 
 
@@ -115,7 +127,8 @@ def _sessions(config, sql: str, args) -> list:
 
 
 def _by_session(rows) -> dict:
-    """Each session's whole commands from its transcript, else its archived first lines."""
+    """Each session's (time, command) pairs: whole commands from its transcript, else its
+    archived first lines, with no time."""
     archived, paths = {}, {}
     for session_id, source, text in rows:
         paths[session_id] = source
@@ -125,7 +138,7 @@ def _by_session(rows) -> dict:
     found = {}
     for session_id, source in paths.items():
         whole = _transcript_commands(Path(source)) if source and Path(source).is_file() else []
-        found[session_id] = whole or archived.get(session_id, [])
+        found[session_id] = whole or [(None, c) for c in archived.get(session_id, [])]
     return found
 
 
@@ -143,7 +156,7 @@ def recent_commands(config, *, exclude: set, now: datetime, days: int = RECENT_D
         command
         for session_id, commands in _by_session(rows).items()
         if session_id not in exclude
-        for command in commands
+        for _, command in commands
     ]
 
 
@@ -155,15 +168,36 @@ def _expand(cut: list, whole: list) -> list:
     return [full.get(c, c) for c in cut]
 
 
+def _when(ts) -> datetime | None:
+    try:
+        when = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
+
+
+def _turn(candidate: dict, commands: list) -> list:
+    """The commands run between the user's previous message and this one."""
+    start, end = _when(candidate.get("after")), _when(candidate.get("ts"))
+    if not (start and end):
+        return []
+    return [c for ts, c in commands if (when := _when(ts)) and start < when <= end]
+
+
 def _with_whole_commands(config, evidence: list) -> list:
+    """Evidence whose commands are whole: those of the agent's turn before the message,
+    from the transcript, else the archived first lines, expanded where they can be."""
     sessions = sorted({c["session"] for c in evidence})
     marks = ", ".join("?" for _ in sessions)
     rows = _sessions(config, _COMMANDS + f"WHERE s.session_id IN ({marks})", sessions)
     whole = _by_session(rows)
-    return [
-        {**c, "commands": _expand(c.get("commands") or [], whole.get(c["session"], []))}
-        for c in evidence
-    ]
+    found = []
+    for c in evidence:
+        commands = whole.get(c["session"], [])
+        turn = _turn(c, commands)
+        cut = _expand(c.get("commands") or [], [cmd for _, cmd in commands])
+        found.append({**c, "commands": turn or cut})
+    return found
 
 
 def _hit(pattern: re.Pattern, command: str) -> bool:

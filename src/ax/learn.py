@@ -269,7 +269,9 @@ def _command(text: str) -> str | None:
     return match.group(2) if match else None
 
 
-def _candidate(row: dict, text: str, signals: list, context: str, commands: list) -> dict:
+def _candidate(
+    row: dict, text: str, signals: list, context: str, commands: list, after: str | None = None
+) -> dict:
     return {
         "id": f"m{row['id']}",
         "source": "message",
@@ -282,6 +284,7 @@ def _candidate(row: dict, text: str, signals: list, context: str, commands: list
         "context": context[-300:],
         "signals": signals,
         "commands": commands[-_COMMANDS:],
+        "after": after,  # when the user last spoke: the agent's turn ran from then to ts
     }
 
 
@@ -290,6 +293,7 @@ def _from_messages(config) -> list[dict]:
     for row in _messages(config):
         if row["session_key"] != session:
             session, context, interrupted, turns, commands = row["session_key"], "", False, [], []
+            asked_at = None
         if row["role"] == "assistant":
             context = row["text"]
             turns.append(("assistant", row["text"]))
@@ -309,16 +313,16 @@ def _from_messages(config) -> list[dict]:
         text = _request(raw)
         if not scanned(text):
             turns.append(("user", text or raw))
-            interrupted, commands = False, []
+            interrupted, commands, asked_at = False, [], row["ts"]
             continue
         signals = _signals(text, context, interrupted)
         if signals:
-            candidate = _candidate(row, text, signals, context, commands)
+            candidate = _candidate(row, text, signals, context, commands, asked_at)
             if "frustration" in signals:
                 candidate["episode"] = _episode([*turns, ("user", text)])
             found.append(candidate)
         turns.append(("user", text))
-        interrupted, commands = False, []
+        interrupted, commands, asked_at = False, [], row["ts"]
     return found
 
 

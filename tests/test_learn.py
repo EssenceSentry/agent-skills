@@ -47,6 +47,7 @@ def test_scan_finds_frustration_explicit_requests_and_praise(env):
     assert "tool: uv run python train.py --all-rows" in angry["episode"]
     assert "agent: Done: AUC 0.97 on all rows." in angry["episode"]
     assert angry["commands"] == ["uv run python train.py --all-rows"]
+    assert angry["after"] == "2026-10-01T10:00:00Z"  # when the user last spoke before it
     praised = found["Perfect, that's exactly how I want plots."]
     assert praised["signals"] == ["praise"] and "titles are gone" in praised["context"]
     assert "Great, now run the audit." not in found  # praise that only moves on
