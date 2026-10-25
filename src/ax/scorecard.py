@@ -31,7 +31,7 @@ _DENIAL = "Permission to use "
 _MIN_FRICTION = 3
 _FRICTION_SHOWN = 8
 _EXAMPLES = 3
-_TRANSCRIPT_VERSION = 3  # bump when what is read from a transcript changes
+_TRANSCRIPT_VERSION = 4  # bump when what is read from a transcript changes
 
 
 def _week(when: datetime) -> str:
@@ -139,17 +139,14 @@ def _outputs(record: dict, calls: dict) -> list[tuple[str, str | None]]:
                 content = block.get("content")
                 if isinstance(content, list):
                     content = "\n".join(c.get("text", "") for c in content if isinstance(c, dict))
-                command = calls.get(block.get("tool_use_id"))
-                if isinstance(content, str) and not (command and _reads(command)):
-                    found.append((content, command))
+                if isinstance(content, str):
+                    found.append((content, calls.get(block.get("tool_use_id"))))
         return found
     payload = record.get("payload") or {}
     item = payload.get("item") or {}
     if payload.get("type") == "item_completed" and item.get("type") == "CommandExecution":
         command = item.get("command") or ""
         command = command if isinstance(command, str) else " ".join(map(str, command))
-        if _reads(command):
-            return []  # a file being shown, not a command failing
         return [(item.get("aggregated_output") or "", first_line(command, 160) or None)]
     return []
 
@@ -219,6 +216,8 @@ def _read_transcript(path: Path) -> dict:
             for output, command in _outputs(record, calls):
                 if output.startswith(_DENIAL):
                     denials += 1
+                elif command and _reads(command):
+                    continue  # a file being shown: an error word in it is not an error
                 elif signature := _signature(output):
                     signatures.add(signature)
                     if command:

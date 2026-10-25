@@ -218,3 +218,13 @@ def test_a_claude_command_that_only_reads_a_file_has_no_error(tmp_path):
 )  # fmt: skip
 def test_reads_means_the_command_starts_by_showing_files(command, reads):
     assert scorecard._reads(command) is reads
+
+
+def test_a_denied_read_still_counts_as_a_denial(tmp_path):
+    use = {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "cat a.txt"}}
+    result = {"type": "tool_result", "tool_use_id": "t1",
+              "content": "Permission to use Bash has been denied because Claude Code is running in don't ask mode."}  # fmt: skip
+    path = tmp_path / "w.jsonl"
+    path.write_text(json.dumps({"type": "assistant", "message": {"content": [use]}}) + "\n"
+                    + json.dumps({"type": "user", "message": {"content": [result]}}) + "\n")  # fmt: skip
+    assert scorecard._read_transcript(path)["denials"] == 1
