@@ -79,6 +79,36 @@ def test_mentions_in_text_are_not_commands(rules, command):
     assert blocked(rules, command) is None
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        # An apostrophe inside double quotes is not the start of a single-quoted string.
+        "git commit -m \"Fix the parser's edge case\" && git add -A && echo 'done'",
+        "echo \"don't\"; git add -A; echo 'ok'",
+        "echo it\\'s; git add -A",
+        # A here-string, arithmetic shift or quoted "<<EOF" is not a heredoc.
+        "tr a-z A-Z <<< hello\ngit add -A",
+        'git commit -m "Explain <<EOF usage"\ngit add -A',
+        "echo $((1<<x))\ngit add -A",
+        # <<- ends at a tab-indented delimiter; the command after it still runs.
+        "cat <<-EOF\n\tnotes\n\tEOF\ngit add -A",
+        "cat <<A <<B\na\nA\nb\nB\ngit add -A",
+    ],
+)
+def test_commands_hidden_by_quoting_tricks_are_still_blocked(rules, command):
+    assert blocked(rules, command) == "stage-explicit-paths"
+
+
+def test_a_plain_heredoc_ends_only_at_an_unindented_delimiter(rules):
+    # Bash keeps reading the body past "  EOF", so the line after it is still text.
+    assert blocked(rules, "cat <<EOF\n  EOF\ngit add -A\nEOF") is None
+
+
+def test_end_of_line_anchors_work_in_multi_line_commands(rules, ds_models):
+    inside = str(ds_models / "models")
+    assert blocked(rules, "uv sync\nuv run pytest", inside) == "ds-models-uv"
+
+
 def test_commands_around_text_are_still_checked(rules):
     assert blocked(rules, "cat > a.txt <<EOF\nhello\nEOF\ngit add -A") == "stage-explicit-paths"
     assert blocked(rules, 'git commit -am "fix"') == "stage-explicit-paths"

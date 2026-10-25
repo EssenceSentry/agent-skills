@@ -40,22 +40,64 @@ def _repo_name(cwd: str) -> str | None:
     return None
 
 
-_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+_HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+
+
+def _skip_bodies(command: str, i: int, pending: list) -> int:
+    """Skip the heredoc bodies that start at `i`, in order; return where code resumes."""
+    for word, tabs in pending:
+        while i < len(command):
+            end = command.find("\n", i)
+            line = command[i : end if end >= 0 else len(command)]
+            i = end + 1 if end >= 0 else len(command)
+            if (line.lstrip("\t") if tabs else line) == word:
+                break
+    return i
 
 
 def code_only(command: str) -> str:
-    """The command without heredoc bodies or quoted strings: what it runs, not what it mentions."""
-    kept, end = [], None
-    for line in command.split("\n"):
-        if end is not None:
-            if line.strip() == end:
-                end = None
-            continue
-        if match := _HEREDOC.search(line):
-            end = match.group(2)
-        kept.append(line)
-    text = re.sub(r"'[^']*'", "''", "\n".join(kept))
-    return re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+    """The command without heredoc bodies or quoted strings: what it runs, not what it mentions.
+
+    One pass, left to right, as the shell reads it: an apostrophe inside double quotes
+    is just a character, and `<<` starts a heredoc only outside quotes, here-strings
+    (`<<<`) and arithmetic (`$((…))`).
+    """
+    out, pending, i, n = [], [], 0, len(command)
+    while i < n:
+        c = command[i]
+        if c == "\\":
+            out.append(command[i : i + 2])
+            i += 2
+        elif c == "'":
+            end = command.find("'", i + 1)
+            out.append("''")
+            i = n if end < 0 else end + 1
+        elif c == '"':
+            j = i + 1
+            while j < n and command[j] != '"':
+                j += 2 if command[j] == "\\" else 1
+            out.append('""')
+            i = j + 1
+        elif command.startswith("$((", i):
+            end = command.find("))", i)
+            end = n if end < 0 else end + 2
+            out.append(command[i:end])
+            i = end
+        elif command.startswith("<<<", i):
+            out.append("<<<")
+            i += 3
+        elif c == "<" and (match := _HEREDOC.match(command, i)):
+            pending.append((match.group(3), match.group(1) == "-"))
+            out.append(match.group(0))
+            i = match.end()
+        elif c == "\n" and pending:
+            out.append("\n")
+            i = _skip_bodies(command, i + 1, pending)
+            pending = []
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 def evaluate(rules: list[dict], command: str, cwd: str) -> dict | None:
@@ -77,7 +119,8 @@ def evaluate(rules: list[dict], command: str, cwd: str) -> dict | None:
         if rule.get("where") == "command":
             code = code_only(command) if code is None else code
             text = code
-        if re.search(rule["pattern"], text):
+        # Line by line: `$` in a pattern means the end of a command line, not of the text.
+        if re.search(rule["pattern"], text, re.MULTILINE):
             return rule
     return None
 
