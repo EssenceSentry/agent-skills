@@ -1,5 +1,6 @@
 """The ax command line."""
 
+import contextlib
 import difflib
 import io
 import json
@@ -544,6 +545,33 @@ def sync(quiet: bool = typer.Option(False, "--quiet", "-q", help="Print nothing 
         for error in report.errors:
             typer.echo(f"error: {error}", err=True)
     raise typer.Exit(1 if report.errors else 0)
+
+
+@app.command()
+def here(as_json: bool = typer.Option(False, "--json", help="Machine-readable output.")):
+    """This conversation's handle and note, for building on it from another conversation."""
+    from ax import handles
+
+    config = load()
+    found = handles.current(config)
+    if not found:
+        typer.echo("not inside a Claude Code or Codex conversation", err=True)
+        raise typer.Exit(2)
+    provider, session_id = found
+    with contextlib.suppress(sync_module.SyncBusy):  # a running sync writes it instead
+        sync_module.sync(config)  # so the note exists and has this turn
+    try:
+        row = handles.resolve(config, f"{provider}:{session_id}")
+    except handles.NotFound:
+        row = {"title": None, "note_path": None}
+    result = {"handle": handles.tag(session_id), "session_id": session_id, "provider": provider,
+              "title": row["title"], "note": row["note_path"]}  # fmt: skip
+    if as_json:
+        typer.echo(json.dumps(result, indent=2))
+        return
+    typer.echo(f"{result['handle']}  {row['title'] or '(not archived yet)'}")
+    if row["note_path"]:
+        typer.echo(str(config.vault / row["note_path"]))
 
 
 @app.command()
