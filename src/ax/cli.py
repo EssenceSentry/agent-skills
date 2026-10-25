@@ -1322,6 +1322,20 @@ def learn_tidy_cmd(
         typer.echo("no duplicates or contradictions")
 
 
+@learn_app.command("guards")
+def learn_guards_cmd(
+    model: str = typer.Option("haiku", help="The Claude model that writes the patterns."),
+):
+    """Give "never" proposals a guard pattern, tested on the archive's commands."""
+    from ax import learn, learn_guards
+
+    config = load()
+    results = learn_guards.propose_guards(
+        config, learn.load_candidates(config), model=learn.claude_model(model)
+    )
+    typer.echo("\n".join(learn_guards.report(results)) or "no proposals to guard")
+
+
 @learn_app.command("list")
 def learn_list(as_json: bool = typer.Option(False, "--json", help="Machine-readable output.")):
     """Proposals waiting for your decision."""

@@ -22,7 +22,9 @@ def keep(topic, rule="Leave unrelated files alone.", kind="preference", scope="g
     return {"kind": kind, "lasting": True, "rule": rule, "topic": topic, "scope": scope, **more}
 
 
-def candidate(cid, session_key, project, text="t", ts="2026-10-10T10:00:00Z", signals=("phrase",)):
+def candidate(
+    cid, session_key, project, text="t", ts="2026-10-10T10:00:00Z", signals=("phrase",), commands=()
+):
     return {"id": cid, "session": session_key, "project": project, "provider": "codex",
             "ts": ts, "text": text, "note": f"Sessions/{session_key}.md", "source": "message",
-            "signals": list(signals), "context": "", "commands": []}  # fmt: skip
+            "signals": list(signals), "context": "", "commands": list(commands)}  # fmt: skip
