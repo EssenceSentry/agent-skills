@@ -61,6 +61,12 @@ Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
     - **Delegated review:** one Opus worker reviewed `guard.py` and `job_wake.py` through `ax brief review`. It finished with zero permission denials in 9 turns for $0.64, and found ten defects, all fixed test-first the same day: quoting and heredoc gaps in `where: command` guards, crashes on malformed input, repo rules missing worktrees and renamed clones, a loose stop check, `clean_env` dropping credentials such as `CLAUDE_CODE_OAUTH_TOKEN`, flag-like session ids reaching a wake's command line, and a stale line in wake errors. Two limits stay by design: a command run through `bash -c "…"` or a heredoc fed to a shell isn't checked, and a host variable missing from the deny-list reaches a woken agent.
     - **First `ax lab run`:** Sonnet, one run per case, $1.18. Evals that grant Bash can't run on this Mac, because Docker Desktop keeps plugin links inside `~/.docker`; `--no-shell` runs the four cases that need no shell. With the plugin, agents-within-limits went from 0.00 to 1.00: without it, Sonnet launched agents at once. The other three scored 1.00 in both arms.
   - **Not yet run live:** a real SageMaker or Seamless job, and `ax job service --apply`.
+- **The learner's next version built 2026-10-25** (component 10, phases 1 and 2; 497 tests pass):
+  - **Scan:** 1,758 candidates: 1,213 correction phrases, 210 praise, 99 frustration markers, 13 explicit requests, 6 after interruptions, 2 refused tool calls, 273 Codex preference signals. Haiku confirmed 62 of the 99 frustration markers from their episodes; the scorecard's weekly count peaks at 10 in W42 (the 24-hour autonomous run) and 8 in W40.
+  - **Calibration on the real archive:** the first `propose` wrote 88 proposals, because "in the future" counted phrasing like "for future use" as a request to remember. It now counts only at the start of a sentence, and at most 20 proposals wait at once, strongest first: 19 wait now and 54 more queue behind them. The first `fixes` prompt turned 17 of 37 recurring errors into generic advice; a fix must now name a command, tool or path, and 2 remain (macOS `timeout`, the IAM scripts path).
+  - **Tidy and guards:** the tidy pass merged `no-multilabel-compat` into `no-backward-compatibility`. No guard passed: three "never" proposals aren't about commands, and one pattern missed its own evidence.
+  - **Lifecycle:** `ax sync` writes each active rule's evidence, confidence and maturity; all eleven are new (adopted 2026-10-24); `stage-explicit-paths` leads with 9 restating sessions and 5 guard blocks. Recall: 10 of 11 active rules rediscovered (missed: `ds-models-uv`).
+  - **Not built:** the "Later" items, which wait for the profile to outgrow its always-loaded block. `[learn] label_on_sync` is off, so sync counts recurrences only among labelled messages until `ax learn label` runs.
 - **Deferred:**
   - Rules matched per prompt (UserPromptSubmit): the ten rules fit in the always-loaded block, so retrieval waits until the profile grows.
   - The stop check for Codex, whose transcript has another format.
@@ -394,14 +400,14 @@ Done when:
 - tests show `ax job watch sagemaker` and `ax job watch seamless` reporting status and progress from recorded AWS responses, and one real job confirms it;
 - no source needs ax installed in the job's environment.
 
-### 10. Learner, next version (agreed 2026-10-25)
+### 10. Learner, next version (agreed and built 2026-10-25)
 
 Our own design, inspired by claude-reflect (MIT; its code was read) and cass-memory (its published README only; its license excludes Anthropic, so no code was read or run). Neither is reused.
 
 - **Taken from claude-reflect:** an explicit "remember" fast path; praise kept as an approach to repeat, with a forward-pivot filter; guardrail phrasings; structural filters for questions and task requests; tool-rejection reasons; recurring errors turned into fixes; a pass that merges duplicates and flags contradictions.
 - **Taken from cass-memory:** rules live on after acceptance. Evidence counts for and against, the against side weighted 4×; confidence halves every 90 days without new evidence; maturity goes from active to established to proven; a rule that keeps failing becomes a warning or a guard; task-scoped retrieval, later.
 - **Left out:** agents grading their own rules; rules adopted without the user; a session diary (the results ledger was dropped); per-project queues; Claude-only reading.
-- **What the history holds:** 95% of the user's 9,462 messages are in Codex. 93 use "remember", "from now on", "going forward" or "always"; about 480 open with praise; about 20 Claude tool rejections carry a reason.
+- **What the history holds:** 95% of the user's 9,462 messages are in Codex. 93 use "remember", "from now on", "going forward" or "always" (40 once "always" is left to the correction phrases); about 480 open with praise (210 once praise that only moves on is dropped); 2 Claude tool rejections on disk carry a reason (the earlier count of about 20 was wrong).
 - **Frustration moments:** about 14 clear ones, all in Codex and mostly in auto-classifier (August–October), most after a long autonomous run went wrong. The current learner scanned 4 and turned 1 into a rule, because frustration rarely states a rule: the lesson is in the turns before it.
 
 **Phase 1, about a day:**

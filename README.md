@@ -41,7 +41,7 @@ take effect at once; after a change to the dependencies, run the same command wi
 | `ax job` (`new`, `watch`, `run`, `ls`, `show`, `wait`, `follow`, `unfollow`, `wake`, `poll`, `service`, `eta-report`, `forget`) | Long jobs any agent can register and wait on; see below |
 | `ax profile` (`seed`, `list`, `add`, `compile`, `check`) | One set of working rules, compiled into both tools, their guard and their workers |
 | `ax brief KIND` | A brief for a delegated worker that carries those rules, and its launch plan |
-| `ax learn` (`scan`, `label`, `propose`, `list`, `accept`, `reject`, `recall`) | Rule proposals from your own corrections, for your approval |
+| `ax learn` (`scan`, `label`, `propose`, `fixes`, `tidy`, `guards`, `list`, `accept`, `reject`, `review`, `keep`, `retire`, `guard`, `recall`) | Rule proposals from your own corrections, for your approval, and each rule's lifecycle |
 | `ax scorecard` | Corrections, nudges, guard blocks, worker denials, recurring errors and cost, by week |
 | `ax lab` (`build`, `cut`, `run`) | Replay evals that test the profile as a plugin, with and without it |
 
@@ -103,19 +103,40 @@ approval step.
 
 ### Learning from corrections
 
-`ax learn scan` collects your own corrections from human sessions of both tools, and
-the preference signals Codex wrote into its raw memories. `label` has Claude Haiku
-(through `claude -p`, redacted first) name each one's kind, rule and scope. `propose`
-writes rule notes with status `proposed` once a rule has support from two sessions
-(two projects for a global rule); `accept` and `reject` settle them, and a rejected
-proposal returns only when its support doubles. `recall` reports how many active rules
-the labels rediscover.
+`ax learn scan` collects, without a model, what you wrote in human sessions of both
+tools that may state a rule: correction phrases, the message after an interruption,
+explicit "remember"/"from now on" requests, praise for what the agent had just done
+(not praise that only moves on), frustration markers with the episode that led to
+them, the reasons you gave when refusing a Claude tool call, and the preference
+signals Codex wrote into its raw memories. `label` has Claude Haiku (through
+`claude -p`, redacted first) name each one's kind, rule and scope; a frustration
+moment is labelled from its whole episode, which confirms the frustration and names
+the lesson. `propose` writes rule notes with status `proposed` once a rule has a
+support of two, where a session counts once, an explicit request twice and a
+confirmed frustration moment three times (two projects for a global rule).
+
+`fixes` proposes a rule for each error that recurs across sessions; `tidy` folds
+near-duplicate proposals into one and notes contradictions; `guards` gives a "never"
+proposal a block-level guard pattern when one catches the commands behind its
+evidence and none of the last 30 days' other commands. `accept` and `reject` settle
+proposals, and a rejected one returns only when its support doubles. At most 20
+proposals wait at once (`--max-pending`), strongest support first.
+
+After accepting, `ax sync` keeps each active rule's evidence in its note: support,
+guard blocks, recurrences (the correction came back) and overrides (you set it
+aside). Confidence halves every 90 days without new evidence and counts what goes
+against a rule four times; maturity goes new, established, proven, or doubtful.
+`ax learn review` lists them; a flag asks for a decision: `guard` after two
+recurrences, a narrower scope after an override, `retire` or `keep` after 90 silent
+days. Sync labels new candidates itself only with `[learn] label_on_sync = true`.
+`recall` reports how many active rules the labels rediscover.
 
 ### Measuring it
 
 `ax scorecard` (and `/scorecard` in `ax serve`) counts per week the corrections,
-"I said"/"again" repeats, progress nudges, guard blocks and worker denials, with cost
-by model and effort, and lists errors that recur across sessions and skills nobody
+"I said"/"again" repeats, progress nudges, confirmed frustration moments, guard
+blocks and worker denials, with cost by model and effort, and lists each rule's
+maturity and review flag, errors that recur across sessions, and skills nobody
 used. `ax lab build` packages the profile as a plugin for `claude plugin eval`, with
 starter cases; `ax lab cut` turns a past Claude session into a case; `ax lab run`
 compares both arms under a cost ceiling.
