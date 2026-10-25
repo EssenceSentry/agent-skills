@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from ax import learn, learn_guards, profile
+from ax import learn, learn_guards, learn_life, profile
 from ax.store import Store
 from learning import candidate, keep, messages, session
 
@@ -124,5 +124,20 @@ def test_guarding_an_escalated_active_rule_enforces_the_pattern(recent):
     found = rule(recent)
     assert found.status == "active" and found.level == "block" and not found.review
     assert found.guard["pattern"] == GOOD
+    learn_life.refresh(config, cs, labels, today=NOW.date())
+    assert not rule(recent).review  # guarding it was the review
     with pytest.raises(ValueError):
         learn_guards.guard_rule(config, "missing", cs, labels, model=answers(reply()), now=NOW)
+
+
+def test_a_note_edited_while_the_model_answers_is_not_overwritten(archive, pushes):
+    def editing(prompt):
+        note = rule(archive)
+        note.rule = "Never force-push to main."
+        profile._write(note, note.path)
+        return json.dumps(reply())
+
+    [result] = learn_guards.propose_guards(archive.config, pushes, model=editing, now=NOW)
+    found = rule(archive)
+    assert result.status == "changed" and found.rule == "Never force-push to main."
+    assert found.guard is None

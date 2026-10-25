@@ -108,3 +108,15 @@ def test_proposing_again_keeps_a_contradiction_note(archive):
         {"a": "single-theme", "b": "both-themes", "why": "one theme or two"}]))  # fmt: skip
     learn.propose(archive.config, cs, labels)
     assert "May contradict [[Profile/rules/both-themes" in rules(archive)["single-theme"].why
+
+
+def test_a_proposal_accepted_while_tidy_waits_is_not_merged_away(archive):
+    compat(archive)
+
+    def accepting(prompt):
+        learn.accept(archive.config, "no-multilabel-compat")
+        return json.dumps({"duplicates": [{"keep": "no-backward-compatibility",
+                                           "drop": "no-multilabel-compat"}]})  # fmt: skip
+
+    report = learn_tidy.tidy(archive.config, model=accepting)
+    assert report.merged == [] and rules(archive)["no-multilabel-compat"].status == "active"

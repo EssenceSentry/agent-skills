@@ -152,7 +152,15 @@ def candidates_for(config, candidates: list) -> list:
     return found
 
 
-def _apply(rule, result: Result) -> None:
+def _apply(rule, result: Result, **fields) -> bool:
+    """Write the guard into the note as it is now; skip it if the rule changed meanwhile."""
+    fresh = profile._read(rule.path) if rule.path.exists() else None
+    if fresh is None or (fresh.status, fresh.rule) != (rule.status, rule.rule):
+        result.status = "changed"
+        return False
+    rule = fresh
+    for name, value in fields.items():
+        setattr(rule, name, value)
     rule.guard = {"tool": "shell", "pattern": result.pattern, "message": result.message,
                   "where": "command"}  # fmt: skip
     if rule.repo:
@@ -164,6 +172,7 @@ def _apply(rule, result: Result) -> None:
         "Delete the guard and set the level to advice to keep the rule as advice only."
     )
     profile._write(rule, rule.path)
+    return True
 
 
 def propose_guards(config, candidates: list, *, model=None, now: datetime | None = None) -> list:
@@ -202,8 +211,9 @@ def guard_rule(config, rule_id: str, candidates, labels, *, model=None, now=None
     )
     result = check(rule, evidence, recent, model=model or learn.claude_model())
     if result.status == "guarded":
-        rule.review = ""
-        _apply(rule, result)
+        # Guarding the rule is the review: the recurrences behind the flag predate it.
+        today = learn.local_day((now or datetime.now(UTC)).isoformat())
+        _apply(rule, result, review="", reviewed=today)
     return result
 
 
@@ -213,6 +223,7 @@ _WHY_NOT = {
     "invalid": "the pattern was not a valid regular expression",
     "untested": "no recent commands to test it on",
     "no-commands": "its evidence ran no commands",
+    "changed": "the note changed while the model answered; run it again",
 }
 
 

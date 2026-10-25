@@ -84,6 +84,10 @@ def tidy(config, *, model=None) -> Report:
         return report
     listing = "\n".join(f"- {r.id} ({r.status}, {r.scope}): {r.rule}" for r in rules.values())
     found = _object((model or learn.claude_model())(_PROMPT.format(rules=listing)))
+    # The model took a while: act on the notes as they are now, and skip a pair whose
+    # status changed, since the model judged it under the old one.
+    asked = {rid: r.status for rid, r in rules.items()}
+    rules = {rid: r for rid, r in _fresh(rules).items() if r.status == asked[rid]}
     for keep, drop, _ in _pairs(found, "duplicates", "keep", "drop"):
         if keep not in rules or drop not in rules or keep == drop:
             continue
@@ -101,3 +105,14 @@ def tidy(config, *, model=None) -> Report:
                 _flag(rule, other, why)
                 report.flagged.append((rule.id, other.id, why))
     return report
+
+
+def _fresh(rules: dict) -> dict:
+    """Re-read each note; leave out those removed or moved out of review meanwhile."""
+    found = {}
+    for rid, rule in rules.items():
+        if rule.path and rule.path.exists():
+            fresh = profile._read(rule.path)
+            if fresh.status in ("proposed", "active"):
+                found[rid] = fresh
+    return found

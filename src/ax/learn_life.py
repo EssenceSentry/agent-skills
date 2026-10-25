@@ -156,10 +156,13 @@ def refresh(config, candidates, labels, *, today: date | None = None) -> list:
         fields = assess(rule, found.get(rule.id, []), today)
         if all(getattr(rule, k) == v for k, v in fields.items()):
             continue
+        fresh = profile._read(rule.path)  # keep a keep or an edit made since the load
+        if fresh.status != "active" or fresh.reviewed != rule.reviewed:
+            continue  # the next sync assesses it as it is now
         for k, v in fields.items():
-            setattr(rule, k, v)
-        profile._write(rule, rule.path)
-        changed.append(rule)
+            setattr(fresh, k, v)
+        profile._write(fresh, fresh.path)
+        changed.append(fresh)
     return changed
 
 
