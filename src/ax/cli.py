@@ -557,7 +557,8 @@ def sync(quiet: bool = typer.Option(False, "--quiet", "-q", help="Print nothing 
                 from ax import memshare
 
                 memshare.export(config)  # Claude's memories, for Codex to merge
-            if report.written and config.find_refresh_on_sync and find.ready(config):
+            fresh_notes = report.written or find.stale(config)  # edited docs count too
+            if fresh_notes and config.find_refresh_on_sync and find.ready(config):
                 try:
                     find.refresh(config)  # new notes become findable
                 except find.FindError as exc:  # search is stale, not the archive
@@ -637,8 +638,8 @@ def recall_cmd(
 def find_cmd(
     query: str = typer.Argument(..., help="What to look for, in your own words or code terms."),
     sources: str = typer.Option(
-        "conversations,memories,notes,code", "--in",
-        help="Any of conversations, memories, notes, code, subagents, comma-separated.",
+        "conversations,memories,notes,docs,code", "--in",
+        help="Any of conversations, memories, notes, docs, code, subagents, comma-separated.",
     ),
     project: str = typer.Option(None, help="Only this project (git repo name)."),
     provider: str = typer.Option(None, help="Only conversations in claude or codex."),

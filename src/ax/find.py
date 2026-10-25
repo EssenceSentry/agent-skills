@@ -36,10 +36,12 @@ _CODE = re.compile(
     r"|implemented|defined|codebase)\b)"
 )
 SNIPPET = 300
-SOURCES = ("conversations", "memories", "notes", "code", "subagents")
-DEFAULT = ("conversations", "memories", "notes", "code")
+SOURCES = ("conversations", "memories", "notes", "docs", "code", "subagents")
+DEFAULT = ("conversations", "memories", "notes", "docs", "code")
+STALE = 3600  # seconds: sync refreshes the index at least this often, for edited docs
 _LABEL = {"claude": "conversation", "codex": "conversation", "subagents": "subagent",
           "claude-memory": "memory", "codex-memory": "memory", "notes": "note"}  # fmt: skip
+_DOCS = "docs-"  # one collection per repository: docs-<repo>
 _COLLECTIONS = {
     "conversations": ("claude", "codex"),
     "subagents": ("subagents",),
@@ -89,6 +91,10 @@ def qmd_collections(config) -> dict:
         "notes": {"path": str(config.vault), "pattern": "**/*.md",
                   "ignore": ["Sessions/**", "Runs/**", ".obsidian/**"],
                   "context": {"/": "The user's vault: working rules, projects, experiments"}},
+        **{f"{_DOCS}{repo.name}": {
+            "path": str(repo), "pattern": "docs/**/*.md,*.md",
+            "context": {"/": f"Docs of the {repo.name} repository: README, plans, docs folder"}}
+           for repo in repos(config)},
     }  # fmt: skip
 
 
@@ -201,7 +207,9 @@ def _from_qmd(config, query, collections, *, n, fast) -> list[dict]:
         if not match or match.group(1) not in roots:
             continue
         collection, rel = match.group(1), unquote(match.group(2))
-        hits.append({"source": _LABEL[collection], "collection": collection,
+        doc = collection.startswith(_DOCS)
+        hits.append({"source": "doc" if doc else _LABEL[collection], "collection": collection,
+                     **({"project": collection.removeprefix(_DOCS)} if doc else {}),
                      "path": str(Path(roots[collection]["path"]) / rel),
                      "title": item.get("title") or Path(rel).stem, "line": item.get("line"),
                      "snippet": _snippet(item.get("snippet") or "")})  # fmt: skip
@@ -249,8 +257,9 @@ def find(config, query: str, *, sources=DEFAULT, limit: int = 10, project=None, 
     sources = [s for s in sources if s in SOURCES]
     filtered = bool(project or provider or since)
     n = limit * (4 if filtered else 2)
-    collections = [c for s in sources for c in _COLLECTIONS.get(s, ())]
     paths = [p for p in repos(config) if not project or p.name == project]
+    collections = [c for s in sources for c in _COLLECTIONS.get(s, ())]
+    collections += [f"{_DOCS}{p.name}" for p in paths] if "docs" in sources else []
     with ThreadPoolExecutor(max_workers=2) as pool:  # qmd and Semble at once
         asked = (
             pool.submit(_from_qmd, config, query, collections, n=n, fast=fast)
@@ -296,17 +305,33 @@ def text(hits: list[dict]) -> str:
     return "\n".join(lines) or "no matches"
 
 
+def _stamp(config) -> Path:
+    return config.data / "find-refreshed"
+
+
+def stale(config) -> bool:
+    """Whether the index hasn't been refreshed for STALE seconds (or ever)."""
+    try:
+        return datetime.now().timestamp() - _stamp(config).stat().st_mtime > STALE
+    except OSError:
+        return True
+
+
 def refresh(config, *, complete: bool = False) -> None:
-    """Re-index changed notes and memories and embed what's new; repos need nothing.
+    """Re-register the collections (repos cloned since get theirs), re-index changed notes,
+    memories and docs, and embed what's new; Semble re-indexes code on its own.
 
     qmd stops embedding after 30 minutes and finishes on the next run; `complete`
     lifts that cap, for a first index of the whole archive.
     """
+    write_qmd_config(config)
     _qmd(config, "update", timeout=1800)
     if complete:
         _qmd(config, "embed", "--timeout", "0", timeout=6 * 3600)
     else:
         _qmd(config, "embed", timeout=3600)
+    _stamp(config).parent.mkdir(parents=True, exist_ok=True)
+    _stamp(config).touch()
 
 
 def setup(config, *, say=print) -> None:

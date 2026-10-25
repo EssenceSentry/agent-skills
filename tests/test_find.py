@@ -88,9 +88,8 @@ def test_hits_are_merged_labelled_and_carry_handles(indexed, monkeypatch):
     assert memory["path"].endswith("memory/retries.md")
     [qmd_call] = [c for c in runner.calls if c[0] == "qmd"]
     assert qmd_call[1:4] == ["--index", "ax", "query"]
-    assert {"claude", "codex", "claude-memory", "codex-memory", "notes"} == {
-        qmd_call[i + 1] for i, a in enumerate(qmd_call) if a == "-c"
-    }
+    assert {"claude", "codex", "claude-memory", "codex-memory", "notes", "docs-demo",
+            "docs-other"} == {qmd_call[i + 1] for i, a in enumerate(qmd_call) if a == "-c"}  # fmt: skip
 
 
 def test_filters_apply_through_the_archive_and_the_repo_names(indexed, monkeypatch):
@@ -145,7 +144,12 @@ def test_evaluation_counts_questions_answered_in_the_top_k(indexed, monkeypatch,
 
 def test_sync_refreshes_the_index_when_it_wrote_notes(env, tmp_path, monkeypatch):
     refreshed = []
-    monkeypatch.setattr(find, "refresh", lambda config: refreshed.append(config))
+
+    def refresh(config):  # records its run as the real refresh does
+        refreshed.append(config)
+        find._stamp(config).touch()
+
+    monkeypatch.setattr(find, "refresh", refresh)
     run = {"AX_CONFIG": str(env.config_path)}
     assert CliRunner().invoke(app, ["sync"], env=run).exit_code == 0
     assert refreshed == []  # no index yet
@@ -210,3 +214,50 @@ def test_a_running_qmd_daemon_answers_without_loading_models_again(indexed, monk
     assert url.endswith(":8181/query") and body["collections"] == ["claude", "codex"]
     assert [s["type"] for s in body["searches"]] == ["lex", "vec"] and body["rerank"] is True
     assert body["candidateLimit"] == find.RERANK
+
+
+def test_each_repository_gets_a_docs_collection(indexed):
+    found = find.qmd_collections(indexed.config)
+    docs = found["docs-demo"]
+    assert docs["path"] == str(indexed.repos / "demo")
+    assert docs["pattern"] == "docs/**/*.md,*.md" and "demo" in docs["context"]["/"]
+    assert "docs-other" in found and "docs-notes-only" not in found  # not a git checkout
+
+
+def test_doc_hits_are_labelled_and_filtered_by_project(indexed, monkeypatch):
+    runner = Runner(qmd=[qmd_hit("docs-demo", "docs/guide.md", "Guide")])
+    monkeypatch.setattr(find, "_run", runner)
+    [hit] = find.find(indexed.config, "how to deploy", sources=["docs"], project="demo")
+    assert hit["source"] == "doc" and hit["project"] == "demo"
+    assert hit["path"] == str(indexed.repos / "demo" / "docs" / "guide.md")
+    [qmd_call] = runner.calls
+    assert [qmd_call[i + 1] for i, a in enumerate(qmd_call) if a == "-c"] == ["docs-demo"]
+
+
+def test_a_refresh_registers_repositories_cloned_since_setup(indexed, monkeypatch):
+    monkeypatch.setattr(find, "_run", Runner())
+    find.write_qmd_config(indexed.config)
+    (indexed.repos / "newer" / ".git").mkdir(parents=True)
+    find.refresh(indexed.config)
+    assert (
+        "docs-newer" in yaml.safe_load(find.qmd_config(indexed.config).read_text())["collections"]
+    )
+
+
+def test_sync_refreshes_a_stale_index_even_without_new_notes(env, monkeypatch):
+    refreshed = []
+
+    def refresh(config):  # records its run as the real refresh does
+        refreshed.append(config)
+        find._stamp(config).touch()
+
+    monkeypatch.setattr(find, "refresh", refresh)
+    run = {"AX_CONFIG": str(env.config_path)}
+    find.write_qmd_config(load(env.config_path))
+    assert CliRunner().invoke(app, ["sync"], env=run).exit_code == 0
+    assert len(refreshed) == 1  # first sync wrote notes
+    assert CliRunner().invoke(app, ["sync"], env=run).exit_code == 0
+    assert len(refreshed) == 1  # nothing new, refreshed moments ago
+    monkeypatch.setattr(find, "stale", lambda config: True)
+    assert CliRunner().invoke(app, ["sync"], env=run).exit_code == 0
+    assert len(refreshed) == 2  # an hour on: edited docs get picked up

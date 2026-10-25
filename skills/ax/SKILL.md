@@ -13,8 +13,8 @@ command has `--help`; most take `--json` for agents.
 ## Find and build on past work (skill: session-recall)
 
 - `ax find "question"`: one search over past conversations, both tools' memories,
-  the vault's notes and the code in the user's repos. Use it before redoing an
-  investigation or decision. `--in conversations|memories|notes|code|subagents`,
+  the vault's notes, the repos' docs (README, plans, `docs/`) and their code. Use it
+  before redoing an investigation or decision. `--in conversations|memories|notes|docs|code|subagents`,
   `--project`, `--provider`, `--since`, `--fast`.
 - `ax search "exact words"`: exact words in archived messages (error text, ids).
 - `ax recall ax:9fe6d7e6`: bring an earlier conversation in by its handle, as an

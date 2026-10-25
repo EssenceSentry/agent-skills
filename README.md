@@ -31,7 +31,7 @@ take effect at once; after a change to the dependencies, run the same command wi
 | `ax sync` | Archive new and changed sessions into the vault |
 | `ax doctor` | Check retention, the vault, the last sync and format drift |
 | `ax search "words" [--json]` | Find past sessions by the exact words said in them |
-| `ax find "question" [--in …] [--json]` | One search over conversations, memories, vault notes and code (qmd and Semble) |
+| `ax find "question" [--in …] [--json]` | One search over conversations, memories, vault notes, the repos' docs and their code (qmd and Semble) |
 | `ax index` (`setup`, `refresh`, `eval`) | Build and refresh the index behind `ax find`, and score it on questions with known answers |
 | `ax here` / `ax recall <handle>` | This conversation's handle; an earlier conversation brought into this one, linked in both notes |
 | `ax todo` (`add`, `list`, `done`, `drop`) | To-dos, global or per project, linked to the conversation that raised them and shown in every new conversation's digest |

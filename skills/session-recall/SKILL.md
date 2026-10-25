@@ -50,12 +50,13 @@ ax find "where is VCR computed" --in code
 ax search "cleanupPeriodDays" --json   # exact words, error text, file names
 ```
 
-- `ax find` searches conversations, both tools' memories, the vault's notes and
-  the code in the user's repositories at once, by meaning as well as words.
-  `--in` narrows it: `conversations`, `memories`, `notes`, `code`, `subagents`.
+- `ax find` searches conversations, both tools' memories, the vault's notes, the
+  repositories' docs (README, plans, `docs/`) and their code at once, by meaning as
+  well as words. `--in` narrows it: `conversations`, `memories`, `notes`, `docs`,
+  `code`, `subagents`.
   `--project`, `--provider claude|codex` and `--since` filter conversations.
   `--fast` skips the models when a keyword search is enough.
-- Each hit is labelled `[conversation]`, `[memory]`, `[note]` or `[code]`.
+- Each hit is labelled `[conversation]`, `[memory]`, `[note]`, `[doc]` or `[code]`.
   Conversation hits carry their handle; recall one to read more.
 - `ax search` finds exact words in messages. Use it for error text, names and
   ids; use `ax find` for questions.
