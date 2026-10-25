@@ -1,3 +1,5 @@
+import { CircleHelp } from "lucide-react"
+
 import { AppIcon } from "@/app-icon"
 import { AppBar } from "@/blocks/app-bar"
 import { StatusBadge } from "@/blocks/primitives"
@@ -7,6 +9,7 @@ import { type LiveStatus, useNow, useTick } from "@/lib/ax"
 import { type Route, useRoute } from "@/lib/routes"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { HelpScreen } from "@/screens/help"
 import { NowScreen } from "@/screens/now"
 import { ReaderScreen } from "@/screens/reader"
 
@@ -38,7 +41,8 @@ function NavLink({ href, active, children }: { href: string; active: boolean; ch
   )
 }
 
-const crumb = (route: Route) => (route.screen === "now" ? "Now" : "Notes")
+const crumb = (route: Route) =>
+  route.screen === "now" ? "Now" : route.screen === "help" ? "Help" : "Notes"
 
 export default function App() {
   const route = useRoute()
@@ -58,9 +62,26 @@ export default function App() {
                 <NavLink href="#/" active={route.screen === "now"}>
                   Now
                 </NavLink>
-                <NavLink href="#/notes" active={route.screen !== "now"}>
+                <NavLink
+                  href="#/notes"
+                  active={route.screen === "notes" || route.screen === "read"}
+                >
                   Notes
                 </NavLink>
+                <a
+                  href="#/help"
+                  aria-label="What ax can do"
+                  title="What ax can do"
+                  aria-current={route.screen === "help" ? "page" : undefined}
+                  className={cn(
+                    "grid size-8 place-items-center rounded-lg transition-colors",
+                    route.screen === "help"
+                      ? "bg-primary-soft text-primary-ink"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  )}
+                >
+                  <CircleHelp className="size-[18px]" />
+                </a>
               </nav>
               <span
                 className="hidden text-[11px] text-muted-foreground md:inline"
@@ -72,15 +93,15 @@ export default function App() {
             </>
           }
         />
-        {state ? (
-          <>
-            <UsageBand rows={state.usage} credits={state.credits ?? []} />
-            {route.screen === "now" ? (
-              <NowScreen state={state} refresh={refresh} />
-            ) : (
-              <ReaderScreen route={route} />
-            )}
-          </>
+        {state && <UsageBand rows={state.usage} credits={state.credits ?? []} />}
+        {route.screen === "help" ? (
+          <HelpScreen />
+        ) : state ? (
+          route.screen === "now" ? (
+            <NowScreen state={state} refresh={refresh} />
+          ) : (
+            <ReaderScreen route={route} />
+          )
         ) : (
           <main className="mx-auto max-w-[1360px] p-4 md:p-6">
             <div className="panel p-6 text-sm text-muted-foreground">

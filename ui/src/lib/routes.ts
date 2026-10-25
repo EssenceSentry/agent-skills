@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 
 export type Route =
   | { screen: "now" }
+  | { screen: "help" }
   | { screen: "notes"; dir: string }
   | { screen: "read"; path: string }
 
@@ -33,6 +34,7 @@ export function parseRoute(hash: string): Route {
     return { screen: "notes", dir: decode(h.slice("/notes/".length)) }
   }
   if (h.startsWith("/read/")) return { screen: "read", path: decode(h.slice("/read/".length)) }
+  if (h === "/help") return { screen: "help" }
   return { screen: "now" }
 }
 

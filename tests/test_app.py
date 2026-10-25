@@ -608,3 +608,13 @@ def test_a_terminated_ax_serve_closes_its_tunnel(env, cli_serve, monkeypatch):
     assert result.exit_code == 0, result.output
     assert FakeShare.made.closed
     assert signal.getsignal(signal.SIGTERM) is before
+
+
+def test_the_app_s_help_names_every_top_level_command():
+    import typer.main
+
+    from ax.cli import app as cli
+
+    help_text = (UI / "src" / "lib" / "help.ts").read_text()
+    missing = [n for n in sorted(typer.main.get_command(cli).commands) if f"ax {n}" not in help_text]
+    assert missing == [], f"add these to ui/src/lib/help.ts: {missing}"

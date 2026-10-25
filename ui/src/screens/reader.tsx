@@ -160,7 +160,7 @@ function NoteView({ note }: { note: Note }) {
   )
 }
 
-export function ReaderScreen({ route }: { route: Exclude<Route, { screen: "now" }> }) {
+export function ReaderScreen({ route }: { route: Exclude<Route, { screen: "now" | "help" }> }) {
   const reading = route.screen === "read" ? route.path : null
   const dir = route.screen === "notes" ? route.dir : parentOf(route.path)
   const folder = useLoad(dir, loadFolder)

@@ -26,6 +26,7 @@ const routes = [
     name: "reader",
     hash: "#/read/Sessions/2026/10/2026-10-25%20Build%20the%20ax%20app%2048402546.md",
   },
+  { name: "help", hash: "#/help" },
 ]
 for (const colorScheme of ["light", "dark"]) {
   for (const viewport of viewports)
