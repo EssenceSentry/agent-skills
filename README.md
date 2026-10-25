@@ -50,9 +50,9 @@ take effect at once; after a change to the dependencies, run the same command wi
 | `ax profile` (`seed`, `list`, `add`, `compile`, `check`) | One set of working rules, compiled into both tools, their guard and their workers |
 | `ax brief KIND` | A brief for a delegated worker that carries those rules, and its launch plan |
 | `ax policy` (`add`, `list`, `remove`) | Limits the main agent sets for its subagents and workers, for this conversation or all; they never bind the main agent |
-| `ax learn` (`scan`, `label`, `propose`, `fixes`, `tidy`, `guards`, `list`, `accept`, `reject`, `review`, `keep`, `retire`, `guard`, `recall`) | Rule proposals from your own corrections, for your approval, and each rule's lifecycle |
+| `ax learn` (`scan`, `label`, `propose`, `fixes`, `tidy`, `guards`, `list`, `accept`, `reject`, `restore`, `review`, `keep`, `retire`, `guard`, `recall`) | Rule proposals from your own corrections, for your approval, and each rule's lifecycle; decided rules keep their notes, and `restore` sends one back to the proposals |
 | `ax scorecard` | Corrections, nudges, guard blocks, worker denials, recurring errors and cost, by week |
-| `ax workshop` (`status`, `run [--dry-run]`, `stop`) | The rules workshop: on a weekly window's spare last day, the scheduled sync starts Opus 5.5 or Sol 6.1 agents, sized by the rule work and the allowance above a 3% floor, to consolidate and design the rules; their work lands as proposals and a report in `Workshops/` |
+| `ax workshop` (`status`, `run [--dry-run]`, `stop`) | The rules workshop: on a weekly window's spare last day, the scheduled sync starts Opus 5.5 or Sol 6.1 agents, sized by the rule work and the allowance above a 3% floor, to consolidate and design the rules. They propose only rules that recur across sessions and that no skill or instruction file already states; a final agent settles one list (each waiting proposal kept, replaced or withdrawn), and warnings about instruction files that look wrong join the app. A report goes to `Workshops/` |
 | `ax lab` (`build`, `cut`, `run`) | Replay evals that test the profile as a plugin, with and without it |
 
 `hooks install`, `schedule install` and `skills link` print what they would change

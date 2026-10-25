@@ -54,14 +54,18 @@ command has `--help`; most take `--json` for agents.
   reaches every subagent and worker, Codex's too. Subagents and workers are also
   stopped before irreversible actions and the user's `block` rules.
 - `ax learn` (`scan`, `label`, `propose`, `tidy`, `guards`, `fixes`, `list`,
-  `review`, `accept`, `reject`, `keep`, `retire`, `guard`): proposes rules from the
-  user's corrections and tracks each rule's evidence. Accepting, rejecting, keeping
-  or retiring is the user's decision.
+  `review`, `accept`, `reject`, `restore`, `keep`, `retire`, `guard`): proposes rules
+  from the user's corrections and tracks each rule's evidence. Accepting, rejecting,
+  keeping or retiring is the user's decision. A decided rule keeps its note, marked
+  with when and by whom; `restore` sends it back to the proposals.
 - `ax workshop` (`status`, `run`, `stop`): the rules workshop. On a weekly window's
   last day with spare allowance, the scheduled sync starts it by itself: Opus 5.5 or
   Sol 6.1 agents, sized by the rule work and the allowance left, consolidate and
-  design the rules, and their work lands as proposals. `status` and `run --dry-run`
-  show what it would do.
+  design the rules. They propose only rules that recur across sessions, check what
+  skills and instruction files already say, and their final agent settles one list:
+  each waiting proposal kept, replaced or withdrawn (withdrawn ones are rejected for
+  the user, who can bring them back). They also warn about instruction files that
+  look wrong. `status` and `run --dry-run` show what it would do.
 
 ## Measuring
 

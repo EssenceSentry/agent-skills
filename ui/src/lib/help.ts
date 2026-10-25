@@ -84,7 +84,7 @@ export const areas: Area[] = [
     id: "learn",
     area: "Learn",
     title: "Rules proposed from your own corrections",
-    body: "ax learn reads what you wrote in both tools: corrections, requests to remember, praise, refused tool calls, and moments of frustration with the episode behind them. Haiku labels them and proposals wait for you on the Now screen. Each accepted rule keeps its own evidence, confidence and maturity, and asks for review when it keeps being restated or passed.",
+    body: "ax learn reads what you wrote in both tools: corrections, requests to remember, praise, refused tool calls, and moments of frustration with the episode behind them. Haiku labels them and proposals wait for you on the Now screen, where accepting or rejecting takes one click and Decided keeps every decision for you to reverse. Each accepted rule keeps its own evidence, confidence and maturity, and asks for review when it keeps being restated or passed.",
     commands: ["ax learn"],
     proof: "It rediscovered 9 of the 11 rules written by hand.",
   },
@@ -92,7 +92,7 @@ export const areas: Area[] = [
     id: "workshop",
     area: "Workshop",
     title: "Spare allowance, spent on the rules",
-    body: "On the last day of a weekly window with allowance to spare, the scheduled sync starts Opus 5.5 or Sol 6.1 agents, as many as the rule work and the allowance above a 3% floor allow. They consolidate and design the rules; their work arrives here as proposals, with a report in the vault's Workshops folder. Codex credits are never spent.",
+    body: "On the last day of a weekly window with allowance to spare, the scheduled sync starts Opus 5.5 or Sol 6.1 agents, as many as the rule work and the allowance above a 3% floor allow. They propose only rules that recur across sessions and that no skill or instruction file already states, and a final agent settles one list: every waiting proposal kept, replaced or withdrawn. Their warnings about instruction files that look wrong arrive here too, with a report in the vault's Workshops folder. Codex credits are never spent.",
     commands: ["ax workshop"],
   },
   {

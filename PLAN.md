@@ -546,6 +546,13 @@ A weekly window that ends its week with allowance left resets it unused. The wor
 - **Seeing it:** an ntfy message when a run starts and when it ends (agents, allowance spent, proposals written). The run is an `ax job`, so the app shows it under jobs, and its proposals reach the waiting list with the report linked.
 - **Commands:** `ax workshop status` (whether a run would start now, with how many agents and why), `ax workshop run [--dry-run]`, `ax workshop stop`; config `[workshop]` with `enabled`, `floor` and `max_agents`.
 - **Build order, test-first:** the condition and the sizing (with `status` and `--dry-run`); the supervisor, with fake runners in tests; the validated writer for proposals and the report; the schedule check; the app's view; then a live `--dry-run` on the real archive before the first real run.
+- **Revised after its first runs (2026-10-25):** the proposals were redundant (each run added its list on top of the waiting ones, five rules in two versions) and some rested on one incident.
+  - **General rules only:** a lesson reaches the designers only if it came up in two sessions or the user stated it as standing ("from now on", "remember"); every proposal names the recurring pattern it covers, and a new rule's evidence must span two sessions or include such a request.
+  - **What is already said:** the material holds copies of the instructions agents already read (global and repo `AGENTS.md`/`CLAUDE.md`, skills, memories), indexed by origin; agents drop a rule something there already states.
+  - **One list:** the final agent settles every waiting proposal, the learner's and earlier runs', by keeping, replacing or withdrawing it. Replaced and withdrawn proposals are rejected for the user, kept under Decided where they can be brought back.
+  - **Warnings:** agents report instruction files and skills the conversations show to be wrong; they go to the report and to "Instructions to check" in the app.
+  - **No runs on its own output:** the workshop's proposals don't count as new work for the next run.
+- **Decisions in the app (2026-10-25):** accepting and rejecting take one click, with an Undo. Rejecting keeps the note (status `rejected`, with when and by whom), and a Decided panel lists accepted and rejected rules with the opposite decision and "Back to proposals" (`ax learn restore`); undoing an acceptance brings back the rules it retired in its place.
 
 ### 19. Friction without walls: pauses, and limits agents set (agreed and built 2026-10-25)
 
