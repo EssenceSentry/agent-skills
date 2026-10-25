@@ -564,6 +564,72 @@ def serve(
         server.server_close()
 
 
+policy_app = typer.Typer(
+    no_args_is_help=True,
+    help="Limits the main agent sets for its subagents and workers; they never bind it.",
+)
+app.add_typer(policy_app, name="policy")
+
+
+@policy_app.command("add")
+def policy_add(
+    pattern: str = typer.Argument(..., help="A regular expression over what a command runs."),
+    why: str = typer.Option(..., help="What the subagent is told when it is stopped."),
+    everywhere: bool = typer.Option(False, "--all", help="Every subagent and worker, Codex's too."),
+):
+    """Stop this conversation's subagents (or, with --all, every one) from running a command."""
+    from ax import handles, policy
+
+    config = load()
+    here = handles.current(config)
+    if not everywhere and not here:
+        typer.echo("not inside a conversation: pass --all for every subagent", err=True)
+        raise typer.Exit(2)
+    try:
+        limit = policy.add(config, pattern, why, session=None if everywhere else here[1])
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    scope = "every subagent and worker" if everywhere else "this conversation's subagents"
+    typer.echo(f"{limit['id']}: stops {scope} from running {pattern!r}")
+
+
+@policy_app.command("list")
+def policy_list(as_json: bool = typer.Option(False, "--json", help="Machine-readable output.")):
+    """Every limit, and whose subagents it reaches."""
+    from ax import handles, policy
+
+    config = load()
+    limits = policy.listing(config)
+    if as_json:
+        typer.echo(json.dumps(limits, indent=2))
+        return
+    here = handles.current(config)
+    for x in limits:
+        if x.get("session") is None:
+            scope = "every subagent"
+        elif here and x["session"] == here[1]:
+            scope = "this conversation"
+        else:
+            scope = f"conversation {handles.tag(x['session'])}"
+        typer.echo(f"{x['id']:<4} {scope:<22} {x['pattern']}  ({x['why']})")
+    if not limits:
+        typer.echo("no limits")
+
+
+@policy_app.command("remove")
+def policy_remove(limit_id: str = typer.Argument(..., help="Its id, such as L3.")):
+    """Lift a limit."""
+    from ax import policy
+
+    try:
+        policy.remove(load(), limit_id)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"removed {limit_id}")
+
+
 workshop_app = typer.Typer(
     no_args_is_help=True,
     help="The rules workshop: a weekly window's spare allowance, spent on the rules.",

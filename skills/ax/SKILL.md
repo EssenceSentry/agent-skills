@@ -41,9 +41,18 @@ command has `--help`; most take `--json` for agents.
 ## Working rules
 
 - `ax profile` (`list`, `add`, `compile`, `check`, `seed`): the user's rules, kept as
-  vault notes and compiled into both tools' instruction files. A rule at level
-  `block` is enforced by `ax-guard` before shell commands; a Claude stop check
+  vault notes and compiled into both tools' instruction files; a Claude stop check
   questions "tests pass" claims made without running tests.
+- **Pauses:** before a shell command, `ax-guard` pauses the main agent (the one the
+  user talks to) once before something it can't undo, or that a `block` rule names,
+  and says what is at stake. If you mean it, run the same command again with your
+  reason in front: `AX_INTENT="why" <command>`. The reason is logged. Nothing
+  pauses when nothing would be lost, and ordinary work never pauses.
+- `ax policy` (`add`, `list`, `remove`): limits you set for your subagents and
+  workers, such as `ax policy add '\bgit\s+push\b' --why "I push, not you"`. They
+  stop the subagent (it is told to report back to you) and never bind you; `--all`
+  reaches every subagent and worker, Codex's too. Subagents and workers are also
+  stopped before irreversible actions and the user's `block` rules.
 - `ax learn` (`scan`, `label`, `propose`, `tidy`, `guards`, `fixes`, `list`,
   `review`, `accept`, `reject`, `keep`, `retire`, `guard`): proposes rules from the
   user's corrections and tracks each rule's evidence. Accepting, rejecting, keeping
@@ -96,7 +105,7 @@ command has `--help`; most take `--json` for agents.
 - **Alone:** find, search, recall (outline), here, job show and wait, todo list,
   todo add or done when the user asked, scorecard, usage, runs, profile list and
   check, learn list and review, doctor, app start, status and open, workshop status,
-  any `--help` or `--dry-run`.
+  policy add, list and remove for your own subagents, any `--help` or `--dry-run`.
 - **Ask first:** anything that spends (`learn label`, `lab run`, `recall --for` or
   `--card`, briefs that launch workers, `index setup`), changes the user's rules or
   tools (`learn accept|reject|keep|retire|guard`, `profile add` or `compile

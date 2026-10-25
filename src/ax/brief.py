@@ -213,6 +213,8 @@ def build(
         lines += ["", "## Acceptance criteria", "", *[f"- {a}" for a in accept]]
     if rules:
         lines += ["", "## The user's rules", "", *_bullets(rules)]
+    lines += ["", "## Limits", "", _LIMITS_INTRO, f"- {_IRREVERSIBLE}"]
+    lines += [f"- {x['why']} (`{x['pattern']}`)" for x in _limits(config)]
     present = [repo / name for name in REPO_INSTRUCTIONS if (repo / name).exists()]
     if present:
         lines += ["", "## This repository's instructions", "", "Read these first:"]
@@ -235,6 +237,24 @@ def build(
         "rules": [r.id for r in rules],
     }
     return Brief(text, plan)
+
+
+_LIMITS_INTRO = (
+    "These are stopped before they run, whatever the reason. If the task needs one, say so "
+    "in your report; the agent that started you can run it."
+)
+_IRREVERSIBLE = (
+    "Irreversible actions: discarding uncommitted work, deleting untracked files or stashes, "
+    "a force push or a remote delete, a recursive rm outside disposable folders, cloud "
+    "deletes, dropping tables."
+)
+
+
+def _limits(config) -> list:
+    from ax import handles, policy
+
+    here = handles.current(config)
+    return policy.listing(config, session=here[1] if here else None)
 
 
 def _codex_model(config) -> str:

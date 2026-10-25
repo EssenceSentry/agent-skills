@@ -33,6 +33,31 @@ def log_path(data: Path) -> Path:
     return Path(data) / "guard.jsonl"
 
 
+def policy_path(data: Path) -> Path:
+    """The limits main agents set for their subagents and workers (see ax.policy)."""
+    return Path(data) / "subagent_limits.json"
+
+
+def _limit(data: Path, session, command: str) -> dict | None:
+    """The first limit for this conversation's subagents (or for all) the command breaks."""
+    try:
+        limits = json.loads(policy_path(data).read_text()).get("limits", [])
+    except (OSError, ValueError, AttributeError):
+        return None
+    code = code_only(command)
+    for limit in limits:
+        if not isinstance(limit, dict) or not isinstance(limit.get("pattern"), str):
+            continue
+        if limit.get("session") and limit["session"] != session:
+            continue
+        try:
+            if re.search(limit["pattern"], code, re.MULTILINE):
+                return limit
+        except re.error:
+            continue
+    return None
+
+
 def probe_marker(data: Path) -> Path:
     """While this file exists, each call records who made it (not what it ran)."""
     return Path(data) / "guard-probe"
@@ -523,13 +548,20 @@ def _main(argv=None, *, stdin=None, stdout=None) -> int:
         who = caller(payload, tool)
         hit = evaluate(rules, command, cwd)
         found = None if hit else destructive(command, cwd)
+        limit = None
+        if not hit and not found and who != "main":
+            limit = _limit(data, payload.get("session_id"), command)
     except Exception as exc:  # fail open: a guard bug never stops the work, but it says so
         _log(data, {**entry, "kind": "error", "error": f"{type(exc).__name__}: {exc}"})
         return 0
-    if not hit and not found:
+    if not hit and not found and not limit:
         return 0
-    rule_id = str(hit.get("id") or "unnamed") if hit else found["id"]
-    if hit:
+    rule_id = str(hit.get("id") or "unnamed") if hit else (found or limit)["id"]
+    if limit:
+        what = (
+            f"{limit['why'].rstrip('.')} (limit {limit['id']}, set by the agent that started you)"
+        )
+    elif hit:
         what = hit.get("message") or "This command breaks a rule in the user's profile."
         what = f"{what.rstrip('.')} (your profile rule {rule_id})"
     else:

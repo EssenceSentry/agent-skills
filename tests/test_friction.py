@@ -151,3 +151,81 @@ def test_a_guard_error_lets_the_command_through_and_reports_itself(rules, monkey
     monkeypatch.setattr(guard, "destructive", broken)
     assert ask(rules, "git push --force") is None
     assert logged(rules)[-1]["kind"] == "error" and "bad pattern" in logged(rules)[-1]["error"]
+
+
+# Limits the main agent sets for its subagents
+
+
+def test_limits_for_this_conversation_stop_its_subagents_only(rules):
+    from ax import policy
+
+    policy.add(rules.config, r"\bnpm\s+publish\b", "We don't publish from here.", session="s1")
+    said = ask(rules, "npm publish", agent_id="a1")
+    assert said.startswith("Stopped:") and "We don't publish from here" in said
+    assert ask(rules, "npm publish", agent_id="a1", session_id="s2") is None  # another conversation
+    assert ask(rules, "npm publish") is None  # the main agent sets them; they don't bind it
+
+
+def test_limits_for_every_subagent_reach_codex_workers(rules, tmp_path):
+    from ax import policy
+
+    policy.add(rules.config, r"\bnpm\s+publish\b", "No publishing by workers.")
+    transcript = tmp_path / "rollout.jsonl"
+    transcript.write_text(json.dumps({"payload": {"source": "exec"}}) + "\n")
+    said = ask(rules, "npm publish", tool="codex", transcript_path=str(transcript))
+    assert said.startswith("Stopped:") and "No publishing by workers" in said
+
+
+def test_a_limit_judges_what_runs_not_what_is_mentioned(rules):
+    from ax import policy
+
+    policy.add(rules.config, r"\bnpm\s+publish\b", "No publishing.")
+    assert ask(rules, 'echo "npm publish is off"', agent_id="a1") is None
+
+
+def test_limits_are_listed_removed_and_bad_patterns_refused(env):
+    from ax import policy
+
+    first = policy.add(env.config, r"\bnpm\s+publish\b", "No publishing.", session="s1")
+    second = policy.add(env.config, r"\bdocker\s+push\b", "No image pushes.")
+    assert (first["id"], second["id"]) == ("L1", "L2")
+    assert [x["id"] for x in policy.listing(env.config)] == ["L1", "L2"]
+    assert [x["id"] for x in policy.listing(env.config, session="s2")] == ["L2"]
+    policy.remove(env.config, "L1")
+    assert [x["id"] for x in policy.listing(env.config)] == ["L2"]
+    with pytest.raises(ValueError, match="pattern"):
+        policy.add(env.config, "(unclosed", "x")
+    with pytest.raises(ValueError, match="no limit L9"):
+        policy.remove(env.config, "L9")
+
+
+def test_the_policy_commands_tie_a_limit_to_this_conversation(env, monkeypatch):
+    from typer.testing import CliRunner
+
+    from ax import policy
+    from ax.cli import app as cli
+
+    monkeypatch.setenv("AX_CONFIG", str(env.config_path))
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "6942b4a0-7d35-4d5e-91a2-460a9fe6d7e6")
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    result = CliRunner().invoke(cli, ["policy", "add", r"\bnpm\s+publish\b", "--why", "No."])
+    assert result.exit_code == 0, result.output
+    [limit] = policy.listing(env.config)
+    assert limit["session"] == "6942b4a0-7d35-4d5e-91a2-460a9fe6d7e6"
+    CliRunner().invoke(cli, ["policy", "add", r"\bdocker\s+push\b", "--why", "No.", "--all"])
+    assert policy.listing(env.config)[-1]["session"] is None
+    result = CliRunner().invoke(cli, ["policy", "list"])
+    assert "L1" in result.output and "this conversation" in result.output
+    assert CliRunner().invoke(cli, ["policy", "remove", "L1"]).exit_code == 0
+    assert [x["id"] for x in policy.listing(env.config)] == ["L2"]
+
+
+def test_a_brief_lists_the_limits_its_worker_works_under(env, tmp_path):
+    from ax import brief, policy
+
+    policy.add(env.config, r"\bnpm\s+publish\b", "No publishing from workers.")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    text = brief.build(env.config, "review", repo=repo, task="Review it.", windows=[]).text
+    assert "## Limits" in text and "No publishing from workers." in text
+    assert "force push" in text  # the irreversible actions it can't take either
