@@ -1336,6 +1336,21 @@ def learn_guards_cmd(
     typer.echo("\n".join(learn_guards.report(results)) or "no proposals to guard")
 
 
+@learn_app.command("fixes")
+def learn_fixes_cmd(
+    weeks: int = typer.Option(8, help="Look for recurring errors over this many weeks."),
+    model: str = typer.Option("haiku", help="The Claude model that words the fixes."),
+):
+    """Propose a rule for each error that keeps recurring across sessions."""
+    from ax import learn, learn_fixes, scorecard
+
+    config = load()
+    errors = scorecard.recurring(config, weeks=weeks)
+    for rule in learn_fixes.propose_fixes(config, errors, model=learn.claude_model(model)):
+        typer.echo(f"proposed {rule.id} ({rule.scope}): {rule.rule}")
+    typer.echo(f"{len(errors)} recurring errors checked")
+
+
 @learn_app.command("list")
 def learn_list(as_json: bool = typer.Option(False, "--json", help="Machine-readable output.")):
     """Proposals waiting for your decision."""

@@ -758,11 +758,17 @@ def _why(group: Group, kinds: Counter) -> str:
     return "\n".join(lines)
 
 
+def repo_scope(project: str) -> str:
+    """A rule scope for one project; global when the name can't be a scope."""
+    scope = f"repo:{project}"
+    return scope if profile._SCOPE.fullmatch(scope) else "global"
+
+
 def _scope(group: Group) -> str:
     projects = Counter(c["project"] for c, _ in group.members if c["project"])
     repo_votes = sum(lab["scope"] == "repo" for _, lab in group.members)
     if projects and (repo_votes * 2 > len(group.members) or len(projects) < MIN_PROJECTS_GLOBAL):
-        return f"repo:{projects.most_common(1)[0][0]}"
+        return repo_scope(projects.most_common(1)[0][0])
     return "global"
 
 

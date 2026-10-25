@@ -49,14 +49,21 @@ def card(env, tmp_path):
 
     def transcript(name, version, codex=False):
         warning = f"WARNING: there is a new pyright version available (v1.1.{version})"
+        records = []
         if codex:
-            item = {"type": "CommandExecution", "aggregated_output": f"0 errors\n{warning}"}
-            record = {"type": "event_msg", "payload": {"type": "item_completed", "item": item}}
+            item = {"type": "CommandExecution", "aggregated_output": f"0 errors\n{warning}",
+                    "command": f"uv run pyright src/{name}"}  # fmt: skip
+            records.append({"type": "event_msg",
+                            "payload": {"type": "item_completed", "item": item}})  # fmt: skip
         else:
-            block = {"type": "tool_result", "content": [{"type": "text", "text": warning}]}
-            record = {"type": "user", "message": {"content": [block]}}
+            call = {"type": "tool_use", "id": "t1", "name": "Bash",
+                    "input": {"command": "pyright src\nwith a second line"}}  # fmt: skip
+            records.append({"type": "assistant", "message": {"content": [call]}})
+            block = {"type": "tool_result", "tool_use_id": "t1",
+                     "content": [{"type": "text", "text": warning}]}  # fmt: skip
+            records.append({"type": "user", "message": {"content": [block]}})
         path = tmp_path / f"{name}.jsonl"
-        path.write_text(json.dumps(record) + "\n")
+        path.write_text("".join(json.dumps(r) + "\n" for r in records))
         return str(path)
 
     with Store(env.config.db_path) as store:
@@ -120,6 +127,18 @@ def test_rules_show_which_fired_and_which_never_did(card):
 def test_friction_finds_errors_that_recur_across_sessions(card):
     [top] = card["friction"]
     assert "new pyright version" in top["signature"] and top["sessions"] == 3
+
+
+def test_friction_keeps_example_commands_and_projects(card, env):
+    [top] = card["friction"]
+    assert sorted(top["examples"]) == [
+        "pyright src",
+        "uv run pyright src/x1",
+        "uv run pyright src/x2",
+    ]
+    assert top["projects"] == ["demo"]
+    [everything] = scorecard.recurring(env.config, weeks=2, now=NOW)
+    assert everything == top
 
 
 def test_skills_never_used_are_listed(card):

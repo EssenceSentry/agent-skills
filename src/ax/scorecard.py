@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from ax import learn, profile
+from ax.sources.common import first_line
 
 NUDGE = re.compile(
     r"(?i)^\s*(?:any\s+)?(?:progress|status|update|news)\s*\??\s*$|did it finish|is it (?:done|finished)"
@@ -28,6 +29,8 @@ _ERROR_ANYWHERE = re.compile(r"(?i)error|warning|denied|exception|traceback|fail
 _DENIAL = "Permission to use "
 _MIN_FRICTION = 3
 _FRICTION_SHOWN = 8
+_EXAMPLES = 3
+_TRANSCRIPT_VERSION = 2  # bump when what is read from a transcript changes
 
 
 def _week(when: datetime) -> str:
@@ -98,8 +101,21 @@ def _signature(text: str) -> str | None:
     return re.sub(r"\d+", "N", line)[:120]
 
 
-def _outputs(record: dict) -> list[str]:
-    """Tool output in one transcript line: Claude's tool results, Codex's command output."""
+def _calls(record: dict) -> dict:
+    """Claude's shell commands in one transcript line, by tool call id."""
+    found = {}
+    content = (record.get("message") or {}).get("content")
+    for block in content if isinstance(content, list) else []:
+        if isinstance(block, dict) and block.get("type") == "tool_use":
+            command = (block.get("input") or {}).get("command")
+            if block.get("name") == "Bash" and isinstance(command, str):
+                found[block.get("id")] = first_line(command, 160)
+    return found
+
+
+def _outputs(record: dict, calls: dict) -> list[tuple[str, str | None]]:
+    """Tool output in one transcript line, with the command that produced it when known:
+    Claude's tool results, Codex's command output."""
     if record.get("type") == "user":
         found = []
         for block in (record.get("message") or {}).get("content") or []:
@@ -108,7 +124,7 @@ def _outputs(record: dict) -> list[str]:
                 if isinstance(content, list):
                     content = "\n".join(c.get("text", "") for c in content if isinstance(c, dict))
                 if isinstance(content, str):
-                    found.append(content)
+                    found.append((content, calls.get(block.get("tool_use_id"))))
         return found
     payload = record.get("payload") or {}
     item = payload.get("item") or {}
@@ -117,7 +133,7 @@ def _outputs(record: dict) -> list[str]:
         command = command if isinstance(command, str) else " ".join(map(str, command))
         if any(read in command for read in _READS):
             return []  # a file being shown, not a command failing
-        return [item.get("aggregated_output") or ""]
+        return [(item.get("aggregated_output") or "", first_line(command, 160) or None)]
     return []
 
 
@@ -160,7 +176,7 @@ def _transcripts(config, sessions: list[dict]) -> dict:
             continue
         stat = path.stat()
         key, stamp = str(path), f"{stat.st_size}:{stat.st_mtime_ns}"
-        if cache.get(key, {}).get("stamp") != stamp:
+        if cache.get(key, {}).get("stamp") != stamp or cache[key].get("v") != _TRANSCRIPT_VERSION:
             cache[key] = {"stamp": stamp, **_read_transcript(path)}
         found[s["key"]] = cache[key]
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,23 +185,33 @@ def _transcripts(config, sessions: list[dict]) -> dict:
 
 
 def _read_transcript(path: Path) -> dict:
-    denials, signatures = 0, set()
+    denials, signatures, examples, calls = 0, set(), {}, {}
     with path.open(errors="replace") as f:
         for line in f:
-            if "tool_result" not in line and "CommandExecution" not in line:
-                continue
-            if not _ERROR_ANYWHERE.search(line):
+            call = '"tool_use"' in line and '"Bash"' in line
+            result = ("tool_result" in line or "CommandExecution" in line) and bool(
+                _ERROR_ANYWHERE.search(line)
+            )
+            if not (call or result):
                 continue
             try:
                 record = json.loads(line)
             except ValueError:
                 continue
-            for output in _outputs(record):
+            calls.update(_calls(record))
+            for output, command in _outputs(record, calls):
                 if output.startswith(_DENIAL):
                     denials += 1
                 elif signature := _signature(output):
                     signatures.add(signature)
-    return {"denials": denials, "signatures": sorted(signatures)}
+                    if command:
+                        examples.setdefault(signature, command)
+    return {
+        "v": _TRANSCRIPT_VERSION,
+        "denials": denials,
+        "signatures": sorted(signatures),
+        "examples": examples,
+    }
 
 
 def _guard_log(config) -> list[dict]:
@@ -202,6 +228,44 @@ def _guard_log(config) -> list[dict]:
         if when:
             entries.append({**entry, "when": when})
     return entries
+
+
+_COSTED = (
+    "SELECT key, provider, project, model, effort, cost_usd, ended, entrypoint, source_path "
+    "FROM sessions WHERE kind = 'main' AND ended >= ?"
+)
+
+
+def _friction(sessions: list[dict], transcripts: dict) -> list[dict]:
+    """Error signatures seen in at least three sessions, most widespread first."""
+    found = defaultdict(lambda: {"sessions": set(), "last": "", "projects": set(), "examples": []})
+    for s in sorted(sessions, key=lambda s: s["ended"] or "", reverse=True):
+        record = transcripts.get(s["key"], {})
+        for signature in record.get("signatures", []):
+            entry = found[signature]
+            entry["sessions"].add(s["key"])
+            entry["last"] = max(entry["last"], s["ended"] or "")
+            if s["project"]:
+                entry["projects"].add(s["project"])
+            example = record.get("examples", {}).get(signature)
+            if example and example not in entry["examples"] and len(entry["examples"]) < _EXAMPLES:
+                entry["examples"].append(example)
+    return sorted(
+        (
+            {"signature": k, "sessions": len(v["sessions"]), "last_seen": v["last"][:10],
+             "projects": sorted(v["projects"]), "examples": v["examples"]}
+            for k, v in found.items()
+            if len(v["sessions"]) >= _MIN_FRICTION
+        ),
+        key=lambda f: -f["sessions"],
+    )  # fmt: skip
+
+
+def recurring(config, *, weeks: int = 8, now: datetime | None = None) -> list[dict]:
+    """Every error that recurs across sessions in the window, with example commands."""
+    start, _ = _windows(weeks, now or datetime.now(UTC))
+    sessions = _rows(config, _COSTED, (start.isoformat(),))
+    return _friction(sessions, _transcripts(config, sessions))
 
 
 def build(config, *, weeks: int = 6, now: datetime | None = None) -> dict:
@@ -246,18 +310,8 @@ def build(config, *, weeks: int = 6, now: datetime | None = None) -> dict:
         fires[entry.get("rule")] += 1
         if (w := slot(entry["when"].isoformat())) is not None:
             w["guard_fires"] += 1
-    costed = _rows(
-        config,
-        "SELECT key, provider, model, effort, cost_usd, ended, entrypoint, source_path "
-        "FROM sessions WHERE kind = 'main' AND ended >= ?",
-        (since,),
-    )
+    costed = _rows(config, _COSTED, (since,))
     transcripts = _transcripts(config, costed)
-    friction = defaultdict(lambda: {"sessions": set(), "last": ""})
-    for s in costed:
-        for signature in transcripts.get(s["key"], {}).get("signatures", []):
-            friction[signature]["sessions"].add(s["key"])
-            friction[signature]["last"] = max(friction[signature]["last"], s["ended"] or "")
     for s in costed:
         w = slot(s["ended"])
         if w is None or not s["model"]:
@@ -287,14 +341,7 @@ def build(config, *, weeks: int = 6, now: datetime | None = None) -> dict:
             {**w, "sessions": dict(w["sessions"]), "cost": dict(w["cost"])} for w in week.values()
         ],
         "rules": rules,
-        "friction": sorted(
-            (
-                {"signature": k, "sessions": len(v["sessions"]), "last_seen": v["last"][:10]}
-                for k, v in friction.items()
-                if len(v["sessions"]) >= _MIN_FRICTION
-            ),
-            key=lambda f: -f["sessions"],
-        )[:_FRICTION_SHOWN],
+        "friction": _friction(costed, transcripts)[:_FRICTION_SHOWN],
         "skills": {
             "used": dict(sorted(used.items())),
             "unused": [n for n in _installed(config) if n not in used],
