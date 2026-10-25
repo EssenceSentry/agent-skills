@@ -184,3 +184,68 @@ def test_a_failed_wake_reports_only_its_own_output(env):
     with pytest.raises(job_wake.WakeError) as raised:
         job_wake.wake(env.config, job, spawn=Spawned(code=1, output=""), which=on_path)
     assert "old error" not in str(raised.value) and "exited with 1" in str(raised.value)
+
+
+class Ran:
+    """Records quick commands run to completion (codex queue)."""
+
+    def __init__(self, code=0, output="Queued message m-1 for thread th-1."):
+        self.calls, self.code, self.output = [], code, output
+
+    def __call__(self, argv, *, cwd, env):
+        self.calls.append(argv)
+        return self.code, self.output
+
+
+def test_an_open_codex_thread_gets_the_note_through_codex_queue(env):
+    spawn, ran = Spawned(), Ran()
+    job = ended_job(env, "a", agent={"CODEX_THREAD_ID": "th-1"})
+    woke = job_wake.wake(env.config, job, spawn=spawn, run=ran, which=on_path,
+                         held=lambda thread: thread == "th-1")  # fmt: skip
+    assert spawn.calls == [] and woke["via"] == "queue"
+    [argv] = ran.calls
+    assert argv[:5] == ["/bin/codex", "queue", "--thread", "th-1", "--message"]
+    assert argv[5].startswith("[ax job] a done")
+    [event] = [e for e in jobs.events(env.config, "a") if e["type"] == "woke"]
+    assert event["data"]["via"] == "queue"
+
+
+def test_a_thread_another_process_writes_falls_back_to_the_queue(env):
+    busy = "Error: thread/resume failed: thread th-1 already has an active writer (code -32600)\n"
+    spawn, ran = Spawned(code=1, output=busy), Ran()
+    job = ended_job(env, "a", agent={"CODEX_THREAD_ID": "th-1"})
+    woke = job_wake.wake(env.config, job, spawn=spawn, run=ran, which=on_path,
+                         held=lambda thread: False)  # fmt: skip
+    assert len(spawn.calls) == 1 and woke["via"] == "queue" and ran.calls[0][1] == "queue"
+
+
+def test_a_refused_queue_is_a_wake_error(env):
+    job = ended_job(env, "a", agent={"CODEX_THREAD_ID": "th-1"})
+    with pytest.raises(job_wake.WakeError, match="no such thread"):
+        job_wake.wake(env.config, job, spawn=Spawned(), run=Ran(1, "Error: no such thread"),
+                      which=on_path, held=lambda thread: True)  # fmt: skip
+
+
+def test_a_claude_session_still_open_is_woken_as_a_copy_and_says_so(env):
+    said = "Session 3f2a is already running, so this started a copy: 9b7c\n"
+    spawn = Spawned(output=said)
+    job = ended_job(env, "c", agent={"CLAUDE_CODE_SESSION_ID": "sess-1"})
+    woke = job_wake.wake(env.config, job, spawn=spawn, which=on_path, settle=0)
+    assert woke["copy"] is True and woke["via"] == "resume"
+    [event] = [e for e in jobs.events(env.config, "c") if e["type"] == "woke"]
+    assert event["data"]["copy"] is True
+
+
+def test_the_packet_carries_the_failure_diagnosis(env):
+    job = ended_job(env, status="failed", message="exit 1")
+    jobs.record_event(env.config, "score", "diagnosis", {"text": "DuckDB API mismatch in mine()"})
+    assert "Diagnosis: DuckDB API mismatch in mine()" in job_wake.packet(env.config, job)
+
+
+def test_ax_job_describe_sets_the_description(env):
+    jobs.new(env.config, "score", env={})
+    result = CliRunner().invoke(app, ["job", "describe", "score", "--label", "Score the rows"],
+                                env={"AX_CONFIG": str(env.config_path)})  # fmt: skip
+    assert result.exit_code == 0, result.output
+    assert jobs.get(env.config, "score").label == "Score the rows"
+    assert any(e["type"] == "described" for e in jobs.events(env.config, "score"))

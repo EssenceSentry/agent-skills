@@ -1160,6 +1160,20 @@ def job_service_cmd(
         typer.echo(f"loaded {glue.JOBS_LABEL}")
 
 
+@job_app.command("describe")
+def job_describe(
+    key: str = typer.Argument(...),
+    label: str = typer.Option(..., help="What the job does and what to do when it ends."),
+):
+    """Describe a job after starting it; the note that wakes its agent carries this."""
+    try:
+        jobs_module.describe(_jobs_config(), key, label)
+    except KeyError:
+        typer.echo(f"no job {key!r}", err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"described {key}")
+
+
 @job_app.command("eta-report")
 def job_eta_report(as_json: bool = _JSON):
     """How often finished jobs landed inside their 80% finish-time intervals."""

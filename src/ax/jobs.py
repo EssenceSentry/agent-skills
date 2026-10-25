@@ -372,6 +372,18 @@ def events(config, key, *, after: int = 0, limit: int = 200, latest: bool = Fals
     return [{**dict(r), "data": json.loads(r["data"])} for r in rows]
 
 
+def describe(config, key: str, label: str) -> Job:
+    """Set what a job does, for its dashboard, notifications and the note that wakes its agent."""
+    with connect(config) as db, _transaction(db):
+        job = _load(db, key)
+        if job is None:
+            raise KeyError(key)
+        job.label = label
+        _save(db, job)
+        _event(db, key, now_iso(), "described", {"label": label})
+    return job
+
+
 def forget(config, key) -> bool:
     check_key(key)
     with connect(config) as db, _transaction(db):
