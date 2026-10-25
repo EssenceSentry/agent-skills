@@ -90,7 +90,10 @@ def build(config, *, cwd=None, exclude=None, now=None, days=DAYS, limit=LIMIT) -
     if len(rows) > limit:
         lines.append(f"- … and {len(rows) - limit} more (`ax find --since {days}d`)")
     if open_todos:
-        lines += ["", "Open to-dos here and global (`ax todo list`; close with `ax todo done ID`):"]
+        lines += [
+            "",
+            'Open to-dos here and global (add with `ax todo add "…"`, close with `ax todo done ID`):',
+        ]
         lines += [f"- {todos.line(t)}" for t in open_todos[:TODOS]]
         if len(open_todos) > TODOS:
             lines.append(f"- … and {len(open_todos) - TODOS} more")
