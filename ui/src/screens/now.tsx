@@ -11,6 +11,7 @@ import {
   Plus,
   RefreshCcw,
   TriangleAlert,
+  Wallet,
   X,
 } from "lucide-react"
 import { type FormEvent, useMemo, useState } from "react"
@@ -28,7 +29,8 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { type ActionName, act, type Job, type NowState, type Waiting } from "@/lib/ax"
+import { type ActionName, act, type Budget, type Job, type NowState, type Waiting } from "@/lib/ax"
+import { amount, budgetBar, budgetSummary, budgetTone } from "@/lib/budget"
 import { readHref } from "@/lib/routes"
 import { ago, until } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -36,6 +38,7 @@ import { cn } from "@/lib/utils"
 const GROUPS: { kind: Waiting["kind"]; title: string }[] = [
   { kind: "job", title: "Jobs that need a look" },
   { kind: "usage", title: "Near a limit" },
+  { kind: "budget", title: "Over a budget" },
   { kind: "proposal", title: "Rule proposals" },
   { kind: "review", title: "Rules to review" },
   { kind: "todo", title: "To-dos" },
@@ -123,10 +126,17 @@ function KindIcon({ item }: { item: Waiting }) {
         <StatusIcon status={item.status === "running" ? "warning" : "failed"} />
       </div>
     )
-  const Icon = { usage: Gauge, proposal: Lightbulb, review: RefreshCcw, todo: ListTodo }[item.kind]
+  const Icon = {
+    usage: Gauge,
+    budget: Wallet,
+    proposal: Lightbulb,
+    review: RefreshCcw,
+    todo: ListTodo,
+  }[item.kind]
+  const tone = { usage: "text-warning", budget: "text-critical" }[item.kind as string]
   return (
     <div className={box}>
-      <Icon className={item.kind === "usage" ? "text-warning" : "text-muted-foreground"} />
+      <Icon className={tone ?? "text-muted-foreground"} />
     </div>
   )
 }
@@ -135,6 +145,7 @@ function eyebrow(item: Waiting) {
   if (item.kind === "job") return item.status === "running" ? "Job flagged" : `Job ${item.status}`
   if (item.kind === "todo") return `To-do ${item.id}`
   if (item.kind === "usage") return "Usage"
+  if (item.kind === "budget") return "Budget"
   return item.id
 }
 
@@ -467,6 +478,91 @@ function JobRow({ job }: { job: Job }) {
   )
 }
 
+const FILL = { primary: "bg-primary", warning: "bg-warning", critical: "bg-critical" }
+const TRACK = { primary: "bg-primary-soft", warning: "bg-warning/20", critical: "bg-critical/15" }
+const ENTRY = { add: "spent", hold: "held", pass: "passed" }
+
+function BudgetRow({ budget }: { budget: Budget }) {
+  const tone = budgetTone(budget)
+  const bar = budgetBar(budget)
+  const whose = budget.scope?.startsWith("project:")
+    ? `for ${budget.scope.slice(8)}`
+    : "for its conversation"
+  return (
+    <div className="space-y-2 py-3 first:pt-0 last:pb-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[13.5px] leading-snug font-medium">{budget.name}</div>
+          {budget.why && <div className="text-xs text-ink-2">{budget.why}</div>}
+        </div>
+        {budget.state !== "ok" && (
+          <StatusBadge
+            status={budget.state === "over" ? "failed" : "warning"}
+            label={budget.state === "over" ? "Over" : "Near"}
+          />
+        )}
+      </div>
+      <div
+        className={cn("flex h-1.5 w-full overflow-hidden rounded-full", TRACK[tone])}
+        role="img"
+        aria-label={budgetSummary(budget)}
+      >
+        <div className={cn("h-full", FILL[tone])} style={{ width: `${bar.spent}%` }} />
+        <div
+          className={cn("h-full opacity-40", FILL[tone])}
+          style={{ width: `${bar.reserved}%` }}
+        />
+      </div>
+      <div className="num text-xs text-ink-2">{budgetSummary(budget)}</div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        {budget.owner &&
+          (budget.owner_note ? (
+            <a href={readHref(budget.owner_note)} className="label-mono hover:text-foreground">
+              set by {budget.owner}
+            </a>
+          ) : (
+            <span className="label-mono">set by {budget.owner}</span>
+          ))}
+        <span>{whose}</span>
+        {budget.path && (
+          <span className="label-mono truncate" title={budget.path}>
+            measures {budget.path.split("/").slice(-2).join("/")}
+          </span>
+        )}
+      </div>
+      {budget.entries.length > 0 && (
+        <details className="group text-xs">
+          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+            Ledger · {budget.entries.length}
+            {budget.passes > 0 && ` · ${budget.passes} passed with a reason`}
+          </summary>
+          <ul className="mt-2 space-y-1.5 border-l pl-3">
+            {budget.entries.map((e) => (
+              <li key={`${e.at}-${e.kind}-${e.ticket ?? e.note}`} className="space-y-0.5">
+                <div className="flex flex-wrap gap-x-2 text-ink-2">
+                  <span className="num font-medium text-foreground">
+                    {ENTRY[e.kind]} {amount(e.amount)}
+                  </span>
+                  {e.ticket && (
+                    <span className="label-mono">
+                      {e.ticket} {e.state}
+                    </span>
+                  )}
+                  {e.note && <span>{e.note}</span>}
+                </div>
+                <div className="text-muted-foreground">
+                  {[e.agent, ago(e.at)].filter(Boolean).join(" · ")}
+                </div>
+                {e.intent && <div className="text-ink-2">Reason: “{e.intent}”</div>}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  )
+}
+
 function CopyHandle({ handle }: { handle: string }) {
   const [copied, setCopied] = useState(false)
   return (
@@ -523,6 +619,20 @@ export function NowScreen({ state, refresh }: { state: NowState; refresh: () => 
             <p className="text-sm text-muted-foreground">No jobs running.</p>
           )}
         </section>
+        {state.budgets.length > 0 && (
+          <section className="panel space-y-4 p-5">
+            <SectionHeader
+              eyebrow="Budgets"
+              title="Caps agents keep"
+              meta={<span className="label-mono num">{state.budgets.length}</span>}
+            />
+            <div className="divide-y">
+              {state.budgets.map((b) => (
+                <BudgetRow key={b.name} budget={b} />
+              ))}
+            </div>
+          </section>
+        )}
         <section className="panel space-y-3 p-5">
           <SectionHeader
             eyebrow="Conversations"

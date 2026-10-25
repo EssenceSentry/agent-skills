@@ -25,7 +25,7 @@ export type Credits = {
 export type ActionName = "accept" | "reject" | "keep" | "retire" | "guard" | "done" | "drop"
 
 export type Waiting = {
-  kind: "job" | "usage" | "proposal" | "review" | "todo"
+  kind: "job" | "usage" | "budget" | "proposal" | "review" | "todo"
   id: string
   title: string
   detail: string
@@ -53,6 +53,37 @@ export type Job = {
   link: string | null
 }
 
+export type BudgetEntry = {
+  ticket: string | null
+  kind: "add" | "hold" | "pass"
+  amount: number
+  note: string | null
+  agent: string | null
+  intent: string | null
+  at: string
+  state: string | null
+  actual: number | null
+}
+
+export type Budget = {
+  name: string
+  cap: number
+  unit: string
+  why: string | null
+  owner: string | null
+  owner_note: string | null
+  scope: string | null
+  project: string | null
+  path: string | null
+  created: string
+  spent: number
+  reserved: number
+  left: number
+  state: "ok" | "near" | "over"
+  passes: number
+  entries: BudgetEntry[]
+}
+
 export type Conversation = {
   handle: string
   title: string
@@ -69,6 +100,7 @@ export type NowState = {
   credits: Credits[]
   waiting: Waiting[]
   jobs: Job[]
+  budgets: Budget[]
   conversations: Conversation[]
   errors: string[]
 }

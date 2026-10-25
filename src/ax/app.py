@@ -25,6 +25,7 @@ COOKIE = "ax_token"
 NEAR_LIMIT = 80  # percent of a usage window that puts it on the waiting list
 RUNS_OUT_SOON = timedelta(days=1)  # or a forecast that runs out this soon
 CONVERSATIONS = 15
+BUDGET_ENTRIES = 8  # each budget's latest ledger lines on the Now screen
 _IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}  # not SVG: it can carry script
 _COMPILE = "run `ax profile compile --apply` to"
 
@@ -46,10 +47,12 @@ def now_state(config, *, usage_of=None, credits_of=None) -> dict:
         "credits": [],
         "waiting": [],
         "jobs": [],
+        "budgets": [],
         "conversations": [],
         "errors": [],
     }
-    found: dict[str, list] = {"job": [], "usage": [], "proposal": [], "review": [], "todo": []}
+    found: dict[str, list] = {"job": [], "usage": [], "budget": [], "proposal": [], "review": [],
+                              "todo": []}  # fmt: skip
 
     def gather_usage():
         state["usage"] = serve._usage_rows(config, usage_of or serve._cached_usage)
@@ -79,12 +82,17 @@ def now_state(config, *, usage_of=None, credits_of=None) -> dict:
     def gather_conversations():
         state["conversations"] = _conversations(config)
 
+    def gather_budgets():
+        state["budgets"] = _budgets(config)
+        found["budget"] = [_budget_item(b) for b in state["budgets"] if b["state"] == "over"]
+
     for name, gather in (
         ("usage", gather_usage),
         ("credits", gather_credits),
         ("jobs", gather_jobs),
         ("rules", gather_rules),
         ("to-dos", gather_todos),
+        ("budgets", gather_budgets),
         ("conversations", gather_conversations),
     ):
         try:
@@ -206,6 +214,44 @@ def _todo_item(config, todo) -> dict:
         "created": todo.created,
         "note": _relative(config, todo.path),
         "actions": ["done", "drop"],
+    }
+
+
+def _budgets(config) -> list[dict]:
+    from ax import budget
+
+    found = budget.statuses(config.data)
+    for b in found:
+        b["entries"] = budget.entries(config.data, b["name"], limit=BUDGET_ENTRIES)
+        b["owner_note"] = _note_of(config, b["owner"])
+    return found
+
+
+def _note_of(config, handle: str | None) -> str | None:
+    """The vault note of the conversation behind a handle, when it is archived."""
+    if not handle:
+        return None
+    try:
+        row = handles.resolve(config, handle)
+    except (handles.NotFound, handles.Ambiguous):
+        return None
+    return row["note_path"]
+
+
+def _budget_item(b: dict) -> dict:
+    from ax.budget import number
+
+    reasons = [e["intent"] for e in b["entries"] if e["intent"]][:2]
+    passed = "; ".join(f'"{r}"' for r in reasons)
+    return {
+        "kind": "budget",
+        "id": b["name"],
+        "title": f"{b['name']} is over its limit: {number(b['spent'] + b['reserved'])} of "
+        f"{number(b['cap'])} {b['unit']}",
+        "detail": f"Passed with {passed}." if passed else (b["why"] or ""),
+        "origin": b["owner"],
+        "note": b["owner_note"],
+        "actions": [],
     }
 
 

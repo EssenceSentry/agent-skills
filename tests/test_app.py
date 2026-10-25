@@ -141,6 +141,40 @@ def test_a_failing_source_is_reported_not_fatal(queue):
     assert ("proposal", "unrelated-files") in waiting(state)
 
 
+def test_now_shows_each_open_budget_with_its_ledger_and_who_set_it(env):
+    from ax import budget, handles
+    from conftest import CLAUDE_SESSION
+
+    sync(env.config)
+    data, owner = env.config.data, handles.tag(CLAUDE_SESSION)
+    budget.create(data, "annotations", 40, "usd", why="Luna labels", owner=owner,
+                  scope=f"session:{CLAUDE_SESSION}", project="demo")  # fmt: skip
+    budget.add(data, "annotations", 12.5, note="batch 1", agent=owner)
+    budget.reserve(data, "annotations", 5, note="batch 2")
+    budget.create(data, "downloads", 4, "GB", scope="project:demo", project="demo")
+    state = app.now_state(env.config, usage_of=fake_usage)
+    found = {b["name"]: b for b in state["budgets"]}
+    assert set(found) == {"annotations", "downloads"}
+    one = found["annotations"]
+    assert (one["spent"], one["reserved"], one["left"], one["state"]) == (12.5, 5, 22.5, "ok")
+    assert one["owner"] == owner and one["owner_note"].endswith(".md")
+    assert [e["note"] for e in one["entries"]] == ["batch 2", "batch 1"]
+    assert found["downloads"]["owner_note"] is None
+    assert not [w for w in state["waiting"] if w["kind"] == "budget"]
+
+
+def test_a_budget_over_its_limit_waits_for_the_user_with_the_reason_given(env):
+    from ax import budget
+
+    budget.create(env.config.data, "annotations", 10, "usd", project="demo")
+    budget.add(env.config.data, "annotations", 9)
+    budget.add(env.config.data, "annotations", 3, intent="the last batch matters")
+    state = app.now_state(env.config, usage_of=fake_usage)
+    item = waiting(state)[("budget", "annotations")]
+    assert item["title"] == "annotations is over its limit: 12 of 10 usd"
+    assert "the last batch matters" in item["detail"] and item["actions"] == []
+
+
 # Actions
 
 
@@ -616,5 +650,7 @@ def test_the_app_s_help_names_every_top_level_command():
     from ax.cli import app as cli
 
     help_text = (UI / "src" / "lib" / "help.ts").read_text()
-    missing = [n for n in sorted(typer.main.get_command(cli).commands) if f"ax {n}" not in help_text]
+    missing = [
+        n for n in sorted(typer.main.get_command(cli).commands) if f"ax {n}" not in help_text
+    ]
     assert missing == [], f"add these to ui/src/lib/help.ts: {missing}"
