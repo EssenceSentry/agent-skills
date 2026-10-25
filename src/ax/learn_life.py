@@ -29,8 +29,6 @@ PROVEN_DAYS = 90
 PROVEN_CONFIDENCE = 2.0
 FOR_KINDS = ("support", "block", "kept")
 AGAINST_KINDS = ("recurrence", "override")
-FIELDS = ("maturity", "confidence", "support", "recurrences", "blocks", "overrides",
-          "last_evidence", "review")  # fmt: skip
 
 
 @dataclass(frozen=True)

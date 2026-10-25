@@ -187,3 +187,16 @@ def test_an_override_from_before_the_adoption_does_not_count(archive):
               for c in cs}  # fmt: skip
     [override] = learn_life.events(archive.config, cs, labels)["tabs"]
     assert (override.kind, override.day) == ("override", "2026-09-20")
+
+
+def test_properties_ax_does_not_know_survive_every_rewrite(archive, restated):
+    [note] = profile.load_rules(archive.config)
+    text = note.path.read_text().replace("---\n", "---\ntags:\n- git\naliases: [scope]\n", 1)
+    note.path.write_text(text)
+    learn_life.refresh(archive.config, *restated, today=TODAY)
+    learn_life.keep(archive.config, "unrelated-files", today=TODAY)
+    profile.add(archive.config, "unrelated-files", rule="Leave other files alone.", replace=True)
+    [note] = profile.load_rules(archive.config)
+    assert note.extra == {"tags": ["git"], "aliases": ["scope"]}
+    assert note.maturity and note.rule == "Leave other files alone."
+    assert "tags:\n- git" in note.path.read_text()

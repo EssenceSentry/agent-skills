@@ -56,6 +56,8 @@ class Rule:
     last_evidence: str = ""
     review: str = ""
     reviewed: str = ""
+    # Frontmatter keys ax doesn't know, such as Obsidian's tags and aliases, kept as written.
+    extra: dict = field(default_factory=dict)
     why: str = ""
     path: Path | None = None
 
@@ -93,6 +95,11 @@ class Finding:
     message: str
 
 
+# Written by `ax sync`; replacing a rule keeps them until the next sync recomputes them.
+LIFECYCLE = ("maturity", "confidence", "support", "recurrences", "blocks", "overrides",
+             "last_evidence", "review")  # fmt: skip
+
+
 def rules_dir(config) -> Path:
     return config.vault / "Profile" / "rules"
 
@@ -121,9 +128,12 @@ def _read(path: Path) -> Rule:
     if not match:
         raise ValueError(f"{path} has no frontmatter")
     data = yaml.safe_load(match.group(1)) or {}
-    known = {f for f in Rule.__dataclass_fields__ if f not in ("path", "why")}
+    known = {f for f in Rule.__dataclass_fields__ if f not in ("path", "why", "extra")}
     rule = Rule(
-        **{k: v for k, v in data.items() if k in known}, why=match.group(2).strip(), path=path
+        **{k: v for k, v in data.items() if k in known},
+        extra={k: v for k, v in data.items() if k not in known},
+        why=match.group(2).strip(),
+        path=path,
     )
     rule.added = str(rule.added or "")
     rule.reviewed = str(rule.reviewed or "")
@@ -134,7 +144,9 @@ def _read(path: Path) -> Rule:
 def _write(rule: Rule, path: Path) -> None:
     data = rule.to_dict()
     data.pop("path")
+    extra = data.pop("extra")
     data = {k: v for k, v in data.items() if v not in (None, "", [], {})}
+    data |= {k: v for k, v in extra.items() if k not in data}
     text = "---\n" + yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100) + "---\n"
     if rule.why:
         text += "\n" + rule.why.strip() + "\n"
@@ -170,7 +182,9 @@ def add(config, rule_id: str, *, replace: bool = False, **fields) -> Rule:
             "settings",
             "guard",
             "retire_when",
+            *LIFECYCLE,
             "reviewed",
+            "extra",
             "why",
         ):
             if not getattr(rule, name):
