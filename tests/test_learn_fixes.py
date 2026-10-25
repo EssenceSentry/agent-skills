@@ -56,3 +56,15 @@ def test_a_fix_an_existing_rule_already_gives_is_not_proposed_again(env):
                                  "topic": "no-timeout-on-macos"}})  # fmt: skip
     assert learn_fixes.propose_fixes(env.config, [TIMEOUT], model=model) == []
     assert "no-timeout-on-macos: There is no `timeout` on macOS." in model.prompts[0]
+
+
+def test_fixes_wait_for_room_in_the_review_queue(env):
+    profile.add(env.config, "pending", rule="A pending proposal.", status="proposed")
+    model = fixes(**{"(eval):": {"fix": "Use `gtimeout` on macOS.", "topic": "gtimeout"},
+                     "filenot": {"fix": "Run `make data` first.", "topic": "make-data"}})  # fmt: skip
+    written = learn_fixes.propose_fixes(env.config, [TIMEOUT, CACHE], model=model, max_pending=2)
+    assert [r.id for r in written] == ["gtimeout"]
+    assert learn_fixes.propose_fixes(env.config, [TIMEOUT, CACHE], model=model, max_pending=2) == []
+    assert len(model.prompts) == 1  # no room: nothing asked
+    written = learn_fixes.propose_fixes(env.config, [TIMEOUT, CACHE], model=model, max_pending=3)
+    assert [r.id for r in written] == ["make-data"] and '"(eval)' not in model.prompts[-1]

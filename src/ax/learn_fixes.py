@@ -64,17 +64,27 @@ def _why(error: dict) -> str:
     return "\n".join(lines)
 
 
-def propose_fixes(config, errors: list, *, model=None) -> list:
-    """Ask about each recurring error not asked about yet; returns the proposals written."""
+def propose_fixes(
+    config, errors: list, *, model=None, max_pending: int = learn.MAX_PENDING
+) -> list:
+    """Ask about each recurring error not asked about yet; returns the proposals written.
+
+    Fixes share the review queue with other proposals: when it is full nothing is asked,
+    and a fix that finds no room is not recorded, so it is asked about again later.
+    """
     asked = learn._ledger(config, "fixes.json")
     todo = [e for e in errors if e["signature"] not in asked]
-    if not todo:
+    rules = profile.load_rules(config, problems=[])
+    room = max_pending - sum(r.status == "proposed" for r in rules)
+    if not todo or room <= 0:
         return []
     model = model or learn.claude_model()
-    taken = {r.id for r in profile.load_rules(config)}
+    taken = {r.id for r in rules}
     proposals = learn._ledger(config, "proposals.json")
     written = []
     for start in range(0, len(todo), BATCH):
+        if room <= 0:
+            break
         chunk = {f"e{i}": e for i, e in enumerate(todo[start : start + BATCH])}
         items = "\n".join(
             json.dumps(
@@ -92,23 +102,32 @@ def propose_fixes(config, errors: list, *, model=None) -> list:
             fix = str(answers[key].get("fix") or "").strip()
             topic = re.sub(r"[^a-z0-9]+", "-", str(answers[key].get("topic") or "").lower())
             topic = topic.strip("-") or "recurring-error-fix"
-            asked[error["signature"]] = {"rule": None, "date": date.today().isoformat()}
+            today = date.today().isoformat()
             if "`" not in fix or topic in taken:
-                continue  # a fix that names no command, tool or path is generic advice
+                # A fix that names no command, tool or path is generic advice.
+                asked[error["signature"]] = {"rule": None, "date": today}
+                continue
+            if room <= 0:
+                continue  # not recorded: asked again once there is room
             rid = learn._rule_id(topic, taken)
             projects = error["projects"]
-            rule = profile.add(
-                config, rid, rule=fix, status="proposed",
-                scope=learn.repo_scope(projects[0]) if len(projects) == 1 else "global",
-                why=_why(error), retire_when=learn._RETIRE,
-                evidence=[f"recurring error: {error['signature']}"],
-            )  # fmt: skip
+            try:
+                rule = profile.add(
+                    config, rid, rule=fix, status="proposed",
+                    scope=learn.repo_scope(projects[0]) if len(projects) == 1 else "global",
+                    why=_why(error), retire_when=learn._RETIRE,
+                    evidence=[f"recurring error: {error['signature']}"],
+                )  # fmt: skip
+            except ValueError:
+                continue  # a note with that id appeared meanwhile; asked again next time
+            room -= 1
             taken.add(rid)
-            asked[error["signature"]]["rule"] = rid
+            asked[error["signature"]] = {"rule": rid, "date": today}
             proposals[rid] = {"support": error["sessions"], "sessions": error["sessions"],
                               "projects": len(projects), "kind": "environment-fix",
-                              "date": date.today().isoformat()}  # fmt: skip
+                              "date": today}  # fmt: skip
             written.append(rule)
-    learn._save_ledger(config, "fixes.json", asked)
-    learn._save_ledger(config, "proposals.json", proposals)
+        # Saved after each call, so a later failure keeps what was already written.
+        learn._save_ledger(config, "fixes.json", asked)
+        learn._save_ledger(config, "proposals.json", proposals)
     return written
