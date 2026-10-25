@@ -369,3 +369,22 @@ def test_notices_and_meta_records_do_not_start_a_new_turn(env, tmp_path):
     path = transcript(tmp_path, user("Fix it."), assistant(command="uv run pytest"), tool_result(),
                       meta, notice, assistant("Done; all tests pass."))  # fmt: skip
     assert stop(env, path) is None
+
+
+def test_a_probe_records_who_is_calling_while_its_marker_exists(env):
+    payload = json.dumps({
+        "tool_name": "Bash", "tool_input": {"command": "echo secret-ish words"}, "cwd": "/tmp",
+        "session_id": "s1", "agent_id": "a1", "agent_type": "Explore",
+        "transcript_path": "/x/s1/subagents/agent-a1.jsonl", "permission_mode": "auto",
+    })  # fmt: skip
+    run_main(env, payload)
+    assert not guard.probe_path(env.config.data).exists()  # no marker, no record
+    guard.probe_marker(env.config.data).parent.mkdir(parents=True, exist_ok=True)
+    guard.probe_marker(env.config.data).touch()
+    run_main(env, payload, tool="codex")
+    [record] = [
+        json.loads(line) for line in guard.probe_path(env.config.data).read_text().splitlines()
+    ]
+    assert record["tool"] == "codex" and record["agent_id"] == "a1"
+    assert record["agent_type"] == "Explore" and record["transcript"].endswith("agent-a1.jsonl")
+    assert "tool_input" in record["keys"] and "secret-ish" not in json.dumps(record)

@@ -32,6 +32,33 @@ def log_path(data: Path) -> Path:
     return Path(data) / "guard.jsonl"
 
 
+def probe_marker(data: Path) -> Path:
+    """While this file exists, each call records who made it (not what it ran)."""
+    return Path(data) / "guard-probe"
+
+
+def probe_path(data: Path) -> Path:
+    return Path(data) / "guard-probe.jsonl"
+
+
+_WHO = ("session_id", "agent_id", "agent_type", "permission_mode", "hook_event_name",
+        "tool_name", "model", "turn_id")  # fmt: skip
+
+
+def _probe(data: Path, tool: str, payload: dict) -> None:
+    if not probe_marker(data).exists():
+        return
+    record = {"tool": tool, "keys": sorted(payload)}
+    record |= {k: payload[k] for k in _WHO if isinstance(payload.get(k), str | int | bool)}
+    if isinstance(payload.get("transcript_path"), str):
+        record["transcript"] = payload["transcript_path"]
+    try:
+        with probe_path(data).open("a") as out:
+            out.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), **record}) + "\n")
+    except OSError:
+        pass
+
+
 def _origin_name(git_dir: Path) -> str | None:
     """The repository name in the origin remote's URL, read from .git/config."""
     try:
@@ -322,6 +349,11 @@ def _main(argv=None, *, stdin=None, stdout=None) -> int:
         return 0
     try:
         payload = json.loads(stdin.read())
+    except ValueError:
+        return 0
+    if isinstance(payload, dict):
+        _probe(data, tool, payload)
+    try:
         rules = json.loads(rules_path(data).read_text())
     except (OSError, ValueError):
         return 0
