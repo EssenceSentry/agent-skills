@@ -106,9 +106,10 @@ workers need it too), its level (advice, check or block) and its evidence.
     outside disposable folders, a dropped table) or what a `block` rule names, and is
     told what is at stake. Run again with `AX_INTENT="why"` in front, the command goes
     through and the reason is logged. Nothing pauses when nothing would be lost.
-  - **Subagents and workers are stopped** by the same, and by the limits the main
-    agent sets with `ax policy add`, and are told to report back. Headless Claude
-    workers run without hooks, so their runner's tool list and brief carry them.
+  - **Subagents and workers are stopped** by the same, by the limits the main
+    agent sets with `ax policy add`, and when they try to pass a budget with
+    `AX_INTENT`, and are told to report back. Headless Claude workers run without
+    hooks, so their runner's tool list and brief carry them.
   - **Only what runs counts:** heredoc bodies and quoted text are skipped, so a
     command that merely mentions something passes. A guard error lets the command
     through and logs itself. The scorecard counts pauses, stops and reasons given,
