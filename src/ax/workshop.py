@@ -18,6 +18,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import yaml
 
@@ -131,6 +132,12 @@ class Load:
         return not (self.design_items or self.proposals) and not self.consolidation
 
 
+def general(group) -> bool:
+    """A lesson worth a lasting rule: it came up in two sessions or more, or you stated it
+    as standing ("from now on", "remember"). One incident, however heated, is not one."""
+    return len(group.sessions) >= 2 or any("explicit" in c["signals"] for c, _ in group.members)
+
+
 def load(config, *, candidates=None, labels=None, findings=None) -> Load:
     rules = profile.load_rules(config, problems=[])
     active = [r for r in rules if r.status == "active"]
@@ -141,7 +148,9 @@ def load(config, *, candidates=None, labels=None, findings=None) -> Load:
     uncovered = [
         g
         for g in learn.groups(candidates, labels)
-        if g.support >= learn.MIN_SUPPORT and not any(learn._matches(g, r) for r in known)
+        if g.support >= learn.MIN_SUPPORT
+        and general(g)
+        and not any(learn._matches(g, r) for r in known)
     ]
     if findings is None:
         findings = profile.check(config)
@@ -248,11 +257,18 @@ _COMMON = (
     "instructions compiled into Claude Code and Codex; each one should prevent a correction "
     "the user has had to make, in words an agent can act on. The material is in this "
     "folder: rules.md (every active and proposed rule, with its evidence) and evidence.md "
-    "(lessons no rule covers, flagged rules and conflicts). Read it. Do not edit anything, "
-    "run commands that change files, or start other agents. Prefer fewer, sharper rules: "
-    "merge overlapping ones, scope a rule to the repo it belongs to, and drop a rule the "
-    "evidence does not support. Keep each rule to one sentence. Ids are kebab-case; reuse "
-    "an existing id only to retire or rewrite that rule."
+    "(lessons no rule covers, flagged rules and conflicts), and instructions/ holds copies of "
+    "what agents already read: global and repo instruction files (AGENTS.md, CLAUDE.md), "
+    "skills and memories, listed with their origins in instructions/INDEX.md. Read it. Do "
+    "not edit anything, run commands that change files, or start other agents. Prefer "
+    "fewer, sharper rules: merge overlapping ones, scope a rule to the repo it belongs to, "
+    "and drop a rule the evidence does not support. A rule must generalise: it names a "
+    "pattern that recurs across sessions, never one incident; a lesson from one session is "
+    "not a rule unless the user stated it as standing ('from now on', 'remember'). Before "
+    "proposing anything, search instructions/ for what already says it: drop a rule an "
+    "instruction file or skill already states, and say which files you checked. Keep each "
+    "rule to one sentence. Ids are kebab-case; reuse an existing id only to retire or "
+    "rewrite that rule."
 )
 _ROLES = {
     "designer": "Design rules for the items below: one rule per real lesson, a rewrite for "
@@ -299,12 +315,55 @@ def _rule_block(rule) -> str:
     return f"## {rule.id}\n{rule.rule}\n\n{facts}.\n\n{why}\n"
 
 
-def write_dossier(folder, work: Load) -> None:
+def write_dossier(folder, work: Load, *, config=None) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     rules = "\n".join(_rule_block(r) for r in [*work.active, *work.proposals])
     (folder / "rules.md").write_text(f"# Rules\n\n{rules or 'No rules yet.'}\n")
     evidence = "\n".join(_item_line(i) for i in work.design_items) or "Nothing uncovered."
     (folder / "evidence.md").write_text(f"# Evidence\n\n{evidence}\n")
+    if config is not None:
+        copy_instructions(config, folder / "instructions")
+
+
+def _instruction_name(config, path: Path) -> str:
+    """Where a copy goes inside instructions/: by the folder it came from."""
+    places = [
+        (config.claude_home / "skills", "skills"), (config.agents_home / "skills", "skills"),
+        (config.codex_home / "skills", "skills"), (config.claude_home / "plugins", "plugins"),
+        (config.claude_home / "projects", "memories"), (config.profile_repos_root, "repos"),
+        *((d, f"extra/{d.name}") for d in config.profile_extra_dirs),
+        (config.claude_home, "claude"), (config.codex_home, "codex"),
+    ]  # fmt: skip
+    for root, name in places:
+        if path.is_relative_to(root):
+            return f"{name}/{path.relative_to(root).as_posix()}"
+    return f"other/{path.name}"
+
+
+def copy_instructions(config, folder: Path) -> list[str]:
+    """Copy every file agents already read as instructions (global and repo instruction
+    files, skills, memories) into `folder`, once each, with an INDEX.md of where each
+    came from, so the workshop can check what is already said."""
+    folder.mkdir(parents=True, exist_ok=True)
+    reals, texts, lines = set(), set(), []
+    for path in profile._instruction_files(config):
+        try:
+            text = path.read_text()
+        except (OSError, UnicodeDecodeError):
+            continue
+        real = os.path.realpath(path)
+        if real in reals or text in texts:
+            continue  # the same skill linked from two folders
+        reals.add(real)
+        texts.add(text)
+        name = _instruction_name(config, path)
+        (folder / name).parent.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_text(text)
+        lines.append(f"- `{name}` ← {path}")
+    index = ("# Instructions agents already follow\n\nRead-only copies. Each line is a copy "
+             "here, then the file it came from.\n\n" + "\n".join(lines) + "\n")  # fmt: skip
+    (folder / "INDEX.md").write_text(index)
+    return lines
 
 
 def brief(agent: Agent, *, drafts=(), verdicts=()) -> str:
@@ -494,7 +553,7 @@ def supervise(config, crew: Team, work: Load, s: Settings, *, runner, readings, 
               clock, sleep, interval: float = 60, stop_file=None) -> Outcome:  # fmt: skip
     """Run the team phase by phase: drafts, critiques, then the final proposals. Each tool
     stays above its floor, Codex never spends credits, and a stop request ends it all."""
-    write_dossier(folder / "dossier", work)
+    write_dossier(folder / "dossier", work, config=config)
     run = _Run(crew, s, runner, readings, folder, clock, sleep, interval, stop_file)
     outcome = run.outcome
     for number in (1, 2, 3):
@@ -892,7 +951,7 @@ def run(config, *, dry_run=False, readings=None, runner=None, now=None, clock=No
     summary = {"folder": str(folder), "team": [_agent_row(a) for a in crew.agents],
                "reason": crew.reason, "dry_run": dry_run}  # fmt: skip
     if dry_run or not crew.agents:
-        write_dossier(folder / "dossier", work)
+        write_dossier(folder / "dossier", work, config=config)
         (folder / "briefs").mkdir(parents=True, exist_ok=True)
         for agent in crew.agents:
             (folder / "briefs" / f"{agent.key}.md").write_text(brief(agent))

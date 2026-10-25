@@ -65,7 +65,14 @@ def test_spare_but_little_above_the_floor_is_not_enough_for_an_agent():
 
 @pytest.fixture
 def rules(env):
-    config = env.config
+    # Instruction files come from this test's own folders, never the real ~/Repos.
+    env.config_path.write_text(
+        env.config_path.read_text() + f'agents_home = "{env.root / "agents"}"\n'
+        f'\n[profile]\nrepos_root = "{env.root / "Repos"}"\nextra_dirs = []\n'
+    )
+    from ax.config import load as load_config
+
+    env.config = config = load_config(env.config_path)
     profile.add(config, "unrelated-files", rule="Leave unrelated files alone.")
     profile.add(config, "explicit-paths", rule="Stage explicit paths.")
     profile.add(config, "bootstrap", rule="Use the bootstrap script.",
@@ -96,6 +103,49 @@ def test_load_counts_proposals_flags_uncovered_evidence_and_conflicts(rules):
     assert [g.topic for g in found.uncovered] == ["tests-before-claims"]
     assert [f.rule for f in found.conflicts] == ["explicit-paths"]
     assert len(found.design_items) == 3  # one uncovered lesson, one flag, one conflict
+
+
+def test_only_lessons_that_recur_or_that_you_stated_as_standing_reach_the_designers(rules):
+    # A rule must generalise: one heated incident has the weight to pass today, but it is
+    # an incident; something you asked to keep "from now on" is a standing rule.
+    env, candidates, labels = rules
+    more = [candidate("f1", "s9", "demo", signals=["frustration"]),
+            candidate("x1", "s8", "demo", signals=["explicit"])]  # fmt: skip
+    labels = {**labels,
+              "f1": keep("rename-the-button", rule="Rename the save button.", frustrated=True),
+              "x1": keep("utc-dates", rule="Write dates in UTC.")}  # fmt: skip
+    found = workshop.load(env.config, candidates=candidates + more, labels=labels, findings=[])
+    assert sorted(g.topic for g in found.uncovered) == ["tests-before-claims", "utc-dates"]
+
+
+def test_the_material_holds_the_instructions_agents_already_follow(work):
+    env, found = work
+    (env.claude_home / "CLAUDE.md").write_text("Never add a co-author trailer.\n")
+    repo = env.root / "Repos" / "demo"
+    repo.mkdir(parents=True)
+    (repo / "AGENTS.md").write_text("Run the tests before saying they pass.\n")
+    skill = env.claude_home / "skills" / "notes"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: notes\n---\nWrite notebooks plainly.\n")
+    (env.root / "agents" / "skills").mkdir(parents=True)
+    (env.root / "agents" / "skills" / "notes").symlink_to(skill)  # the same skill, linked
+    folder = env.root / "run" / "dossier"
+    workshop.write_dossier(folder, found, config=env.config)
+    index = (folder / "instructions" / "INDEX.md").read_text()
+    copied = {p.relative_to(folder / "instructions").as_posix(): p.read_text()
+              for p in (folder / "instructions").rglob("*") if p.is_file() and p.name != "INDEX.md"}  # fmt: skip
+    assert copied["claude/CLAUDE.md"].startswith("Never add")
+    assert copied["repos/demo/AGENTS.md"].startswith("Run the tests")
+    assert sum("Write notebooks plainly" in t for t in copied.values()) == 1  # linked once
+    assert str(repo / "AGENTS.md") in index and "repos/demo/AGENTS.md" in index
+
+
+def test_every_brief_says_to_check_the_instructions_and_to_generalise(work):
+    env, found = work
+    for role in ("designer", "consolidator", "critic", "synthesis", "solo"):
+        text = workshop.brief(workshop.Agent(f"claude-{role}", role, "claude", 1))
+        assert "instructions/" in text and "INDEX.md" in text, role
+        assert "one session" in text or "one incident" in text, role
 
 
 # How many agents
