@@ -34,7 +34,7 @@ import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from ax import profile
@@ -110,6 +110,18 @@ _STOP = frozenset(
     )
 )
 _RETIRE = "Review it if it hasn't fired in 90 days, or if the correction keeps coming back."
+
+
+_TZ = None  # the machine's time zone; tests set one
+
+
+def local_day(ts) -> str:
+    """The date of a timestamp where the user is, to compare with dates from date.today()."""
+    try:
+        when = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return str(ts or "")[:10]
+    return (when.astimezone(_TZ) if when.tzinfo else when).date().isoformat()
 
 
 def folder(config) -> Path:
@@ -902,7 +914,7 @@ def reinforcement(config, candidates, labels) -> dict:
             entry = found.setdefault(rule.id, {"sessions": set(), "after": set()})
             for c, _ in group.members:
                 entry["sessions"].add(c["session"])
-                if rule.added and (c["ts"] or "")[:10] > rule.added:
+                if rule.added and local_day(c["ts"]) > rule.added:
                     entry["after"].add(c["session"])
     return {
         k: {"support": len(v["sessions"]), "recurrences": len(v["after"])} for k, v in found.items()

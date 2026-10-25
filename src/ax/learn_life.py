@@ -27,6 +27,9 @@ ESCALATE = 2
 NEW_DAYS = 30
 PROVEN_DAYS = 90
 PROVEN_CONFIDENCE = 2.0
+# Signals of a correction; praise or a Codex memory restating a rule after adoption is
+# the rule working, so it counts as support.
+CORRECTIVE = ("frustration", "explicit", "rejection", "interrupted", "phrase")
 FOR_KINDS = ("support", "block", "kept")
 AGAINST_KINDS = ("recurrence", "override")
 
@@ -50,8 +53,9 @@ def events(config, candidates, labels) -> dict:
             if not learn._matches(group, rule):
                 continue
             for c, lab in group.members:
-                day = (c["ts"] or "")[:10]
-                kind = "recurrence" if rule.added and day > rule.added else "support"
+                day = learn.local_day(c["ts"])
+                after = rule.added and day > rule.added
+                kind = "recurrence" if after and set(c["signals"]) & set(CORRECTIVE) else "support"
                 event = Event(day, kind, learn.weight(c, lab), c["note"], c["project"], c["id"])
                 kept = by_session[rule.id].get(c["session"])
                 if kept is None or event.weight > kept.weight:
@@ -59,14 +63,14 @@ def events(config, candidates, labels) -> dict:
     found = {rid: list(sessions.values()) for rid, sessions in by_session.items()}
     for c in candidates:
         against = (labels.get(c["id"]) or {}).get("against")
-        day = (c["ts"] or "")[:10]
+        day = learn.local_day(c["ts"])
         if against in rules and day > rules[against].added:  # set aside once it was adopted
             event = Event(day, "override", 1, c["note"], c["project"], c["id"])
             found.setdefault(against, []).append(event)
     for entry in scorecard._guard_log(config):
         if entry.get("rule") in rules:
             found.setdefault(entry["rule"], []).append(
-                Event(entry["when"].date().isoformat(), "block")
+                Event(learn.local_day(entry["when"].isoformat()), "block")
             )
     return found
 

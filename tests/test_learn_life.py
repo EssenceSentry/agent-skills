@@ -200,3 +200,28 @@ def test_properties_ax_does_not_know_survive_every_rewrite(archive, restated):
     assert note.extra == {"tags": ["git"], "aliases": ["scope"]}
     assert note.maturity and note.rule == "Leave other files alone."
     assert "tags:\n- git" in note.path.read_text()
+
+
+def test_praise_and_codex_memories_after_adoption_support_the_rule(archive):
+    profile.add(archive.config, "tabs", rule="Use tabs.", added="2026-09-01")
+    cs = [candidate("a", "s1", "demo", ts="2026-10-10T10:00:00Z", signals=["praise"]),
+          {**candidate("b", "s2", "demo", ts="2026-10-12T10:00:00Z", signals=["codex-memory"]),
+           "source": "codex-memory"},
+          candidate("c", "s3", "demo", ts="2026-10-14T10:00:00Z", signals=["praise", "phrase"])]  # fmt: skip
+    labels = {c["id"]: keep("tabs", "Use tabs.") for c in cs}
+    found = {e.candidate: e.kind for e in learn_life.events(archive.config, cs, labels)["tabs"]}
+    assert found == {"a": "support", "b": "support", "c": "recurrence"}
+
+
+def test_dates_are_compared_where_the_user_is(archive, monkeypatch):
+    from datetime import timedelta, timezone
+
+    monkeypatch.setattr(learn, "_TZ", timezone(timedelta(hours=-3)))
+    profile.add(archive.config, "tabs", rule="Use tabs.", added="2026-10-01")
+    late = candidate("a", "s1", "demo", ts="2026-10-02T01:00:00Z")  # 22:00 on the 1st, UTC-3
+    (archive.config.data / "guard.jsonl").write_text(
+        json.dumps({"ts": "2026-10-03T02:00:00+00:00", "rule": "tabs"}) + "\n"
+    )
+    found = learn_life.events(archive.config, [late], {"a": keep("tabs", "Use tabs.")})["tabs"]
+    assert sorted((e.kind, e.day) for e in found) == [("block", "2026-10-02"),
+                                                      ("support", "2026-10-01")]  # fmt: skip
