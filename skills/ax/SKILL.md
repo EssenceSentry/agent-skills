@@ -53,7 +53,8 @@ command has `--help`; most take `--json` for agents.
 
 - `ax scorecard` (`--note`): corrections, frustration moments, guard blocks, worker
   denials, recurring errors and cost, by week.
-- `ax usage` (and `ax usage guard`): allowance left per tool and window. Check it
+- `ax usage` (and `ax usage guard`): allowance left per tool and window, and
+  Codex's credits. Check it
   before proposing agents or long model work.
 - `ax lab` (`build`, `cut`, `run`): evals of the profile as a plugin.
 
@@ -78,7 +79,9 @@ command has `--help`; most take `--json` for agents.
   changes nothing without `--apply`. `ax mcp` is the MCP server they launch.
 - `ax vault` (`init`, `commit`, `push`): the vault's views, a scanned commit, and a
   push only to a private GitHub repo.
-- `ax doctor`: archive health. `ax serve`: the local dashboard.
+- `ax doctor`: archive health. `ax serve`: the ax app for the user (what waits,
+  usage and credits, jobs, conversations, a vault reader); `--share cloudflare
+  --notify` reaches their phone.
 
 ## What you may run alone, and what needs the user
 
@@ -89,4 +92,5 @@ command has `--help`; most take `--json` for agents.
   `--card`, briefs that launch workers, `index setup`), changes the user's rules or
   tools (`learn accept|reject|keep|retire|guard`, `profile add` or `compile
   --apply`, any `install --apply`, `skills link --apply`), publishes (`vault
-  push`) or removes something (`job forget`, `todo drop`).
+  push`, `serve --share` or `--notify`) or removes something (`job forget`,
+  `todo drop`).

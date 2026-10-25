@@ -38,8 +38,8 @@ take effect at once; after a change to the dependencies, run the same command wi
 | `ax mcp` / `ax mcp install` | `find`, `recall` and `here` for agents over MCP, and their registration in both tools |
 | `ax runs` (`watch`, `show`, `stop`) | Delegated, background and subagent runs from both tools in one list |
 | `ax exp` (`init`, `propose`, `list`, `start`, `finish`, `abandon`) | Research campaigns whose experiments must pass a value gate |
-| `ax usage` / `ax usage guard` | Allowance left per tool and window, a forecast to reset, and a guard for scripts (exit 0 safe, 1 below, 69 unknown) |
-| `ax serve [--open]` | A local dashboard of usage, runs, campaigns and recent sessions |
+| `ax usage` / `ax usage guard` | Allowance left per tool and window, Codex's credit balance, a forecast to reset, and a guard for scripts (exit 0 safe, 1 below, 69 unknown) |
+| `ax serve [--open] [--share cloudflare] [--notify]` | The ax app: what waits for you with its actions, both tools' usage and credits, jobs, conversations, and a reader for the vault ([ui/](ui/README.md)); the old page is at `/classic` |
 | `ax vault init` / `commit` / `push` | Starter Obsidian views; a commit gitleaks has scanned; a push only to a private GitHub repo |
 | `ax hooks install` | Hooks in Claude Code and Codex: sync when a session ends, and a digest of the last week's work when one starts |
 | `ax schedule install` | A launchd job that syncs every 30 minutes |

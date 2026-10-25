@@ -82,6 +82,11 @@ Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
 - **Recent-work digest and shared memories built 2026-10-25** (components 12 and 13): the start hook is installed in both tools. A fresh Claude conversation saw the digest's handles and Codex's memory summary without running a tool; Codex skips the hook until the user trusts it with `/hooks`. Sync copied 57 Claude memories into Codex's ad-hoc notes.
 - **The ax skill and ax todo built 2026-10-25** (components 14 and 15): `skills/ax/SKILL.md` maps all 23 commands and is linked into both tools; a test fails when a command is missing from it. To-dos are vault notes in `Todos/`, shown in the start digest, in `ax recall` of the conversation that raised them and in a Todos base on Home. Live, a fresh Claude conversation listed the open to-do from its digest.
 - **Moved conversations and repo docs, 2026-10-25:** a conversation moved from a scratch workspace to a repo is now filed under that repo (the atelier conversation that also built lathe had been filed under its scratch folder, so neither project's digest showed it). `ax find` also searches each repository's docs (README, plans, `docs/`): about 430 documents across 18 repos. Sync refreshes the index at least hourly. A generic question can still rank a large docs repo above the right one; `--project` or the user's own evaluation questions are the remedy.
+- **The ax app's first screens built 2026-10-25** (component 16, screens 1 and 2): generated from atelier into `ui/`, built into `src/ax/web/` and served by `ax serve` (the old page moved to `/classic`).
+  - **Now:** what waits for you (proposals, review flags, to-dos, failed or flagged jobs, usage nearly used or running out within a day), with accept, reject, keep, retire, guard (marked as a Haiku call), done, drop and add, each confirmed first and run through the same functions as the CLI; running jobs; recent conversations with copyable handles. Live, it showed 23 proposals, 4 flagged jobs and T1.
+  - **Usage on every screen:** each Claude window, Codex's one window (weekly; it has no 5-hour window) and Codex's credit balance, which ax now also reads (`ax usage` prints it). The server asks Claude's `/usage` for fresh figures every five minutes in the background (a built-in command: no model call, no transcript), so the band is never a stale cache.
+  - **Reader:** every vault note, read-only, with `[[wiki links]]` resolved by name (shortest path wins) or path, callouts as asides, properties as a table, and raw HTML never rendered. A 470,000-character conversation note renders.
+  - **Access:** a token kept owner-only in the data folder, then a Strict, HttpOnly cookie; actions need JSON from the app's own origin. `ax serve --share cloudflare --notify` opens a quick tunnel for the phone and sends the link by ntfy; that link carries a token that dies with the run. Not yet tried live: it publishes the vault's reader through the tunnel.
 - **Deferred:**
   - Rules matched per prompt (UserPromptSubmit): the ten rules fit in the always-loaded block, so retrieval waits until the profile grows.
   - The stop check for Codex, whose transcript has another format.
@@ -491,7 +496,7 @@ Follow-ups get proposed and then lost between conversations ("an umbrella skill 
 - **Who adds:** the user, or an agent when the user asks to save something for later or declines a proposed next step with "not now" and wants it kept. Agents never add to-dos on their own initiative, so the list stays the user's.
 - **Left out for now:** due dates, priorities and an MCP tool (agents in both tools have a shell).
 
-### 16. The ax app: one place for people, built with atelier (agreed 2026-10-25)
+### 16. The ax app: one place for people, built with atelier (agreed 2026-10-25; screens 1 and 2 built)
 
 Most of ax is for agents, but approvals, reviews, watching work and catching up on it are the user's. Today that is split between a plain `ax serve` page, one small dashboard per job, and Obsidian. One atelier app replaces them.
 
