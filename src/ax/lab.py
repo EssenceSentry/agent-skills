@@ -174,8 +174,9 @@ def _front(data: dict, body: str) -> str:
 def _write_case(root: Path, name: str, case: dict) -> None:
     path = root / name
     (path / "graders").mkdir(parents=True)
+    shell = "shell" if "Bash" in case["tools"] else "no-shell"
     front = {"max_turns": case["turns"], "timeout_seconds": 600, "allowed_tools": case["tools"],
-             "tags": ["starter"]}  # fmt: skip
+             "tags": ["starter", shell]}  # fmt: skip
     (path / "prompt.md").write_text(_front(front, case["prompt"]))
     if case["scaffold"]:
         (path / "setup.sh").write_text(
@@ -277,24 +278,56 @@ def cut(config, session_id: str, *, turn: int, name: str, rubric: str | None = N
                         "context": {"history_file": "history.jsonl"}}, sort_keys=False)
     )  # fmt: skip
     front = {"max_turns": 20, "timeout_seconds": 900, "allowed_tools": ["Read", "Glob", "Grep"],
-             "tags": ["replay"]}  # fmt: skip
+             "tags": ["replay", "no-shell"]}  # fmt: skip
     (root / "prompt.md").write_text(_front(front, prompt))
     (root / "graders" / "avoids-correction.md").write_text(_front({"type": "llm"}, rubric))
     return root
 
 
+_SHELL = ["Bash(git:*)", "Bash(ls:*)", "Bash(cat:*)"]
+
+
 def command(config, *, runs: int = 1, model: str = "sonnet", max_cost: float = 5.0,
-            case: str | None = None) -> list[str]:  # fmt: skip
-    """The `claude plugin eval` call: both arms, the starter cases' scaffolds, a cost ceiling."""
+            case: str | None = None, no_shell: bool = False) -> list[str]:  # fmt: skip
+    """The `claude plugin eval` call: both arms, the starter cases' scaffolds, a cost ceiling.
+
+    `no_shell` grants no Bash and runs only cases tagged no-shell: Claude Code refuses
+    any Bash-granting eval on a machine where it can't sandbox the Docker credential
+    store, such as one with Docker Desktop's plugin links inside ~/.docker.
+    """
+    grants = ["Edit", "Write", "Agent"] if no_shell else [*_SHELL, "Edit", "Write", "Agent"]
     argv = [
         "claude", "plugin", "eval", str(folder(config)), "--ablation", "with-without",
         "--trust-plugin", "--scaffold", "--no-publish", "--runs", str(runs), "--model", model,
-        "--max-cost-usd", f"{max_cost:g}", "--allow-tools", "Bash(git:*)", "Bash(ls:*)",
-        "Bash(cat:*)", "Edit", "Write", "Agent",
+        "--max-cost-usd", f"{max_cost:g}", "--allow-tools", *grants,
     ]  # fmt: skip
     if case:
         argv += ["--case", case]
+    if no_shell:
+        argv += ["--tag", "no-shell"]
     return argv
+
+
+def summary(result: dict) -> tuple[list[str], list[str]]:
+    """One line per case (with, without, difference) and the cases whose runs errored."""
+    lines, errored = [], []
+    for case in result.get("cases", []):
+        agg = case.get("aggregates") or {}
+        errors = [
+            run["error"]
+            for arm in (case.get("arms") or {}).values()
+            for run in arm
+            if run.get("error")
+        ]
+        lines.append(
+            f"{case['name']} with {agg.get('score', 0):.2f} · without "
+            f"{agg.get('scoreWithout', 0):.2f} · difference {agg.get('delta', 0):+.2f}"
+        )
+        if errors:
+            errored.append(case["name"])
+            lines.append(f"  error: {errors[0][:200]}")
+    lines.append(f"cost ${result.get('costUsd', 0):.2f}")
+    return lines, errored
 
 
 def run(config, **options) -> dict:

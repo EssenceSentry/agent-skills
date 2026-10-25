@@ -1194,19 +1194,28 @@ def lab_run(
     model: str = typer.Option("sonnet", help="The model under test."),
     max_cost: float = typer.Option(5.0, help="Stop once this many dollars are spent."),
     case: str = typer.Option(None, help="Only cases whose name matches this glob."),
+    no_shell: bool = typer.Option(
+        False, "--no-shell", help="Grant no Bash and run only the cases that need none."
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the command; run nothing."),
 ):
-    """Run the cases with and without the profile plugin, and print the scores."""
+    """Run the cases with and without the profile plugin, and print the scores.
+
+    Exits 1 when any run errored instead of being scored.
+    """
     from ax import lab
 
     config = load()
     lab.build(config)
-    options = {"runs": runs, "model": model, "max_cost": max_cost, "case": case}
+    options = {"runs": runs, "model": model, "max_cost": max_cost, "case": case,
+               "no_shell": no_shell}  # fmt: skip
     if dry_run:
         typer.echo(shlex.join(lab.command(config, **options)))
         return
-    result = lab.run(config, **options)
-    typer.echo(json.dumps(result.get("summary", result), indent=2)[:4000])
+    lines, errored = lab.summary(lab.run(config, **options))
+    typer.echo("\n".join(lines))
+    if errored:
+        raise typer.Exit(1)
 
 
 learn_app = typer.Typer(

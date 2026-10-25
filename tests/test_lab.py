@@ -104,3 +104,33 @@ def test_run_builds_a_bounded_two_arm_eval_command(built, env):
     assert "--scaffold" in command and "--trust-plugin" in command and "--no-publish" in command
     assert command[command.index("--max-cost-usd") + 1] == "5"
     assert command[command.index("--case") + 1] == "no-*"
+
+
+def test_cases_are_tagged_by_whether_they_need_a_shell(built):
+    def tags(case):
+        front = (built / "evals" / case / "prompt.md").read_text().split("---")[1]
+        return yaml.safe_load(front)["tags"]
+
+    assert "shell" in tags("no-coauthor-trailer") and "no-shell" in tags("no-green-ui")
+
+
+def test_no_shell_runs_drop_bash_and_keep_to_shell_free_cases(built, env):
+    command = lab.command(env.config, no_shell=True)
+    assert not any(arg.startswith("Bash") for arg in command)
+    assert command[command.index("--tag") + 1] == "no-shell"
+
+
+def test_the_summary_reports_each_case_and_flags_errors():
+    result = {
+        "costUsd": 0.42,
+        "cases": [
+            {"name": "a", "aggregates": {"score": 1, "scoreWithout": 0, "delta": 1},
+             "arms": {"with": [{"error": None}], "without": [{"error": None}]}},
+            {"name": "b", "aggregates": {"score": 0, "scoreWithout": 0, "delta": 0},
+             "arms": {"with": [{"error": "sandbox refused"}], "without": [{}]}},
+        ],
+    }  # fmt: skip
+    lines, errored = lab.summary(result)
+    assert errored == ["b"]
+    assert any(line.startswith("a ") and "+1.00" in line for line in lines)
+    assert any("sandbox refused" in line for line in lines)
