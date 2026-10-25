@@ -31,7 +31,7 @@ _DENIAL = "Permission to use "
 _MIN_FRICTION = 3
 _FRICTION_SHOWN = 8
 _EXAMPLES = 3
-_TRANSCRIPT_VERSION = 2  # bump when what is read from a transcript changes
+_TRANSCRIPT_VERSION = 3  # bump when what is read from a transcript changes
 
 
 def _week(when: datetime) -> str:
@@ -79,7 +79,22 @@ _SHELL_ERROR = re.compile(
     r"(?i)\b(?:permission denied|command not found|no such file or directory)\b"
 )
 _LISTING = re.compile(r"^\s*\d+(?:\t|→|:)")  # a numbered line of a file being read
-_READS = ("sed ", "cat ", "head ", "tail ", "rg ", "grep ", "nl ", "less ", "git show", "git diff")
+_READERS = {"sed", "cat", "head", "tail", "rg", "grep", "nl", "less"}
+_SHELL = re.compile(r"^(?:\S*/)?(?:ba|z)?sh\s+-l?c\s+")
+
+
+def _reads(command: str) -> bool:
+    """Whether a command starts by showing files (after any `cd`): its output is file text,
+    and an error word in it is not an error."""
+    command = _SHELL.sub("", command.strip()).strip("'\"")
+    for part in re.split(r"&&|;|\|\|", command):
+        words = part.split()
+        if not words or words[0] == "cd":
+            continue
+        if words[0] == "git":
+            return len(words) > 1 and words[1] in ("show", "diff")
+        return words[0] in _READERS
+    return False
 
 
 def _signature(text: str) -> str | None:
@@ -124,15 +139,16 @@ def _outputs(record: dict, calls: dict) -> list[tuple[str, str | None]]:
                 content = block.get("content")
                 if isinstance(content, list):
                     content = "\n".join(c.get("text", "") for c in content if isinstance(c, dict))
-                if isinstance(content, str):
-                    found.append((content, calls.get(block.get("tool_use_id"))))
+                command = calls.get(block.get("tool_use_id"))
+                if isinstance(content, str) and not (command and _reads(command)):
+                    found.append((content, command))
         return found
     payload = record.get("payload") or {}
     item = payload.get("item") or {}
     if payload.get("type") == "item_completed" and item.get("type") == "CommandExecution":
         command = item.get("command") or ""
         command = command if isinstance(command, str) else " ".join(map(str, command))
-        if any(read in command for read in _READS):
+        if _reads(command):
             return []  # a file being shown, not a command failing
         return [(item.get("aggregated_output") or "", first_line(command, 160) or None)]
     return []

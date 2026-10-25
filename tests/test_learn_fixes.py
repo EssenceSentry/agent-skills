@@ -28,8 +28,9 @@ def test_a_recurring_error_with_a_fix_becomes_a_proposal(env):
     model = fixes(**{
         "(eval):": {"fix": "On macOS there is no `timeout`; run long commands in the background.",
                     "topic": "no-timeout-on-macos"},
-        "filenot": {"fix": "Check the report's input exists before running it.",
+        "filenot": {"fix": "Run `make data` before `scripts/report.py`.",
                     "topic": "check-report-inputs"},
+        "warning": {"fix": "Validate inputs before using them.", "topic": "validate-inputs"},
     })  # fmt: skip
     written = learn_fixes.propose_fixes(env.config, [TIMEOUT, PYRIGHT, CACHE], model=model)
     assert [r.id for r in written] == ["no-timeout-on-macos", "check-report-inputs"]
@@ -39,6 +40,7 @@ def test_a_recurring_error_with_a_fix_becomes_a_proposal(env):
     assert "12 sessions" in timeout.why and "timeout 600 ax scorecard" in timeout.why
     assert rules["check-report-inputs"].scope == "repo:ds-models"
     assert "new pyright version" in model.prompts[0]
+    assert "validate-inputs" not in rules  # a fix that names no command is generic advice
 
 
 def test_each_error_is_asked_about_once(env):

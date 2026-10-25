@@ -3,8 +3,10 @@
 The scorecard finds error signatures that recur in three or more sessions, with a few
 commands that hit them. A model call per twenty new errors asks, for each, whether one
 standing instruction (an environment fact, a better command) would let agents avoid
-it, and words it. Each error is asked about once, even when the answer is no. A fix
-becomes a proposal like any other: repo-scoped when the error stays in one project.
+it, and words it. A fix must name the command, tool or path to use, in backticks;
+anything else is generic advice and is dropped. Each error is asked about once, even
+when the answer is no. A fix becomes a proposal like any other: repo-scoped when the
+error stays in one project.
 """
 
 import json
@@ -17,15 +19,27 @@ from ax.redact import redact
 BATCH = 20
 
 _PROMPT = """These errors keep coming back in a user's sessions with coding agents (Claude
-Code and Codex), each in several sessions. For each, decide whether one standing
-instruction to the agents would avoid it, such as an environment fact or a better
-command. Harmless warnings, errors that are the point of the command, and one-off
-bugs need none.
+Code and Codex), each in several sessions. In an error, N stands for a number, PATH for
+a path and '…' for quoted text; the commands are ones that hit it.
+
+For each, decide whether one standing instruction would stop agents from hitting it
+again. Give one only when the error comes from something specific: a tool missing on
+this machine, a project's required wrapper or entry point, a tool's own limits or
+flags, a path or setting agents keep getting wrong. The instruction must name the
+command, flag, tool or path to use, in backticks. Most errors need none, and these
+never do:
+- generic advice: validate inputs, check paths exist, handle errors, quote
+  variables, use .get(), test first
+- warnings that don't stop the work, such as an upgrade notice
+- checks doing their job: a linter, formatter, type checker, test or validator that
+  failed on the code it was asked to check
+- text that only looks like an error, such as documentation an agent read
+- errors whose cause the commands shown don't make clear
 
 Return only a JSON array with one object per item:
 - "id": the item's id
-- "fix": the instruction as one imperative sentence, or "" when none would help or an
-  existing rule below already gives it
+- "fix": the instruction as one imperative sentence, or "" for none (also when an
+  existing rule below already gives it)
 - "topic": a kebab-case slug of two to four words naming the fix
 
 Existing rules:
@@ -79,8 +93,8 @@ def propose_fixes(config, errors: list, *, model=None) -> list:
             topic = re.sub(r"[^a-z0-9]+", "-", str(answers[key].get("topic") or "").lower())
             topic = topic.strip("-") or "recurring-error-fix"
             asked[error["signature"]] = {"rule": None, "date": date.today().isoformat()}
-            if not fix or topic in taken:
-                continue
+            if "`" not in fix or topic in taken:
+                continue  # a fix that names no command, tool or path is generic advice
             rid = learn._rule_id(topic, taken)
             projects = error["projects"]
             rule = profile.add(

@@ -194,3 +194,27 @@ def test_the_scorecard_note_is_markdown_for_the_vault(card, env):
                                 env={"AX_CONFIG": str(env.config_path)})  # fmt: skip
     assert result.exit_code == 0, result.output
     assert "| Week |" in (env.config.vault / "Scorecard.md").read_text()
+
+
+def test_a_claude_command_that_only_reads_a_file_has_no_error(tmp_path):
+    def call(i, command, output):
+        use = {"type": "tool_use", "id": i, "name": "Bash", "input": {"command": command}}
+        result = {"type": "tool_result", "tool_use_id": i, "content": output}
+        return [{"type": "assistant", "message": {"content": [use]}},
+                {"type": "user", "message": {"content": [result]}}]  # fmt: skip
+
+    path = tmp_path / "t.jsonl"
+    records = call("t1", "cat AGENTS.md", "Error: an exception to the policy needs sign-off")
+    records += call("t2", "uv run python run.py", "Error: no input file")
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+    assert scorecard._read_transcript(path)["signatures"] == ["error: no input file"]
+
+
+@pytest.mark.parametrize(
+    "command, reads",
+    [("/bin/zsh -lc cat AGENTS.md", True), ("cd ~/x && sed -n 1,5p a.py", True),
+     ("git diff --stat", True), ("git status", False),
+     ("uv run pytest 2>&1 | tail -5", False), ("python3 - <<'PY'", False)],
+)  # fmt: skip
+def test_reads_means_the_command_starts_by_showing_files(command, reads):
+    assert scorecard._reads(command) is reads
