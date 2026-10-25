@@ -542,6 +542,38 @@ A weekly window that ends its week with allowance left resets it unused. The wor
 - **Commands:** `ax workshop status` (whether a run would start now, with how many agents and why), `ax workshop run [--dry-run]`, `ax workshop stop`; config `[workshop]` with `enabled`, `floor` and `max_agents`.
 - **Build order, test-first:** the condition and the sizing (with `status` and `--dry-run`); the supervisor, with fake runners in tests; the validated writer for proposals and the report; the schedule check; the app's view; then a live `--dry-run` on the real archive before the first real run.
 
+### 19. Friction without walls: undo, speed bumps, and policies agents set (agreed 2026-10-25)
+
+The aim is to catch mistakes before they cost anything, without taking autonomy from the agent the user talks to. CC Safety Net does the opposite. Only the user can loosen its rules, it blocks commands that merely mention a secret, and it ends with "don't work around this". So it goes, and ax carries the friction.
+
+- **Who gets what:**
+  - **The main agent** (the conversation the user is in, with the whole context): no walls from the user. It gets undo snapshots always, one-step speed bumps only for irreversible actions, and the rules it sets for itself.
+  - **Subagents and delegated workers** (partial context): the policy the main agent sets when it delegates (the paths they may touch, the commands they may not run, no pushes). These are hard stops for that agent only, written into its brief so it knows them up front. Undo snapshots still apply underneath.
+- **Undo snapshots, for everyone:** before a local destructive command, ax saves what it would lose, then lets it run.
+  - **Git:** a backup ref before `git reset --hard`, `git checkout -- .`, `git restore`, `git clean`, `git branch -D` and `git stash drop|clear`.
+  - **Files:** a copy in a trash folder before `rm` of files git can't bring back (untracked, or outside a repository).
+  - **Undo:** snapshots expire after 14 days. `ax undo` lists and restores them, and the app shows recent destructive actions with a Restore button.
+- **Speed bumps, for the main agent's irreversible actions:** a force push, deleting a remote branch, deleting cloud resources (such as `aws s3 rm|rb` or SageMaker deletes), dropping a table, sending a message. The first try stops once and says what is at stake. Running it again with a stated reason (`AX_INTENT="…"`) lets it through, and the reason is logged.
+- **Policies agents edit:**
+  - **The main agent's own rules:** it adds or relaxes them when the user asks, as ordinary profile notes.
+  - **The user's `block` rules:** they become speed bumps for the main agent and stay hard stops for subagents.
+  - **Subagent policies:** the main agent sets them when it delegates (`ax brief --policy`). Where the guard can't see a subagent, the delegation runner's permission profile carries the policy.
+  - **No lock:** no policy file is shut off from agents.
+- **Productivity principles:**
+  - **What a command does, not what it mentions:** a script that only searches for the text ".env" is not reading a secret.
+  - **Ordinary work never meets friction:** reads, searches, tests and edits inside a repository pass untouched. Friction is only for deleting what git can't restore and for actions that leave the machine.
+  - **One step to continue:** every pause says what is at stake and how to proceed. It never says "ask the user" or "don't work around this".
+  - **Fail open:** a malformed rule or an error in the guard lets the command through and reports itself.
+  - **Friction is measured:** the scorecard counts pauses and overrides, and a rule the agent keeps overriding is flagged for review (the learner already tracks overrides).
+- **Removing CC Safety Net:** from Claude Code (`enabledPlugins`) and from Codex (its plugin and hook), once the undo snapshots and speed bumps cover what it guarded. Codex then asks the user to trust its hooks again with `/hooks`.
+- **Build order, test-first:**
+  1. **Check who is calling:** whether the guard can tell the main agent from its subagents and workers in both tools. That covers Claude Code's hook input for subagents started with its Agent tool, headless `claude -p --safe-mode` workers (which may skip hooks), and Codex's subagents and `codex exec` workers. The answer decides where subagent policies are enforced.
+  2. **Undo:** snapshots, `ax undo`, and the app's list.
+  3. **Speed bumps.**
+  4. **Subagent policies:** set through briefs and the runners.
+  5. **Measuring friction:** scorecard counts and override flags.
+  6. **Removal:** CC Safety Net taken out.
+
 ## Schedule
 
 ### Saturday, afternoon and evening
