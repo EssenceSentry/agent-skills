@@ -560,6 +560,36 @@ The aim is to catch mistakes before they cost anything, without taking autonomy 
   - **Friction is measured:** the scorecard counts pauses, stops and reasons given; a rule the agent keeps passing counts against it and is flagged for review.
 - **Policies agents edit:** the main agent's own rules are profile notes, and `ax policy` limits can be added and lifted by agents. No file is locked away from them.
 
+### 20. Budgets agents register, add to and ask about (agreed 2026-10-25)
+
+The user tells an agent "use no more than $40 on annotations and don't download more than 4 GB locally". Today each agent invents its own ledger: the News research built one that reserves an annotation's cost before sending it. `ax budget` makes that one shared tool for both Claude and Codex, which the user can watch in the app.
+
+- **Commands:**
+  - `ax budget set NAME LIMIT --unit usd|GB|hours|calls|…` registers a budget, with an optional `--why`.
+  - `ax budget add NAME AMOUNT --note "…"` records what was spent.
+  - `ax budget show [NAME]` gives the limit, spent, reserved and what is left.
+  - `ax budget check NAME AMOUNT` answers whether the next amount fits, with exit code 0 when it does.
+  - `ax budget close NAME` ends a budget. All of them take `--json`, and agents may run them alone.
+- **Reserve, then settle:** `ax budget reserve NAME AMOUNT` holds an amount before an expensive call and returns a ticket. `ax budget settle TICKET ACTUAL` replaces the hold with the real figure, and `release` returns it. An unsettled hold keeps counting, so a crash never makes spending vanish, and parallel workers can't overshoot together. The ledger is SQLite in ax's data folder, so concurrent agents write safely.
+- **Measured budgets:** `ax budget set downloads 4 --unit GB --path data/raw` makes ax read that folder's size on every check, show and app refresh, so nothing depends on an agent remembering to report. Reserving still works on top, for a download about to start.
+- **Scope:** a budget belongs to the conversation that set it (its handle) or to a project (`--project`). Subagents' briefs list the budgets that reach them. The start-of-conversation digest shows open budgets, so a follow-up conversation knows the cap without the user repeating it.
+- **Going over follows component 19:**
+  - **The main agent:** when an `add`, `check` or `reserve` would cross the limit, it pauses. It says what is spent and left, and goes through when the agent repeats the command with `AX_INTENT="why"`. The reason is logged on the budget.
+  - **Subagents and workers:** they are stopped and told to report back to the agent that started them.
+  - **No hook:** the guard can't see dollars, so the answer of the budget command itself is the friction.
+- **In the app:**
+  - **Budgets panel on Now:** each budget's meter of spent, reserved and left, coloured like the usage band (yellow near the limit, red over it). It also shows who set it (the conversation's handle, linking its note, or the project), its ledger (each add with its note, the agent and when), and any limit passed with the reason given.
+  - **Waiting for you:** a budget that goes over joins it.
+  - **Help:** it gains the budget area.
+- **Build order, test-first:**
+  1. **Ledger and core commands:** the ledger, `set`, `add`, `show`, `check` and `close`, with `--json`.
+  2. **Reserve, settle and release.**
+  3. **Measured budgets.**
+  4. **Pauses and stops** when going over.
+  5. **Scope:** in briefs and the digest.
+  6. **App:** the Budgets panel and the Waiting item.
+  7. **Docs:** the ax skill, README and Help.
+
 ## Schedule
 
 ### Saturday, afternoon and evening
