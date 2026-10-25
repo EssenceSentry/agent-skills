@@ -1,4 +1,5 @@
 import json
+from datetime import date
 
 import pytest
 from typer.testing import CliRunner
@@ -214,11 +215,67 @@ def test_a_rejected_proposal_returns_only_when_its_support_doubles(archive):
     labels = {c["id"]: keep("tabs", "Use tabs.") for c in cs}
     learn.propose(archive.config, cs, labels)
     learn.reject(archive.config, "tabs")
-    assert not any(r.id == "tabs" for r in profile.load_rules(archive.config))
+    assert rule_of(archive, "tabs").status == "rejected"  # kept, so you can change your mind
     assert learn.propose(archive.config, cs, labels) == []
     more = [candidate(str(i), f"s{i}", "demo") for i in range(4)]
     labels = {c["id"]: keep("tabs", "Use tabs.") for c in more}
     assert [p.id for p in learn.propose(archive.config, more, labels)] == ["tabs"]
+    assert rule_of(archive, "tabs").status == "proposed"  # the same note, back in the queue
+
+
+def rule_of(env, rule_id):
+    return next((r for r in profile.load_rules(env.config) if r.id == rule_id), None)
+
+
+def proposed(env, rule_id="tabs"):
+    cs = [candidate(str(i), f"s{i}", "demo") for i in range(2)]
+    learn.propose(env.config, cs, {c["id"]: keep(rule_id, "Use tabs.") for c in cs})
+    return rule_of(env, rule_id)
+
+
+def test_a_decision_keeps_the_rule_with_when_and_by_whom(archive):
+    proposed(archive)
+    learn.reject(archive.config, "tabs")
+    rule = rule_of(archive, "tabs")
+    assert rule.status == "rejected" and rule.decided_by == "you"
+    assert rule.decided[:10] == date.today().isoformat()
+    learn.accept(archive.config, "tabs")  # you changed your mind
+    rule = rule_of(archive, "tabs")
+    assert rule.status == "active" and rule.decided_by == "you"
+    assert "tabs" not in learn._ledger(archive.config, "rejected.json")
+
+
+def test_an_accepted_rule_can_be_rejected_or_sent_back_to_the_proposals(archive):
+    proposed(archive)
+    learn.accept(archive.config, "tabs")
+    learn.reject(archive.config, "tabs")
+    assert rule_of(archive, "tabs").status == "rejected"
+    learn.restore(archive.config, "tabs")
+    rule = rule_of(archive, "tabs")
+    assert rule.status == "proposed" and not rule.decided and not rule.decided_by
+    assert "tabs" not in learn._ledger(archive.config, "rejected.json")
+    learn.accept(archive.config, "tabs")
+    learn.restore(archive.config, "tabs")
+    assert rule_of(archive, "tabs").status == "proposed"
+
+
+def test_the_commands_reject_and_restore(archive, monkeypatch):
+    monkeypatch.setenv("AX_CONFIG", str(archive.config_path))
+    proposed(archive)
+    assert CliRunner().invoke(app, ["learn", "reject", "tabs"]).exit_code == 0
+    result = CliRunner().invoke(app, ["learn", "restore", "tabs"])
+    assert result.exit_code == 0 and "back with the proposals" in result.output
+    assert rule_of(archive, "tabs").status == "proposed"
+    assert CliRunner().invoke(app, ["learn", "restore", "tabs"]).exit_code == 2
+
+
+def test_only_a_decision_can_be_reversed(archive):
+    profile.add(archive.config, "by-hand", rule="Written by hand, never proposed.")
+    with pytest.raises(ValueError, match="retire"):
+        learn.reject(archive.config, "by-hand")
+    proposed(archive)
+    with pytest.raises(ValueError, match="waiting"):
+        learn.restore(archive.config, "tabs")
 
 
 def test_accept_activates_a_proposal(archive):

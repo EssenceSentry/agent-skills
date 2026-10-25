@@ -603,7 +603,16 @@ def test_accepting_a_workshop_proposal_retires_or_drops_what_it_replaces(work):
     rules = {r.id: r for r in profile.load_rules(env.config)}
     assert rules["clean-changes"].status == "active"
     assert rules["unrelated-files"].status == "retired"
-    assert "say-less" not in rules  # a proposal it replaced is dropped
+    assert rules["say-less"].status == "rejected"  # a proposal it replaced is rejected, kept
+    assert rules["say-less"].superseded_by == "clean-changes"
+    assert rules["unrelated-files"].superseded_by == "clean-changes"
+    learn.restore(env.config, "clean-changes")  # changing your mind brings them back
+    rules = {r.id: r for r in profile.load_rules(env.config)}
+    assert rules["clean-changes"].status == "proposed"
+    assert (
+        rules["unrelated-files"].status == "active" and not rules["unrelated-files"].superseded_by
+    )
+    assert rules["say-less"].status == "proposed"
 
 
 def test_the_app_puts_a_suggested_retirement_up_for_review_and_keep_clears_it(work):

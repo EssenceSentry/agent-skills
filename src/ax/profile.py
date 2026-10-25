@@ -19,7 +19,7 @@ from pathlib import Path
 import yaml
 
 LEVELS = ("advice", "check", "block")
-STATUSES = ("active", "proposed", "retired")
+STATUSES = ("active", "proposed", "retired", "rejected")
 TOOLS = ("claude", "codex")
 # "workers" is opt-in: delegated workers get a rule only when it names them.
 VALID_TOOLS = (*TOOLS, "workers")
@@ -56,6 +56,11 @@ class Rule:
     last_evidence: str = ""
     review: str = ""
     reviewed: str = ""
+    # A decision on a proposal: when, by whom ("you", or what decided for you), and the
+    # rule that took its place. Kept, so a decision can be reversed.
+    decided: str = ""
+    decided_by: str = ""
+    superseded_by: str = ""
     # Frontmatter keys ax doesn't know, such as Obsidian's tags and aliases, kept as written.
     extra: dict = field(default_factory=dict)
     why: str = ""
@@ -138,6 +143,7 @@ def _read(path: Path) -> Rule:
     rule.added = str(rule.added or "")
     rule.reviewed = str(rule.reviewed or "")
     rule.last_evidence = str(rule.last_evidence or "")
+    rule.decided = str(rule.decided or "")
     return validate(rule)
 
 

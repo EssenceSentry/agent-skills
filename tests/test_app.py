@@ -252,7 +252,8 @@ def test_actions_do_what_their_commands_do(queue):
 
     app.act(config, "reject", {"id": "second"})
     assert "second" in learn._ledger(config, "rejected.json")
-    assert not (profile.rules_dir(config) / "second.md").exists()
+    rejected = profile._read(profile.rules_dir(config) / "second.md")  # kept, to change your mind
+    assert rejected.status == "rejected" and rejected.decided_by == "you"
 
     app.act(config, "keep", {"id": "bootstrap"})
     kept = next(r for r in profile.load_rules(config) if r.id == "bootstrap")

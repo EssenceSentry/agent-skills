@@ -2332,7 +2332,8 @@ def learn_accept(rule_id: str = typer.Argument(...)):
 
 @learn_app.command("reject")
 def learn_reject(rule_id: str = typer.Argument(...)):
-    """Drop a proposal; it returns only if its support doubles."""
+    """Reject a proposal or an accepted rule; its note stays, and the learner proposes it
+    again only if its support doubles."""
     from ax import learn
 
     try:
@@ -2340,7 +2341,22 @@ def learn_reject(rule_id: str = typer.Argument(...)):
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from None
-    typer.echo(f"rejected {rule_id}")
+    typer.echo(f"rejected {rule_id}; `ax learn restore {rule_id}` brings it back")
+
+
+@learn_app.command("restore")
+def learn_restore(rule_id: str = typer.Argument(...)):
+    """Send an accepted or rejected rule back to the proposals: you changed your mind."""
+    from ax import learn
+
+    try:
+        learn.restore(load(), rule_id)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    typer.echo(
+        f"{rule_id} is back with the proposals; run `ax profile compile --apply` if it was active"
+    )
 
 
 @learn_app.command("recall")
