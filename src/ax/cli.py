@@ -646,6 +646,34 @@ def find_cmd(
     typer.echo(json.dumps(hits, indent=2, ensure_ascii=False) if as_json else find.text(hits))
 
 
+mcp_app = typer.Typer(
+    invoke_without_command=True, help="ax for agents over MCP: find, recall and here."
+)
+app.add_typer(mcp_app, name="mcp")
+
+
+@mcp_app.callback()
+def mcp_serve(ctx: typer.Context):
+    """Serve find, recall and here on stdio (what both tools launch)."""
+    if ctx.invoked_subcommand is None:
+        from ax import mcp_server
+
+        mcp_server.serve(load())
+
+
+@mcp_app.command("install")
+def mcp_install(apply: bool = typer.Option(False, "--apply", help="Make the changes.")):
+    """Register `ax mcp` with Claude Code and Codex; prints the plan unless --apply."""
+    changes, commands = glue.plan_mcp(load(), ax=glue.ax_path())
+    _report(changes, apply)
+    for command in commands:
+        typer.echo(("running: " if apply else "would run: ") + shlex.join(command))
+        if apply:
+            from ax.job_wake import clean_env
+
+            subprocess.run(command, check=True, env=clean_env(os.environ))
+
+
 index_app = typer.Typer(no_args_is_help=True, help="The search index behind `ax find`.")
 app.add_typer(index_app, name="index")
 

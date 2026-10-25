@@ -159,6 +159,19 @@ def _launchd_path() -> str:
     return ":".join([*map(str, dirs), "/usr/bin", "/bin", "/usr/sbin", "/sbin"])
 
 
+def plan_mcp(config: Config, *, ax: str) -> tuple[list[Change], list[list[str]]]:
+    """Register `ax mcp` with both tools: a block in Codex's config.toml, and the command
+    that adds it to Claude Code's user scope (Claude rewrites its own config file)."""
+    path = config.codex_home / "config.toml"
+    before = path.read_text() if path.exists() else None
+    block = f'[mcp_servers.ax]\ncommand = {json.dumps(ax)}\nargs = ["mcp"]\n'
+    text = before or ""
+    if "[mcp_servers.ax]" not in text:
+        text = (text.rstrip() + "\n\n" if text.strip() else "") + block
+    claude = ["claude", "mcp", "add", "--scope", "user", "ax", "--", ax, "mcp"]
+    return [Change(path, before, text)], [claude]
+
+
 def apply(changes: list[Change]) -> list[Path]:
     """Write every changed file, backing up the ones that already existed."""
     written = []
