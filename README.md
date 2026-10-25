@@ -118,7 +118,8 @@ confirmed frustration moment three times (two projects for a global rule).
 `fixes` proposes a rule for each error that recurs across sessions; `tidy` folds
 near-duplicate proposals into one and notes contradictions; `guards` gives a "never"
 proposal a block-level guard pattern when one catches the commands behind its
-evidence and none of the last 30 days' other commands. `accept` and `reject` settle
+evidence and none of the last 30 days' other commands, tested on whole commands from
+the transcripts (Codex's `exec` code included). `accept` and `reject` settle
 proposals, and a rejected one returns only when its support doubles. At most 20
 proposals wait at once (`--max-pending`), strongest support first.
 
@@ -128,7 +129,8 @@ aside). Confidence halves every 90 days without new evidence and counts what goe
 against a rule four times; maturity goes new, established, proven, or doubtful.
 `ax learn review` lists them; a flag asks for a decision: `guard` after two
 recurrences, a narrower scope after an override, `retire` or `keep` after 90 silent
-days. Sync labels new candidates itself only with `[learn] label_on_sync = true`.
+days. Sync labels up to 40 new candidates with Haiku itself; `[learn] label_on_sync =
+false` turns that off.
 `recall` reports how many active rules the labels rediscover.
 
 ### Measuring it
