@@ -773,6 +773,8 @@ def groups(candidates, labels) -> list[Group]:
         lab = labels.get(c["id"])
         if not lab or lab["kind"] == "none" or not lab["lasting"] or not lab["topic"]:
             continue
+        if not lab["rule"]:
+            continue  # e.g. a confirmed frustration moment with no general lesson
         by_topic.setdefault(lab["topic"], Group(lab["topic"])).members.append((c, lab))
     merged: list[Group] = []
     for group in sorted(by_topic.values(), key=lambda g: -len(g.members)):

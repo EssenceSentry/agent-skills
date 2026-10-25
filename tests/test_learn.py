@@ -371,3 +371,9 @@ def test_labels_written_by_another_run_meanwhile_are_kept(archive):
 
     labels = learn.label(archive.config, [candidate("a", "s1", "demo")], model=model)
     assert {"a", "other"} <= set(labels) and {"a", "other"} <= set(json.loads(path.read_text()))
+
+
+def test_a_label_without_a_rule_proposes_nothing(archive):
+    cs = [candidate("a", "s1", "demo", signals=["frustration"])]
+    labels = {"a": keep("speed", "", frustrated=True)}
+    assert learn.propose(archive.config, cs, labels) == []
