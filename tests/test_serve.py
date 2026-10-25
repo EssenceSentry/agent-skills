@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from ax import exp, serve, usage
+from ax import app, exp, serve, usage
 from ax.runs import Run
 from ax.sync import sync
 
@@ -79,10 +79,16 @@ def test_the_server_answers_only_on_loopback(env, state, monkeypatch):
     assert host == "127.0.0.1"
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+
+    def get(path):
+        cookie = {"Cookie": f"{app.COOKIE}={app.token(env.config)}"}
+        request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=cookie)
+        return urllib.request.urlopen(request).read()
+
     try:
-        page = urllib.request.urlopen(f"http://127.0.0.1:{port}/").read().decode()
-        fragment = urllib.request.urlopen(f"http://127.0.0.1:{port}/fragment").read().decode()
-        data = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state").read())
+        page = get("/classic").decode()
+        fragment = get("/fragment").decode()
+        data = json.loads(get("/api/state"))
     finally:
         server.shutdown()
     assert "<html" in page and "pricing-study" in page
@@ -132,13 +138,15 @@ def test_requests_for_other_host_names_are_refused(env, state, monkeypatch):
     port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
+        cookie = f"{app.COOKIE}={app.token(env.config)}"
         request = urllib.request.Request(
-            f"http://127.0.0.1:{port}/api/state", headers={"Host": "evil.example"}
+            f"http://127.0.0.1:{port}/api/state", headers={"Host": "evil.example", "Cookie": cookie}
         )
         with pytest.raises(urllib.error.HTTPError) as refused:
             urllib.request.urlopen(request)
         ok = urllib.request.Request(
-            f"http://127.0.0.1:{port}/", headers={"Host": f"localhost:{port}"}
+            f"http://127.0.0.1:{port}/classic",
+            headers={"Host": f"localhost:{port}", "Cookie": cookie},
         )
         assert urllib.request.urlopen(ok).status == 200
     finally:

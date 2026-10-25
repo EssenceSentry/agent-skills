@@ -6,13 +6,17 @@ fragment every few seconds. Each section is gathered on its own, so one
 failing source shows as a note instead of an empty page.
 """
 
+import hmac
 import html
 import json
+import mimetypes
+import threading
 import time
 from datetime import UTC, datetime
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlsplit
 
 from ax import exp, job_eta, job_follow, jobs, runs, scorecard, usage
 from ax.config import Config
@@ -90,36 +94,224 @@ def render_body(state: dict) -> str:
     return "\n".join(parts)
 
 
-def make_server(config: Config, *, port: int = 8765) -> ThreadingHTTPServer:
+class _Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.closing = threading.Event()  # ends the live streams
+
+    def server_close(self):
+        self.closing.set()
+        super().server_close()
+
+
+def make_server(
+    config: Config, *, port: int = 8765, usage_of=None, web: Path | None = None, poll: float = 3.0
+) -> ThreadingHTTPServer:
+    """The ax app (built pages, JSON, actions and a live stream) and the classic page.
+
+    Everything but the pages' scripts and styles needs the token `app.token` keeps: the
+    link carries it once, then a Strict, HttpOnly cookie. Actions also need JSON from
+    the app's own origin, and only localhost names are answered, so neither another
+    site nor one that rebinds its domain to 127.0.0.1 can read or act.
+    """
+    from ax import app
+
+    web = web or app.WEB
+    secret = app.token(config)
+
+    def now() -> dict:
+        return app.now_state(config, usage_of=usage_of)
+
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            # Refuse other host names, so a page that rebinds its domain to 127.0.0.1
-            # (DNS rebinding) cannot read the dashboard.
-            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
-            if host not in ("127.0.0.1", "localhost", "::1"):
-                self.send_error(403)
-                return
-            routes = {
-                "/": ("text/html", lambda: render_page(collect_state(config))),
-                "/fragment": ("text/html", lambda: render_body(collect_state(config))),
-                "/api/state": ("application/json", lambda: json.dumps(collect_state(config))),
-                "/scorecard": ("text/html", lambda: scorecard.render(scorecard.build(config))),
-            }
-            if self.path not in routes:
-                self.send_error(404)
-                return
-            kind, build = routes[self.path]
-            body = build().encode()
-            self.send_response(200)
-            self.send_header("Content-Type", f"{kind}; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(body)
+        server_version = "ax"
+        sys_version = ""
 
         def log_message(self, *args):  # quiet: the terminal is for the URL
             pass
 
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        def _send(self, status: int, body: bytes, kind: str, headers=None) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(body)))
+            for name, value in {"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store",
+                                **(headers or {})}.items():  # fmt: skip
+                self.send_header(name, value)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _text(self, status: int, text: str) -> None:
+            self._send(status, text.encode(), "text/plain; charset=utf-8")
+
+        def _json(self, status: int, data) -> None:
+            self._send(status, json.dumps(data).encode(), "application/json", _APP_HEADERS)
+
+        def _host_ok(self) -> bool:
+            # Refuse other host names, so a page that rebinds its domain to 127.0.0.1
+            # (DNS rebinding) cannot read the dashboard.
+            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
+            return host in ("127.0.0.1", "localhost", "::1")
+
+        def _given(self, query: dict) -> tuple[str, str]:
+            cookie = SimpleCookie(self.headers.get("Cookie") or "")
+            for how, value in (
+                ("query", (query.get("token") or [""])[0]),
+                ("header", self.headers.get("X-Ax-Token") or ""),
+                ("cookie", cookie[app.COOKIE].value if app.COOKIE in cookie else ""),
+            ):
+                if value:
+                    return how, value
+            return "", ""
+
+        def _authorised(self, query: dict) -> str | None:
+            how, value = self._given(query)
+            return how if value and hmac.compare_digest(value, secret) else None
+
+        def _static(self, path: str) -> bool:
+            if not (path.startswith("/assets/") or path == "/favicon.svg"):
+                return False
+            root = web.resolve()
+            target = (root / path.lstrip("/")).resolve()
+            home = root / "assets" if path.startswith("/assets/") else root
+            if ".." in path.split("/") or not target.is_relative_to(home) or not target.is_file():
+                self._text(404, "Not found.")
+                return True
+            kind = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+            if kind.startswith("text/") or kind.endswith("javascript"):
+                kind += "; charset=utf-8"
+            cache = (
+                "public, max-age=31536000, immutable" if path.startswith("/assets/") else "no-store"
+            )
+            self._send(200, target.read_bytes(), kind, {"Cache-Control": cache})
+            return True
+
+        def do_GET(self):  # noqa: N802
+            if not self._host_ok():
+                return self._text(403, "Unknown host name.")
+            parts = urlsplit(self.path)
+            query = parse_qs(parts.query)
+            if self._static(parts.path):
+                return None
+            how = self._authorised(query)
+            if not how:
+                return self._text(401, "Open the app with the link `ax serve` printed; "
+                                       "it carries an access token.")  # fmt: skip
+            if parts.path == "/":
+                return self._page(how)
+            if parts.path == "/events":
+                return self._events()
+            if parts.path in _CLASSIC:
+                kind, build = _CLASSIC[parts.path]
+                return self._send(200, build(config).encode(), f"{kind}; charset=utf-8")
+            reads = {
+                "/api/now": lambda: now(),
+                "/api/notes": lambda: app.folder(config, (query.get("dir") or [""])[0]),
+                "/api/note": lambda: app.note(config, (query.get("path") or [""])[0]),
+            }
+            try:
+                if parts.path == "/api/file":
+                    body, kind = app.file(config, (query.get("path") or [""])[0])
+                    return self._send(200, body, kind, _APP_HEADERS)
+                if parts.path in reads:
+                    return self._json(200, reads[parts.path]())
+            except app.NotFound as exc:
+                return self._json(404, {"error": str(exc)})
+            return self._text(404, "Not found.")
+
+        def _page(self, how: str):
+            index = web / "index.html"
+            if not index.exists():
+                return self._text(503, "The app isn't built: cd ui && npm run build. "
+                                       "The classic page is at /classic.")  # fmt: skip
+            # The page shows example data unless this marker says a live ax is behind it.
+            page = index.read_text().replace(
+                "</head>", '<meta name="ax-live" content="1"></head>', 1
+            )
+            headers = dict(_APP_HEADERS)
+            if how == "query":
+                headers["Set-Cookie"] = (
+                    f"{app.COOKIE}={secret}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000"
+                )
+            self._send(200, page.encode(), "text/html; charset=utf-8", headers)
+
+        def _events(self):
+            """The Now state on connect and again whenever it changes, as server-sent
+            events, with a comment every so often so idle connections stay open."""
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            last, quiet_since = None, time.monotonic()
+            try:
+                while True:
+                    state = now()
+                    seen = json.dumps({k: v for k, v in state.items() if k != "generated"},
+                                      sort_keys=True)  # fmt: skip
+                    if seen != last:
+                        self.wfile.write(f"data: {json.dumps(state)}\n\n".encode())
+                        last, quiet_since = seen, time.monotonic()
+                    elif time.monotonic() - quiet_since > _KEEPALIVE:
+                        self.wfile.write(b": still here\n\n")
+                        quiet_since = time.monotonic()
+                    self.wfile.flush()
+                    if self.server.closing.wait(poll):
+                        return
+            except (BrokenPipeError, ConnectionResetError):
+                return
+
+        def do_POST(self):  # noqa: N802
+            if not self._host_ok():
+                return self._text(403, "Unknown host name.")
+            parts = urlsplit(self.path)
+            if parts.path != "/api/act":
+                return self._text(404, "Not found.")
+            how = self._authorised({})
+            if not how:
+                return self._json(401, {"error": "no access token"})
+            origin = self.headers.get("Origin")
+            own = f"http://{self.headers.get('Host')}"
+            if (origin or how == "cookie") and origin != own:
+                return self._json(403, {"error": "actions come only from the app itself"})
+            if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+                return self._json(415, {"error": "send JSON"})
+            size = int(self.headers.get("Content-Length") or 0)
+            if size > _MAX_BODY:
+                return self._json(413, {"error": "too large"})
+            try:
+                payload = json.loads(self.rfile.read(size) or b"{}")
+                if not isinstance(payload, dict):
+                    raise ValueError("send a JSON object")
+                said = app.act(config, str(payload.pop("action", "")), payload)
+            except ValueError as exc:
+                return self._json(400, {"error": str(exc)})
+            except Exception as exc:  # say what broke rather than drop the connection
+                return self._json(500, {"error": f"{type(exc).__name__}: {exc}"})
+            return self._json(200, {"ok": True, "message": said})
+
+        def _refuse(self):
+            self._text(405, "Not allowed.")
+
+        do_PUT = do_DELETE = do_PATCH = _refuse
+
+    return _Server(("127.0.0.1", port), Handler)
+
+
+_CLASSIC = {
+    "/classic": ("text/html", lambda config: render_page(collect_state(config))),
+    "/fragment": ("text/html", lambda config: render_body(collect_state(config))),
+    "/api/state": ("application/json", lambda config: json.dumps(collect_state(config))),
+    "/scorecard": ("text/html", lambda config: scorecard.render(scorecard.build(config))),
+}
+_APP_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+        "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+    ),
+    "Referrer-Policy": "no-referrer",
+}
+_KEEPALIVE = 15  # seconds between comments on a quiet stream
+_MAX_BODY = 64_000
 
 
 def _cached_usage(config: Config) -> list:

@@ -463,12 +463,15 @@ def serve(
     port: int = typer.Option(8765, help="Port on 127.0.0.1."),
     open_browser: bool = typer.Option(False, "--open", help="Open the page in your browser."),
 ):
-    """A local dashboard of usage, runs, research campaigns and recent sessions."""
+    """The ax app: what waits for you, usage, jobs, conversations and the vault's notes."""
+    from ax import app as app_module
     from ax import serve as serve_module
 
-    server = serve_module.make_server(load(), port=port)
-    url = f"http://127.0.0.1:{server.server_address[1]}/"
-    typer.echo(f"ax dashboard at {url} (Ctrl-C to stop)")
+    config = load()
+    server = serve_module.make_server(config, port=port)
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    url = f"{base}/?token={app_module.token(config)}"
+    typer.echo(f"ax at {url} (Ctrl-C to stop)\nThe classic page is at {base}/classic.")
     if open_browser:
         import webbrowser
 
