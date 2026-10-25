@@ -170,17 +170,23 @@ def _last_line(log: str, offset: int = 0) -> str:
     return lines[-1] if lines else ""
 
 
-def plan(config, job, agent: str = "auto", *, which=shutil.which, require=True, note=None) -> dict:
-    """What waking would run, without running it."""
+def plan(
+    config, job, agent: str = "auto", *, which=shutil.which, require=True, note=None, held=None
+) -> dict:
+    """What waking would run, without running it: the queue for a Codex thread the app
+    holds open, else a resume."""
     agent, session = choose(job, agent)
     binary = which(agent)
     if not binary and require:
         raise WakeError(f"{agent} is not on PATH, so its session can't be resumed")
     binary = binary or agent
-    argv = command(agent, session, packet(config, job, note), binary)
+    held = held or (lambda thread: codex_held(config, thread))
+    queue = agent == "codex" and held(session)
+    argv = command(agent, session, packet(config, job, note), binary, queue=queue)
     cwd = job.cwd if job.cwd and os.path.isdir(job.cwd) else None
     log = jobs.events_path(config, job.key).parent / "wake.log"
-    return {"agent": agent, "session": session, "argv": argv, "cwd": cwd, "log": str(log)}
+    return {"agent": agent, "session": session, "argv": argv, "cwd": cwd, "log": str(log),
+            "via": "queue" if queue else "resume"}  # fmt: skip
 
 
 def wake(
@@ -202,12 +208,11 @@ def wake(
     session, a thread another process writes), so a background launch is given
     `settle` seconds to fail before it counts.
     """
-    found = plan(config, job, agent, which=which, note=note)
-    agent, session = found["agent"], found["session"]
+    found = plan(config, job, agent, which=which, note=note, held=held)
+    agent = found["agent"]
     env = clean_env(os.environ if environ is None else environ)
     log = Path(found["log"])
-    held = held or (lambda thread: codex_held(config, thread))
-    if agent == "codex" and held(session):
+    if found["via"] == "queue":
         return _queued(config, job, found, run, env)
     offset = log.stat().st_size if log.exists() else 0
     child = spawn(found["argv"], cwd=found["cwd"], log=found["log"], env=env)

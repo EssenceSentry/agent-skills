@@ -249,3 +249,10 @@ def test_ax_job_describe_sets_the_description(env):
     assert result.exit_code == 0, result.output
     assert jobs.get(env.config, "score").label == "Score the rows"
     assert any(e["type"] == "described" for e in jobs.events(env.config, "score"))
+
+
+def test_the_plan_shows_the_queue_for_an_open_codex_thread(env):
+    job = ended_job(env, "a", agent={"CODEX_THREAD_ID": "th-1"})
+    found = job_wake.plan(env.config, job, which=on_path, held=lambda thread: True)
+    assert found["via"] == "queue" and found["argv"][1:4] == ["queue", "--thread", "th-1"]
+    assert job_wake.plan(env.config, job, which=on_path, held=lambda t: False)["via"] == "resume"
