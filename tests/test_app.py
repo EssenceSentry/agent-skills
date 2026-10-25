@@ -175,6 +175,16 @@ def test_a_budget_over_its_limit_waits_for_the_user_with_the_reason_given(env):
     assert "the last batch matters" in item["detail"] and item["actions"] == []
 
 
+def test_an_accepted_workshop_proposal_is_not_taken_for_a_retirement(env):
+    # A workshop proposal names its report under `workshop`; accepted, it keeps that
+    # name, which is not the {"suggest": "retire"} the workshop puts on active rules.
+    profile.add(env.config, "from-the-workshop", rule="Name the file you edit.",
+                extra={"source": "workshop", "workshop": "2026-10-25 1826 claude"})  # fmt: skip
+    state = app.now_state(env.config, usage_of=fake_usage)
+    assert state["errors"] == []
+    assert ("review", "from-the-workshop") not in waiting(state)
+
+
 # Actions
 
 

@@ -72,7 +72,7 @@ def now_state(config, *, usage_of=None, credits_of=None) -> dict:
         for rule in profile.load_rules(config, problems=problems):
             if rule.status == "proposed":
                 found["proposal"].append(_rule_item(config, rule, "proposal", rule.why))
-            elif rule.status == "active" and (rule.review or rule.extra.get("workshop")):
+            elif rule.status == "active" and (rule.review or _retire_suggestion(rule)):
                 found["review"].append(_rule_item(config, rule, "review", _flag(rule)))
         state["errors"].extend(f"rules: {p}" for p in problems)
 
@@ -122,9 +122,16 @@ def _credits_row(c) -> dict:
     }
 
 
+def _retire_suggestion(rule) -> dict | None:
+    """The workshop's suggestion to retire an active rule. A rule accepted from a workshop
+    proposal keeps the report's name under the same key, which is not one."""
+    found = rule.extra.get("workshop")
+    return found if isinstance(found, dict) and found.get("suggest") == "retire" else None
+
+
 def _flag(rule) -> str:
-    suggestion = rule.extra.get("workshop") or {}
-    if rule.review or suggestion.get("suggest") != "retire":
+    suggestion = _retire_suggestion(rule)
+    if rule.review or suggestion is None:
         return rule.review
     return f"The rules workshop suggests retiring it: {suggestion.get('why') or 'see its report'}"
 
