@@ -1306,6 +1306,22 @@ def learn_propose():
         )
 
 
+@learn_app.command("tidy")
+def learn_tidy_cmd(
+    model: str = typer.Option("haiku", help="The Claude model that compares the rules."),
+):
+    """Merge duplicate proposals and flag ones that contradict a rule (one model call)."""
+    from ax import learn, learn_tidy
+
+    report = learn_tidy.tidy(load(), model=learn.claude_model(model))
+    for dropped, kept in report.merged:
+        typer.echo(f"merged {dropped} into {kept}")
+    for rule_id, other, why in report.flagged:
+        typer.echo(f"{rule_id} may contradict {other}: {why}")
+    if not report.merged and not report.flagged:
+        typer.echo("no duplicates or contradictions")
+
+
 @learn_app.command("list")
 def learn_list(as_json: bool = typer.Option(False, "--json", help="Machine-readable output.")):
     """Proposals waiting for your decision."""

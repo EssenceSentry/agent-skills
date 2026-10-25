@@ -758,38 +758,57 @@ def _why(group: Group, kinds: Counter) -> str:
     return "\n".join(lines)
 
 
+def _scope(group: Group) -> str:
+    projects = Counter(c["project"] for c, _ in group.members if c["project"])
+    repo_votes = sum(lab["scope"] == "repo" for _, lab in group.members)
+    if projects and (repo_votes * 2 > len(group.members) or len(projects) < MIN_PROJECTS_GLOBAL):
+        return f"repo:{projects.most_common(1)[0][0]}"
+    return "global"
+
+
 def propose(config, candidates, labels) -> list:
-    """Write a proposal note for each new group with enough support; returns them."""
+    """Write a proposal note for each new group with enough support; returns them.
+
+    Groups that land on one note (a pending proposal, or what a merge folded into it
+    through its `covers`) are combined first. A pending proposal keeps its wording,
+    scope and level, which the user may have edited; only its evidence is refreshed.
+    """
     rules = profile.load_rules(config)
     rejected = _ledger(config, "rejected.json")
     proposals = _ledger(config, "proposals.json")
     taken = {r.id for r in rules}
-    written = []
+    pending: dict = {}
+    targets: dict[str, Group] = {}
     for group in groups(candidates, labels):
+        if any(r.status in ("active", "retired") and _matches(group, r) for r in rules):
+            continue
+        rule = next((r for r in rules if r.status == "proposed" and _matches(group, r)), None)
+        if rule:
+            rid = pending.setdefault(rule.id, rule).id
+        else:
+            folded = (k for k, v in rejected.items() if group.topic in v.get("covers", ()))
+            rid = next(folded, None) or _rule_id(group.topic, taken)
+            taken.add(rid)
+        targets.setdefault(rid, Group(group.topic)).members.extend(group.members)
+    written = []
+    for rid, group in targets.items():
         if group.support < MIN_SUPPORT:
             continue
-        settled = [r for r in rules if r.status in ("active", "retired") and _matches(group, r)]
-        if settled:
-            continue
-        pending = next((r for r in rules if r.status == "proposed" and _matches(group, r)), None)
-        rid = pending.id if pending else _rule_id(group.topic, taken)
         if rid in rejected and group.support < 2 * rejected[rid]["support"]:
             continue
         kinds = Counter(lab["kind"] for _, lab in group.members)
-        projects = Counter(c["project"] for c, _ in group.members if c["project"])
-        repo_votes = sum(lab["scope"] == "repo" for _, lab in group.members)
-        if projects and (
-            repo_votes * 2 > len(group.members) or len(projects) < MIN_PROJECTS_GLOBAL
-        ):
-            scope = f"repo:{projects.most_common(1)[0][0]}"
+        evidence = [c["id"] for c, _ in group.members][:20]
+        if rid in pending:
+            rule = pending[rid]
+            # Keep the tidy pass's contradiction notes; they hold until the user decides.
+            notes = [n for n in rule.why.split("\n\n") if n.startswith("May contradict")]
+            rule.why, rule.evidence = "\n\n".join([_why(group, kinds), *notes]), evidence
+            profile._write(rule, rule.path)
         else:
-            scope = "global"
-        rule = profile.add(
-            config, rid, rule=group.rule, scope=scope, status="proposed",
-            why=_why(group, kinds), retire_when=_RETIRE,
-            evidence=[c["id"] for c, _ in group.members][:20], replace=bool(pending),
-        )  # fmt: skip
-        taken.add(rid)
+            rule = profile.add(
+                config, rid, rule=group.rule, scope=_scope(group), status="proposed",
+                why=_why(group, kinds), retire_when=_RETIRE, evidence=evidence,
+            )  # fmt: skip
         proposals[rid] = {
             "support": group.support,
             "sessions": len(group.sessions),
@@ -848,6 +867,10 @@ def reject(config, rule_id: str) -> None:
     rule = _proposed(config, rule_id)
     support = _ledger(config, "proposals.json").get(rule_id, {}).get("support", MIN_SUPPORT)
     rejected = _ledger(config, "rejected.json")
-    rejected[rule_id] = {"support": support, "date": date.today().isoformat()}
+    rejected[rule_id] = {
+        "support": support,
+        "covers": rule.covers,
+        "date": date.today().isoformat(),
+    }
     _save_ledger(config, "rejected.json", rejected)
     rule.path.unlink()
