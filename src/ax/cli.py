@@ -699,6 +699,100 @@ def mcp_install(apply: bool = typer.Option(False, "--apply", help="Make the chan
             subprocess.run(command, check=True, env=clean_env(os.environ))
 
 
+todo_app = typer.Typer(
+    no_args_is_help=True, help="To-dos, global or per project, that every conversation sees."
+)
+app.add_typer(todo_app, name="todo")
+
+
+def _here_handle(config):
+    """This conversation's handle and its note's name, when ax can tell."""
+    from ax import handles
+
+    found = handles.current(config)
+    if not found:
+        return None, None
+    try:
+        row = handles.resolve(config, f"{found[0]}:{found[1]}")
+    except (handles.NotFound, handles.Ambiguous):
+        row = None
+    note = Path(row["note_path"]).stem if row and row["note_path"] else None
+    return handles.tag(found[1]), note
+
+
+@todo_app.command("add")
+def todo_add(
+    text: str = typer.Argument(..., help="What to do, in one line."),
+    everywhere: bool = typer.Option(False, "--global", help="Not tied to a project."),
+    project: str = typer.Option(None, help="The project it belongs to; default: this repo."),
+    detail: str = typer.Option("", help="Context, links, what done looks like."),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+):
+    """Add a to-do, tied to this project and to the conversation it was raised in."""
+    from ax import todos
+    from ax.sources.common import project_name
+
+    config = load()
+    scope = "global" if everywhere else f"project:{project or project_name(os.getcwd())}"
+    origin, note = _here_handle(config)
+    try:
+        item = todos.add(config, text, scope=scope, origin=origin, origin_note=note,
+                         detail=detail)  # fmt: skip
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    typer.echo(json.dumps(item.to_dict(), indent=2) if as_json else f"added {todos.line(item)}")
+
+
+@todo_app.command("list")
+def todo_list(
+    project: str = typer.Option(
+        None, help="This project's and the global ones; default: this repo."
+    ),
+    everything: bool = typer.Option(False, "--all", help="Every project, done and dropped too."),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+):
+    """Open to-dos for this project and the global ones."""
+    from ax import todos
+    from ax.sources.common import project_name
+
+    config = load()
+    found = (
+        todos.listing(config, include_closed=True)
+        if everything
+        else todos.listing(config, project=project or project_name(os.getcwd()))
+    )
+    if as_json:
+        typer.echo(json.dumps([t.to_dict() for t in found], indent=2))
+        return
+    typer.echo("\n".join(todos.line(t) for t in found) or "no open to-dos")
+
+
+def _close(todo_id: str, status: str) -> None:
+    from ax import todos
+
+    config = load()
+    origin, _ = _here_handle(config)
+    try:
+        item = todos.close(config, todo_id, status, closed_in=origin)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"{status} {todos.line(item)}")
+
+
+@todo_app.command("done")
+def todo_done(todo_id: str = typer.Argument(..., help="Its id, such as T3.")):
+    """Mark a to-do done, noting the conversation that finished it."""
+    _close(todo_id, "done")
+
+
+@todo_app.command("drop")
+def todo_drop(todo_id: str = typer.Argument(..., help="Its id, such as T3.")):
+    """Drop a to-do that no longer matters."""
+    _close(todo_id, "dropped")
+
+
 index_app = typer.Typer(no_args_is_help=True, help="The search index behind `ax find`.")
 app.add_typer(index_app, name="index")
 
