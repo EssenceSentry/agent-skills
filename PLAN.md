@@ -438,6 +438,16 @@ Our own design, inspired by claude-reflect (MIT; its code was read) and cass-mem
 
 **Later, when the profile outgrows its always-loaded block:** task-scoped retrieval through a prompt hook; in-session capture with a "learning captured" note; skill candidates at six or more sessions.
 
+### 11. Conversations you can build on, and one search (agreed 2026-10-25)
+
+Builds on the morning's research session (`9fe6d7e6`): qmd for conversations and docs, Semble for code, PageIndex-style outlines later, LightRAG set aside. ax's session notes are already the dialogue-only, redacted markdown that research named as the first step.
+
+- **Handles:** a conversation's handle is the last eight characters of its session id, the same short id its note's file name ends with (`ax:9fe6d7e6`). `ax here` finds the conversation it runs in from `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID` (the live transcript when both are set), syncs it and prints the handle and note. `ax recall` accepts a handle, a full id, an id prefix or a note name.
+- **Recall:** `ax recall <handle>` prints an outline with no model call: title, tool, project, dates, the user's turns as a table of contents, where it ended, the files it touched, its links and the note's path. `--card` adds a card Haiku writes once per conversation (goal, outcome, decisions, open items, facts), cached until the note changes. `--for "task"` has a model read the whole conversation against the task and return only what the task needs, with turn times as citations.
+- **Links:** a recall run inside a conversation records "this builds on that"; sync also records mentions of another conversation's handle (`ax:<handle>`, `ax recall <handle>`) or full id. Sync renders them into the note as `builds_on` links, and Obsidian supplies the backlinks and the graph.
+- **Search:** `ax find` asks qmd (conversation notes, Claude and Codex memories, the vault's own notes) and Semble (the repositories under `~/Repos` plus listed extras) and merges their rankings, labelling each hit conversation, memory, note or code. Conversation hits carry their handle; filters by project, date and tool apply through the archive. `ax find setup` registers qmd's collections and builds both indexes; `ax search` stays for exact words.
+- **Agents:** `ax mcp` serves `find`, `recall` and `here` over stdio; `ax mcp install` prints the registration for both tools and applies it only with `--apply`. The session-recall skill teaches handles: give one when asked for "the id", recall one when asked to build on it.
+
 ## Schedule
 
 ### Saturday, afternoon and evening
