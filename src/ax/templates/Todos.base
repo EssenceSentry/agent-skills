@@ -1,0 +1,52 @@
+filters:
+  and:
+    - file.inFolder("Todos")
+    - 'type == "todo"'
+properties:
+  file.name:
+    displayName: To-do
+  text:
+    displayName: What
+  scope:
+    displayName: Scope
+  from:
+    displayName: Raised in
+  created:
+    displayName: Added
+  status:
+    displayName: Status
+  closed:
+    displayName: Closed
+  closed_in:
+    displayName: Closed in
+views:
+  - type: table
+    name: Open
+    filters:
+      and:
+        - 'status == "open"'
+    groupBy:
+      property: scope
+      direction: ASC
+    order:
+      - file.name
+      - text
+      - from
+      - created
+    sort:
+      - property: created
+        direction: DESC
+  - type: table
+    name: Closed
+    filters:
+      and:
+        - 'status != "open"'
+    order:
+      - file.name
+      - text
+      - status
+      - closed
+      - closed_in
+    sort:
+      - property: closed
+        direction: DESC

@@ -18,6 +18,14 @@ Make one a guard with `ax learn guard <id>`, edit it, `ax learn keep <id>` it, o
 
 ![[Rules.base#Needs review]]
 
+## To do
+
+Follow-ups from your conversations, global or per project; every new conversation sees
+the open ones for its project. Add one with `ax todo add "…"` (or ask an agent to keep
+something for later), and close it with `ax todo done T3`.
+
+![[Todos.base#Open]]
+
 ## Recent sessions
 
 Your own conversations in both tools; headless workers are under

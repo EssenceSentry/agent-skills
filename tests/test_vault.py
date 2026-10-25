@@ -260,7 +260,11 @@ def test_init_adds_the_rules_view_and_a_home_that_opens_on_what_needs_you(env):
     assert any("sdk-cli" in f for f in recent["filters"]["and"])
     assert "Workers" in [v["name"] for v in sessions["views"]]
     home = (env.vault / "Home.md").read_text()
-    for embed in ("Rules.base#Proposed", "Rules.base#Needs review", "Sessions.base#Recent",
+    todo_base = yaml.safe_load((env.vault / "Bases" / "Todos.base").read_text())
+    assert [v["name"] for v in todo_base["views"]] == ["Open", "Closed"]
+    assert 'file.inFolder("Todos")' in todo_base["filters"]["and"]
+    for embed in ("Rules.base#Proposed", "Rules.base#Needs review", "Todos.base#Open",
+                  "Sessions.base#Recent",
                   "Rules.base#Active",
                   "Experiments.base#Open", "[[Scorecard]]"):  # fmt: skip
         assert embed in home

@@ -29,6 +29,7 @@ _STARTERS = {
     "Sessions.base": "Bases/Sessions.base",
     "Experiments.base": "Bases/Experiments.base",
     "Rules.base": "Bases/Rules.base",
+    "Todos.base": "Bases/Todos.base",
     "Home.md": "Home.md",
 }
 # Obsidian's own settings: written when the vault has none, never replaced, since the
