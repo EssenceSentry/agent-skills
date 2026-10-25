@@ -453,6 +453,22 @@ Builds on the morning's research session (`9fe6d7e6`): qmd for conversations and
 - **Search:** `ax find` asks qmd (conversation notes, Claude and Codex memories, the vault's own notes) and Semble (the repositories under `~/Repos` plus listed extras) and merges their rankings, labelling each hit conversation, memory, note or code. Conversation hits carry their handle; filters by project, date and tool apply through the archive. `ax find setup` registers qmd's collections and builds both indexes; `ax search` stays for exact words.
 - **Agents:** `ax mcp` serves `find`, `recall` and `here` over stdio; `ax mcp install` prints the registration for both tools and applies it only with `--apply`. The session-recall skill teaches handles: give one when asked for "the id", recall one when asked to build on it.
 
+### 12. A digest of recent work at the start of every conversation (agreed 2026-10-25)
+
+Search and recall exist, but an agent searches only when it thinks to. The digest gives every new conversation a map of recent work, so "the gallery thing" or "the pricing work" is something it recognizes and recalls.
+
+- **What it holds:** the user's own conversations of the last 7 days in both tools (no workers or subagents), newest first and at most 30: date, tool, project, title and handle; the current project's first. Then the jobs still running, with their descriptions. One line on how to use it: `ax recall <handle>` to bring one in, `ax find` to search wider.
+- **How it gets there:** `ax hook start --tool claude|codex`, a `SessionStart` hook in both tools that prints the digest as `additionalContext`. It reads the archive only (no sync, no model) so it adds about a second, and it leaves out the conversation that is starting. The archive lags by up to 30 minutes (the last sync), which the digest says.
+- **Installed by** `ax hooks install`, like the sync hooks; Codex asks the user to trust changed hooks (`/hooks`).
+
+### 13. Memories shared between Claude and Codex (agreed 2026-10-25)
+
+Share what each tool remembers through channels each already supports, never by mirroring files.
+
+- **Claude to Codex:** `ax sync` writes each new or changed Claude memory (`~/.claude/projects/*/memory/*.md`) as a note in Codex's ad-hoc memory extension (`~/.codex/memories/extensions/ad_hoc/notes/`), redacted, saying which project it came from. Codex treats those notes as authoritative and merges them the next time it consolidates its memories. A changed memory edits its note; a deleted one rewrites its note to say so, since Codex's instructions forbid deleting notes.
+- **Codex to Claude:** Claude's start hook adds Codex's `memory_summary.md` (about 8 KB: profile and preferences) after the digest. Codex's full `MEMORY.md` (500 KB) stays reachable through `ax find`.
+- **Left out:** writing into Codex's `MEMORY.md` (Codex regenerates it) and a two-way file mirror. Working rules stay in `ax profile`, already compiled into both tools.
+
 ## Schedule
 
 ### Saturday, afternoon and evening
