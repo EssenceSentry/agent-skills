@@ -11,18 +11,19 @@ import mimetypes
 import os
 import re
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
 import yaml
 
-from ax import handles, learn, learn_guards, learn_life, profile, todos
+from ax import handles, learn, learn_guards, learn_life, profile, todos, usage
 from ax.store import Store
 
 WEB = Path(__file__).parent / "web"
 COOKIE = "ax_token"
 NEAR_LIMIT = 80  # percent of a usage window that puts it on the waiting list
+RUNS_OUT_SOON = timedelta(days=1)  # or a forecast that runs out this soon
 CONVERSATIONS = 15
 _FLAGGED = {"failed", "ended"}  # job endings worth a look; "stopped" was someone's choice
 _IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}  # not SVG: it can carry script
@@ -36,13 +37,14 @@ class NotFound(ValueError):
 # The Now state
 
 
-def now_state(config, *, usage_of=None) -> dict:
+def now_state(config, *, usage_of=None, credits_of=None) -> dict:
     from ax import serve
 
     state = {
         "generated": datetime.now(UTC).isoformat(timespec="seconds"),
         "last_sync": None,
         "usage": [],
+        "credits": [],
         "waiting": [],
         "jobs": [],
         "conversations": [],
@@ -53,6 +55,9 @@ def now_state(config, *, usage_of=None) -> dict:
     def gather_usage():
         state["usage"] = serve._usage_rows(config, usage_of or serve._cached_usage)
         found["usage"] = [_usage_item(u) for u in state["usage"] if _near_limit(u)]
+
+    def gather_credits():
+        state["credits"] = [_credits_row(c) for c in (credits_of or _credits)(config)]
 
     def gather_jobs():
         rows = serve._jobs(config)
@@ -76,6 +81,7 @@ def now_state(config, *, usage_of=None) -> dict:
 
     for name, gather in (
         ("usage", gather_usage),
+        ("credits", gather_credits),
         ("jobs", gather_jobs),
         ("rules", gather_rules),
         ("to-dos", gather_todos),
@@ -92,8 +98,33 @@ def now_state(config, *, usage_of=None) -> dict:
     return state
 
 
+def _credits(config) -> list:
+    found = usage.codex_credits(config.codex_home)
+    return [found] if found else []
+
+
+def _credits_row(c) -> dict:
+    return {
+        "provider": c.provider,
+        "balance": c.balance,
+        "unlimited": c.unlimited,
+        "has_credits": c.has_credits,
+        "observed_at": c.observed_at.isoformat(),
+        "status": c.status,
+    }
+
+
 def _near_limit(row: dict) -> bool:
-    return row["used"] is not None and (row["used"] >= NEAR_LIMIT or row["lasts"] is False)
+    """Nearly used, or running out within a day. Early in a window the forecast projects a
+    few busy hours over the whole week, so a later run-out shows only on the usage band."""
+    if row["used"] is None:
+        return False
+    if row["used"] >= NEAR_LIMIT:
+        return True
+    if not (row["runs_out_at"] and row["observed_at"]):
+        return False
+    left = datetime.fromisoformat(row["runs_out_at"]) - datetime.fromisoformat(row["observed_at"])
+    return left <= RUNS_OUT_SOON
 
 
 def _usage_item(row: dict) -> dict:

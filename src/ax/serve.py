@@ -29,7 +29,8 @@ _REFRESH_SECONDS = 5
 _USAGE_TTL = 60  # Claude's helper is a subprocess; don't run it on every refresh.
 _JOBS_SHOWN = 12
 _FINISHED_SHOWN_FOR = 86400  # seconds a finished job stays on the panel
-_usage_cache: dict = {"at": 0.0, "value": None}
+_CLAUDE_REFRESH = 300  # seconds between fresh /usage readings from Claude
+_usage_lock = threading.RLock()
 
 
 def collect_state(config: Config, *, usage_of=None, runs_of=None) -> dict:
@@ -100,6 +101,13 @@ class _Server(ThreadingHTTPServer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.closing = threading.Event()  # ends the live streams
+        self.hosts = {"127.0.0.1", "localhost", "::1"}
+
+    def allow_url(self, url: str) -> None:
+        """Answer a tunnel's host name too."""
+        host = urlsplit(url).hostname
+        if host:
+            self.hosts.add(host.lower())
 
     def server_close(self):
         self.closing.set()
@@ -107,19 +115,28 @@ class _Server(ThreadingHTTPServer):
 
 
 def make_server(
-    config: Config, *, port: int = 8765, usage_of=None, web: Path | None = None, poll: float = 3.0
+    config: Config,
+    *,
+    port: int = 8765,
+    usage_of=None,
+    web: Path | None = None,
+    poll: float = 3.0,
+    share_token: str | None = None,
 ) -> ThreadingHTTPServer:
     """The ax app (built pages, JSON, actions and a live stream) and the classic page.
 
     Everything but the pages' scripts and styles needs the token `app.token` keeps: the
     link carries it once, then a Strict, HttpOnly cookie. Actions also need JSON from
     the app's own origin, and only localhost names are answered, so neither another
-    site nor one that rebinds its domain to 127.0.0.1 can read or act.
+    site nor one that rebinds its domain to 127.0.0.1 can read or act. A run shared
+    through a tunnel also answers the tunnel's host (`allow_url`) and takes
+    `share_token`, which dies with the run, so a shared link never carries the
+    lasting one.
     """
     from ax import app
 
     web = web or app.WEB
-    secret = app.token(config)
+    secrets_ = [t for t in (app.token(config), share_token) if t]
 
     def now() -> dict:
         return app.now_state(config, usage_of=usage_of)
@@ -151,7 +168,10 @@ def make_server(
             # Refuse other host names, so a page that rebinds its domain to 127.0.0.1
             # (DNS rebinding) cannot read the dashboard.
             host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
-            return host in ("127.0.0.1", "localhost", "::1")
+            return host.lower() in self.server.hosts
+
+        def _https(self) -> bool:
+            return self.headers.get("X-Forwarded-Proto") == "https"  # behind the tunnel
 
         def _given(self, query: dict) -> tuple[str, str]:
             cookie = SimpleCookie(self.headers.get("Cookie") or "")
@@ -166,7 +186,8 @@ def make_server(
 
         def _authorised(self, query: dict) -> str | None:
             how, value = self._given(query)
-            return how if value and hmac.compare_digest(value, secret) else None
+            known = any(hmac.compare_digest(value, t) for t in secrets_)
+            return how if value and known else None
 
         def _static(self, path: str) -> bool:
             if not (path.startswith("/assets/") or path == "/favicon.svg"):
@@ -203,7 +224,8 @@ def make_server(
                 return self._events()
             if parts.path in _CLASSIC:
                 kind, build = _CLASSIC[parts.path]
-                return self._send(200, build(config).encode(), f"{kind}; charset=utf-8")
+                body = build(config, usage_of).encode()
+                return self._send(200, body, f"{kind}; charset=utf-8")
             reads = {
                 "/api/now": lambda: now(),
                 "/api/notes": lambda: app.folder(config, (query.get("dir") or [""])[0]),
@@ -230,8 +252,11 @@ def make_server(
             )
             headers = dict(_APP_HEADERS)
             if how == "query":
+                token = (parse_qs(urlsplit(self.path).query).get("token") or [""])[0]
+                secure = "; Secure" if self._https() else ""
                 headers["Set-Cookie"] = (
-                    f"{app.COOKIE}={secret}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000"
+                    f"{app.COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; "
+                    f"Max-Age=31536000{secure}"
                 )
             self._send(200, page.encode(), "text/html; charset=utf-8", headers)
 
@@ -270,7 +295,7 @@ def make_server(
             if not how:
                 return self._json(401, {"error": "no access token"})
             origin = self.headers.get("Origin")
-            own = f"http://{self.headers.get('Host')}"
+            own = f"{'https' if self._https() else 'http'}://{self.headers.get('Host')}"
             if (origin or how == "cookie") and origin != own:
                 return self._json(403, {"error": "actions come only from the app itself"})
             if not (self.headers.get("Content-Type") or "").startswith("application/json"):
@@ -297,11 +322,19 @@ def make_server(
     return _Server(("127.0.0.1", port), Handler)
 
 
+def keep_shared(tunnel, on_new, *, stop: threading.Event, every: float = 5) -> None:
+    """Check the tunnel until `stop`; a dead one is replaced, and its new link announced."""
+    while not stop.wait(every):
+        url = tunnel.tick()
+        if url:
+            on_new(url)
+
+
 _CLASSIC = {
-    "/classic": ("text/html", lambda config: render_page(collect_state(config))),
-    "/fragment": ("text/html", lambda config: render_body(collect_state(config))),
-    "/api/state": ("application/json", lambda config: json.dumps(collect_state(config))),
-    "/scorecard": ("text/html", lambda config: scorecard.render(scorecard.build(config))),
+    "/classic": ("text/html", lambda c, u: render_page(collect_state(c, usage_of=u))),
+    "/fragment": ("text/html", lambda c, u: render_body(collect_state(c, usage_of=u))),
+    "/api/state": ("application/json", lambda c, u: json.dumps(collect_state(c, usage_of=u))),
+    "/scorecard": ("text/html", lambda c, u: scorecard.render(scorecard.build(c))),
 }
 _APP_HEADERS = {
     "Content-Security-Policy": (
@@ -314,13 +347,41 @@ _KEEPALIVE = 15  # seconds between comments on a quiet stream
 _MAX_BODY = 64_000
 
 
-def _cached_usage(config: Config) -> list:
-    if time.time() - _usage_cache["at"] > _USAGE_TTL or _usage_cache["value"] is None:
-        windows = usage.claude_windows(config, refresh=False)
-        windows += usage.codex_windows(config.codex_home)
-        usage.record(config, windows)
-        _usage_cache.update(at=time.time(), value=windows)
-    return _usage_cache["value"]
+def _fresh_usage_cache() -> dict:
+    return {"at": 0.0, "value": None, "refreshed": None, "refreshing": False}
+
+
+_usage_cache: dict = _fresh_usage_cache()
+
+
+def _start(job) -> None:
+    threading.Thread(target=job, daemon=True).start()
+
+
+def _cached_usage(config: Config, *, now: float | None = None, start=_start) -> list:
+    """Both tools' windows, read again at most once a minute. Claude's figures are its own
+    cache, so every five minutes a background thread asks Claude's /usage for fresh ones
+    (a built-in command: no model call, no transcript); pages never wait for it."""
+    now = time.time() if now is None else now
+    with _usage_lock:
+        due = _usage_cache["refreshed"] is None or now - _usage_cache["refreshed"] > _CLAUDE_REFRESH
+        if due and not _usage_cache["refreshing"]:
+            _usage_cache.update(refreshing=True, refreshed=now)
+
+            def refresh():
+                try:
+                    usage.claude_windows(config, refresh=True)
+                finally:
+                    with _usage_lock:  # read again on the next request
+                        _usage_cache.update(refreshing=False, at=0.0, value=None)
+
+            start(refresh)
+        if now - _usage_cache["at"] > _USAGE_TTL or _usage_cache["value"] is None:
+            windows = usage.claude_windows(config, refresh=False)
+            windows += usage.codex_windows(config.codex_home)
+            usage.record(config, windows)
+            _usage_cache.update(at=now, value=windows)
+        return _usage_cache["value"]
 
 
 def _usage_rows(config: Config, usage_of) -> list[dict]:
@@ -335,8 +396,12 @@ def _usage_rows(config: Config, usage_of) -> list[dict]:
                 "used": w.used,
                 "status": w.status,
                 "resets_at": w.resets_at.isoformat() if w.resets_at else None,
+                "observed_at": w.observed_at.isoformat() if w.observed_at else None,
                 "lasts": forecast.lasts if forecast else None,
                 "projected_high": forecast.projected_high if forecast else None,
+                "runs_out_at": (
+                    forecast.runs_out_at.isoformat() if forecast and forecast.runs_out_at else None
+                ),
             }
         )
     return rows

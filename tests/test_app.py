@@ -94,7 +94,40 @@ def test_usage_shows_every_window_of_both_tools_even_when_one_is_unknown(env):
     ]
     assert rows[2]["status"] == "unavailable"
     assert rows[1]["resets_at"].startswith("2026-10-27")
-    assert {"lasts", "projected_high"} <= set(rows[0])
+    assert {"lasts", "projected_high", "runs_out_at"} <= set(rows[0])
+
+
+def test_usage_includes_codex_credits_when_codex_reports_them(env):
+    from test_usage import with_credits
+
+    assert app.now_state(env.config, usage_of=fake_usage)["credits"] == []
+    with_credits(env.codex_home)
+    [credits] = app.now_state(env.config, usage_of=fake_usage)["credits"]
+    assert credits["provider"] == "codex" and round(credits["balance"]) == 62431
+    assert credits["unlimited"] is False and credits["has_credits"] is True
+    assert credits["observed_at"].startswith("2026-10-21T13:06")
+
+
+def test_a_window_waits_when_nearly_used_or_running_out_within_a_day(env):
+    def windows(config):
+        week = 10080
+        return [
+            # 5% in the first 8 hours of a week: at that pace it runs out in 6 days.
+            usage.Window("codex", "weekly", 5.0, NOW + timedelta(days=6, hours=16), NOW, "fresh",
+                         week),
+            # 70% three hours into a 5-hour window: it runs out in about an hour.
+            usage.Window("claude", "session", 70.0, NOW + timedelta(hours=2), NOW, "fresh", 300),
+            usage.Window("claude", "weekly", 81.0, NOW + timedelta(days=3), NOW, "fresh", week),
+        ]  # fmt: skip
+
+    state = app.now_state(env.config, usage_of=windows)
+    rows = {u["window"]: u for u in state["usage"] if u["provider"] == "codex"}
+    assert rows["weekly"]["lasts"] is False  # the band still shows the pace warning
+    assert rows["weekly"]["observed_at"].startswith("2026-10-25T12:00")
+    assert {w["id"] for w in state["waiting"] if w["kind"] == "usage"} == {
+        "claude-session",
+        "claude-weekly",
+    }
 
 
 def test_a_failing_source_is_reported_not_fatal(queue):
@@ -303,8 +336,13 @@ def test_the_page_needs_the_token_and_sets_a_strict_cookie(served):
     assert call(f"{base}/", cookie=token)[0] == 200
 
 
-def test_assets_are_public_and_the_data_is_not(served):
+def test_assets_are_public_and_the_data_is_not(served, monkeypatch):
     _, base, token = served
+    # The classic page's runs come from live processes; this test is about access only.
+    real = serve.collect_state
+    monkeypatch.setattr(
+        serve, "collect_state", lambda config, **kw: real(config, usage_of=fake_usage, runs_of=list)
+    )
     assert call(f"{base}/assets/index.js")[0] == 200
     assert call(f"{base}/favicon.svg")[0] == 200
     assert call(f"{base}/assets/../index.html")[0] in (400, 404)
@@ -392,3 +430,111 @@ def test_ax_serve_prints_the_link_with_its_token(env, monkeypatch):
     assert result.exit_code == 0, result.output
     assert f"/?token={app.token(env.config)}" in result.output
     assert "/classic" in result.output
+
+
+# Sharing through a Cloudflare quick tunnel
+
+
+def test_a_shared_run_answers_its_tunnel_host_with_its_own_token(vault, tmp_path):
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "index.html").write_text("<html><head></head><body></body></html>")
+    server = serve.make_server(vault.config, port=0, usage_of=fake_usage, web=web,
+                               share_token="run-token")  # fmt: skip
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base, tunnel = f"http://127.0.0.1:{port}", "abc.trycloudflare.com"
+    through = {"Host": tunnel, "X-Forwarded-Proto": "https"}
+    try:
+        assert call(f"{base}/api/now", cookie="run-token", headers=through)[0] == 403
+        server.allow_url(f"https://{tunnel}")
+        status, headers, _ = call(f"{base}/", token="run-token", headers=through)
+        assert status == 200 and "Secure" in headers["Set-Cookie"]
+        assert "ax_token=run-token" in headers["Set-Cookie"]
+        data = json.dumps({"action": "todo-add", "text": "From the phone"}).encode()
+        json_type = {**through, "Content-Type": "application/json"}
+        wrong = {**json_type, "Origin": f"http://{tunnel}"}
+        assert call(f"{base}/api/act", cookie="run-token", data=data, headers=wrong)[0] == 403
+        right = {**json_type, "Origin": f"https://{tunnel}"}
+        assert call(f"{base}/api/act", cookie="run-token", data=data, headers=right)[0] == 200
+        assert call(f"{base}/api/now", cookie="other", headers=through)[0] == 401
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_replaced_tunnel_is_announced_until_sharing_stops():
+    stop = threading.Event()
+    links = iter(["https://new.trycloudflare.com", None])
+
+    class Tunnel:
+        def tick(self):
+            url = next(links, None)
+            if url is None:
+                stop.set()
+            return url
+
+    seen = []
+    serve.keep_shared(Tunnel(), seen.append, stop=stop, every=0)
+    assert seen == ["https://new.trycloudflare.com"]
+
+
+class FakeShare:
+    def __init__(self, local_url, *, on_url=None, **kw):
+        self.local_url, self.on_url, self.closed = local_url, on_url, False
+        FakeShare.made = self
+
+    def start(self):
+        self.on_url("https://abc.trycloudflare.com")
+        return "https://abc.trycloudflare.com"
+
+    def tick(self):
+        return None
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.fixture
+def cli_serve(env, monkeypatch):
+    from typer.testing import CliRunner
+
+    from ax import job_notify, job_tunnel
+    from ax.cli import app as cli
+
+    sent = []
+    monkeypatch.setenv("AX_CONFIG", str(env.config_path))
+    monkeypatch.setenv("AX_NTFY_TOPIC", "my-topic")
+    monkeypatch.setattr(serve.ThreadingHTTPServer, "serve_forever", lambda self: None)
+    monkeypatch.setattr(job_tunnel, "Share", FakeShare)
+    monkeypatch.setattr(job_notify, "send", lambda ntfy, title, message, **kw: sent.append(
+        (ntfy.topic, title, message, kw)))  # fmt: skip
+    return lambda *args: (CliRunner().invoke(cli, ["serve", "--port", "0", *args]), sent)
+
+
+def test_ax_serve_shares_through_cloudflare_and_sends_the_link_with_ntfy(env, cli_serve):
+    result, sent = cli_serve("--share", "cloudflare", "--notify")
+    assert result.exit_code == 0, result.output
+    [(topic, title, message, options)] = sent
+    link = options["click"]
+    assert topic == "my-topic" and link.startswith("https://abc.trycloudflare.com/?token=")
+    run_token = link.split("token=")[1]
+    assert run_token != app.token(env.config) and len(run_token) >= 32
+    assert link in result.output and "while" in message
+    assert FakeShare.made.local_url.startswith("http://127.0.0.1:") and FakeShare.made.closed
+
+
+def test_ax_serve_notify_without_sharing_sends_the_local_link_and_says_so(env, cli_serve):
+    result, sent = cli_serve("--notify")
+    assert result.exit_code == 0, result.output
+    [(_, _, _, options)] = sent
+    assert options["click"].startswith("http://127.0.0.1:")
+    assert "only on this Mac" in result.output
+
+
+def test_ax_serve_refuses_an_unknown_share_or_a_missing_topic(env, cli_serve, monkeypatch):
+    result, _ = cli_serve("--share", "lan")
+    assert result.exit_code == 2 and "cloudflare" in result.output
+    monkeypatch.delenv("AX_NTFY_TOPIC")
+    result, sent = cli_serve("--notify")
+    assert result.exit_code == 2 and "topic" in result.output and not sent

@@ -475,16 +475,73 @@ def exp_abandon(
 def serve(
     port: int = typer.Option(8765, help="Port on 127.0.0.1."),
     open_browser: bool = typer.Option(False, "--open", help="Open the page in your browser."),
+    share: str = typer.Option(
+        "none", help="Reach: none (this Mac) or cloudflare (a quick tunnel, for your phone)."
+    ),
+    notify: bool = typer.Option(False, "--notify", help="Send the link with ntfy."),
 ):
     """The ax app: what waits for you, usage, jobs, conversations and the vault's notes."""
+    import secrets
+    import threading
+
     from ax import app as app_module
+    from ax import job_notify
     from ax import serve as serve_module
 
+    if share not in ("none", "cloudflare"):
+        typer.echo(f"--share must be none or cloudflare, not {share!r}", err=True)
+        raise typer.Exit(2)
     config = load()
-    server = serve_module.make_server(config, port=port)
+    ntfy = job_notify.settings(config) if notify else None
+    if notify and ntfy is None:
+        typer.echo(
+            "no ntfy topic: set `topic` under [notify] in ~/.config/ax/config.toml, or "
+            "AX_NTFY_TOPIC",
+            err=True,
+        )
+        raise typer.Exit(2)
+    # A shared link carries a token that lives only as long as this run.
+    run_token = secrets.token_urlsafe(32) if share == "cloudflare" else None
+    server = serve_module.make_server(config, port=port, share_token=run_token)
     base = f"http://127.0.0.1:{server.server_address[1]}"
     url = f"{base}/?token={app_module.token(config)}"
     typer.echo(f"ax at {url} (Ctrl-C to stop)\nThe classic page is at {base}/classic.")
+    link, tunnel, stop = url, None, threading.Event()
+
+    def announce(new_link: str, title: str) -> None:
+        if ntfy is None:
+            return
+        error = job_notify.send(
+            ntfy, title,
+            "What waits for you, usage, jobs and notes. The link works while `ax serve` runs.",
+            tags=("computer",), click=new_link,
+        )  # fmt: skip
+        typer.echo(f"ntfy: {error}" if error else "sent the link with ntfy")
+
+    if share == "cloudflare":
+        from ax import job_tunnel
+
+        tunnel = job_tunnel.Share(base, on_url=server.allow_url)
+        try:
+            link = f"{tunnel.start()}/?token={run_token}"
+        except RuntimeError as exc:
+            server.server_close()
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(2) from None
+        typer.echo(f"shared at {link} (it stops working when this stops)")
+
+        def relinked(new: str) -> None:
+            fresh = f"{new}/?token={run_token}"
+            typer.echo(f"the tunnel was replaced: {fresh}")
+            announce(fresh, "ax has a new link")
+
+        threading.Thread(
+            target=serve_module.keep_shared, args=(tunnel, relinked), kwargs={"stop": stop},
+            daemon=True,
+        ).start()  # fmt: skip
+    elif notify:
+        typer.echo("the link opens only on this Mac; --share cloudflare reaches your phone")
+    announce(link, "ax is open")
     if open_browser:
         import webbrowser
 
@@ -493,6 +550,11 @@ def serve(
         server.serve_forever()
     except KeyboardInterrupt:
         server.shutdown()
+    finally:
+        stop.set()
+        if tunnel is not None:
+            tunnel.close()
+        server.server_close()
 
 
 @vault_app.command("init")

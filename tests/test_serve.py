@@ -177,3 +177,20 @@ def test_the_jobs_panel_shows_running_and_recent_jobs(env):
     page = serve.render_body(state)
     assert "score-1" in page and "16/40 rows" in page
     assert "<i>rows</i>" not in page and "&lt;i&gt;rows&lt;/i&gt;" in page
+
+
+def test_usage_asks_claude_for_fresh_figures_in_the_background_every_five_minutes(env, monkeypatch):
+    calls = []
+
+    def claude(config, *, refresh=True, timeout=60):
+        calls.append("refresh" if refresh else "read")
+        return []
+
+    monkeypatch.setattr(usage, "claude_windows", claude)
+    monkeypatch.setattr(usage, "codex_windows", lambda home, **kw: [])
+    monkeypatch.setattr(serve, "_usage_cache", serve._fresh_usage_cache())
+    run_now = lambda job: job()  # noqa: E731 -- the background thread, run inline
+    for at in (1000.0, 1030.0, 1100.0, 1400.0):
+        serve._cached_usage(env.config, now=at, start=run_now)
+    # A refresh at once, a reading reused for a minute, a new reading, a refresh after 5 min.
+    assert calls == ["refresh", "read", "read", "refresh", "read"]
