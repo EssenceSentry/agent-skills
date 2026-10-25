@@ -12,6 +12,7 @@ import sys
 from ax import find, handles, recall
 
 VERSION = "2025-06-18"
+FRESH = 600  # seconds: this server's conversation id counts only if written to lately
 
 TOOLS = [
     {
@@ -101,12 +102,12 @@ def _recall(config, args: dict, env) -> str:
         text = recall.card(config, row, model=learn.claude_model("haiku"))
     else:
         text = recall.outline(config, row)
-    recall.record(config, row, env)
+    recall.record(config, row, env, fresh=FRESH)
     return text
 
 
 def _here(config, args: dict, env) -> str:
-    found = handles.current(config, env)
+    found = handles.current(config, env, fresh=FRESH)
     if not found:
         raise ToolError("this server can't see which conversation it serves; run `ax here`")
     return handles.tag(found[1])

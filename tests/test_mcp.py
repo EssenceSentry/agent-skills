@@ -69,3 +69,21 @@ def test_the_install_plan_registers_the_server_with_both_tools(env):
     codex.path.write_text(codex.after)
     again, _ = glue.plan_mcp(env.config, ax="/bin/ax")
     assert again[0].before == again[0].after
+
+
+def test_here_over_mcp_trusts_only_a_conversation_written_to_lately(env):
+    import os
+    import time
+
+    from conftest import CLAUDE_SESSION
+
+    stale = {"CLAUDE_CODE_SESSION_ID": CLAUDE_SESSION}
+    os.utime(env.claude_main, (1, 1))
+    stdin = io.StringIO(json.dumps(call(1, "here")) + "\n")
+    stdout = io.StringIO()
+    mcp_server.serve(env.config, stdin=stdin, stdout=stdout, env=stale)
+    assert json.loads(stdout.getvalue())["result"]["isError"] is True
+    os.utime(env.claude_main, (time.time(), time.time()))
+    stdin, stdout = io.StringIO(json.dumps(call(1, "here")) + "\n"), io.StringIO()
+    mcp_server.serve(env.config, stdin=stdin, stdout=stdout, env=stale)
+    assert json.loads(stdout.getvalue())["result"]["content"][0]["text"] == "ax:11111111"

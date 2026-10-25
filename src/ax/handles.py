@@ -10,6 +10,7 @@ written last is the one running.
 
 import os
 import re
+import time
 from pathlib import Path
 
 from ax.store import Store
@@ -89,18 +90,24 @@ def _transcript(config, provider: str, session_id: str) -> Path | None:
     return max(found, key=lambda p: p.stat().st_mtime, default=None)
 
 
-def current(config, env=None) -> tuple[str, str] | None:
-    """(provider, session id) of the conversation these commands run in, if any."""
+def current(config, env=None, *, fresh: float | None = None) -> tuple[str, str] | None:
+    """(provider, session id) of the conversation these commands run in, if any.
+
+    A long-running process such as an MCP server keeps the id it started with, which
+    goes stale when the user clears the conversation; `fresh` (seconds) then requires
+    that conversation's transcript to have been written that recently.
+    """
     env = os.environ if env is None else env
     found = [(provider, env[name]) for provider, name in _ENV if env.get(name)]
-    if len(found) < 2:
-        return found[0] if found else None
 
     def written(pair):
         path = _transcript(config, *pair)
         return path.stat().st_mtime if path else 0.0
 
-    return max(found, key=written)
+    best = max(found, key=written) if len(found) > 1 else (found[0] if found else None)
+    if best and fresh is not None and time.time() - written(best) > fresh:
+        return None
+    return best
 
 
 def mentions(text: str) -> set[str]:

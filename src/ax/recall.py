@@ -227,9 +227,9 @@ def focus(config, row, task: str, *, model) -> str:
     return f"{header(config, row)}\n\n## For: {task.strip()}\n{body}"
 
 
-def record(config, row, env=None) -> str | None:
+def record(config, row, env=None, *, fresh: float | None = None) -> str | None:
     """Link the conversation this runs in to the recalled one; returns the source key."""
-    here = handles.current(config, env)
+    here = handles.current(config, env, fresh=fresh)
     if not here or here[1] == row["session_id"]:
         return None
     source = f"{here[0]}:{here[1]}"
