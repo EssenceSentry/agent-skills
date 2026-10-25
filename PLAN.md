@@ -79,6 +79,8 @@ Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
   - **Search:** qmd 2.8.3 indexes 2,517 notes and memories (32,000+ chunks, about 25 minutes to embed) and Semble 0.7.0 the 17 repos. The first real search took 34 s and returned CSS for a question about a decision; with qmd and Semble in parallel, the daemon (`ax index serve`), 20 reranked candidates and code weighted down for questions that name no code, it takes about 5 s. The five starter questions in `~/.config/ax/find-questions.yml` are all found in the top 5, with or without reranking; the user's own 20–30 questions are still to be written.
   - **Agents:** `ax mcp` serves find, recall and here; it is not registered in either tool yet (`ax mcp install --apply`).
 - **Job wake-ups that reach the conversation, 2026-10-25:** a Codex job's wake failed because the app held the thread open ("already has an active writer") and nothing told the user. Wakes now go through `codex queue` to an open thread (tested live: a note reached the user's open thread within seconds), report a Claude copy by its id (tested live with a throwaway session), push an alert when no route reaches the conversation, and start a failed job's note with a Haiku diagnosis; a Haiku health check reads a running job's log every 30 minutes. The live `news-research-mine-20261025-r2` job got a description and a follower running this code.
+- **Recent-work digest and shared memories built 2026-10-25** (components 12 and 13): the start hook is installed in both tools. A fresh Claude conversation saw the digest's handles and Codex's memory summary without running a tool; Codex skips the hook until the user trusts it with `/hooks`. Sync copied 57 Claude memories into Codex's ad-hoc notes.
+- **Ideas raised, not planned:** one `ax` skill that teaches every command (today session-recall, jobs and delegation each cover a part); an `ax todo` list, global or per project and conversation, for follow-ups an agent proposes, shown in the start digest.
 - **Deferred:**
   - Rules matched per prompt (UserPromptSubmit): the ten rules fit in the always-loaded block, so retrieval waits until the profile grows.
   - The stop check for Codex, whose transcript has another format.
@@ -453,7 +455,7 @@ Builds on the morning's research session (`9fe6d7e6`): qmd for conversations and
 - **Search:** `ax find` asks qmd (conversation notes, Claude and Codex memories, the vault's own notes) and Semble (the repositories under `~/Repos` plus listed extras) and merges their rankings, labelling each hit conversation, memory, note or code. Conversation hits carry their handle; filters by project, date and tool apply through the archive. `ax find setup` registers qmd's collections and builds both indexes; `ax search` stays for exact words.
 - **Agents:** `ax mcp` serves `find`, `recall` and `here` over stdio; `ax mcp install` prints the registration for both tools and applies it only with `--apply`. The session-recall skill teaches handles: give one when asked for "the id", recall one when asked to build on it.
 
-### 12. A digest of recent work at the start of every conversation (agreed 2026-10-25)
+### 12. A digest of recent work at the start of every conversation (agreed and built 2026-10-25)
 
 Search and recall exist, but an agent searches only when it thinks to. The digest gives every new conversation a map of recent work, so "the gallery thing" or "the pricing work" is something it recognizes and recalls.
 
@@ -461,7 +463,7 @@ Search and recall exist, but an agent searches only when it thinks to. The diges
 - **How it gets there:** `ax hook start --tool claude|codex`, a `SessionStart` hook in both tools that prints the digest as `additionalContext`. It reads the archive only (no sync, no model) so it adds about a second, and it leaves out the conversation that is starting. The archive lags by up to 30 minutes (the last sync), which the digest says.
 - **Installed by** `ax hooks install`, like the sync hooks; Codex asks the user to trust changed hooks (`/hooks`).
 
-### 13. Memories shared between Claude and Codex (agreed 2026-10-25)
+### 13. Memories shared between Claude and Codex (agreed and built 2026-10-25)
 
 Share what each tool remembers through channels each already supports, never by mirroring files.
 

@@ -39,7 +39,7 @@ take effect at once; after a change to the dependencies, run the same command wi
 | `ax usage` / `ax usage guard` | Allowance left per tool and window, a forecast to reset, and a guard for scripts (exit 0 safe, 1 below, 69 unknown) |
 | `ax serve [--open]` | A local dashboard of usage, runs, campaigns and recent sessions |
 | `ax vault init` / `commit` / `push` | Starter Obsidian views; a commit gitleaks has scanned; a push only to a private GitHub repo |
-| `ax hooks install` | Hooks in Claude Code and Codex that sync when a session ends |
+| `ax hooks install` | Hooks in Claude Code and Codex: sync when a session ends, and a digest of the last week's work when one starts |
 | `ax schedule install` | A launchd job that syncs every 30 minutes |
 | `ax skills link NAME…` | Link this repository's skills into both tools |
 | `ax job` (`new`, `watch`, `run`, `describe`, `ls`, `show`, `wait`, `follow`, `unfollow`, `wake`, `poll`, `service`, `eta-report`, `forget`) | Long jobs any agent can register and wait on; see below |
@@ -150,6 +150,17 @@ has a model return only what that task needs. Recalling from inside a
 conversation links the two, and so does mentioning `ax:<handle>` or a full
 session id: sync writes the links into the notes as `builds_on`, and Obsidian
 shows the backlinks and the graph.
+
+### Every conversation starts with recent work
+
+`ax hooks install` adds a start hook to both tools (`ax hooks start`). Each new
+conversation gets the user's own conversations of the last seven days, newest first
+and the current project's first, with their handles, plus the jobs still running,
+so "the pricing work" is something the agent recognizes and recalls. It reads the
+archive only. Claude conversations also get Codex's memory summary. In the other
+direction, sync copies each Claude memory into Codex's ad-hoc memory notes, which
+Codex merges when it consolidates (`[memory] share = false` turns this off). Codex
+runs a changed hook only after the user approves it with `/hooks`.
 
 ### One search
 
