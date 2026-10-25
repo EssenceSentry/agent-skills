@@ -57,6 +57,14 @@ def _add_sync(settings: dict, command: str, tool: str) -> None:
             groups.append({"hooks": [handler]})
 
 
+def _add_start(settings: dict, ax: str, tool: str) -> None:
+    """The SessionStart hook that hands a new conversation the digest of recent work."""
+    groups = settings.setdefault("hooks", {}).setdefault("SessionStart", [])
+    command = f"{shlex.quote(ax)} hooks start --tool {tool}"
+    if not any(h.get("command") == command for g in groups for h in g.get("hooks", [])):
+        groups.append({"hooks": [{"type": "command", "command": command, "timeout": 10}]})
+
+
 def _add_guard(settings: dict, guard: str, tool: str) -> None:
     groups = settings.setdefault("hooks", {}).setdefault("PreToolUse", [])
     command = f"{shlex.quote(guard)} --tool {tool}"
@@ -88,11 +96,13 @@ def _plan(config: Config, edit) -> list[Change]:
 
 
 def plan_hooks(config: Config, *, ax: str, guard: str | None = None) -> list[Change]:
-    """Sync hooks at session end and turn stop; with `guard`, the shell-command guard too."""
+    """Sync hooks at session end and turn stop, the recent-work digest at session start;
+    with `guard`, the shell-command guard too."""
     command = hook_command(config, ax)
 
     def edit(settings, tool):
         _add_sync(settings, command, tool)
+        _add_start(settings, ax, tool)
         if guard:
             _add_guard(settings, guard, tool)
 

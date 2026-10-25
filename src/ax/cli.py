@@ -251,6 +251,23 @@ def _visible(change) -> tuple[list[str], list[str]]:
     return hooks(change.before), hooks(change.after)
 
 
+@hooks_app.command("start")
+def hooks_start(tool: str = typer.Option("claude", help="claude or codex: the tool starting.")):
+    """The SessionStart hook: recent work for the conversation that is starting (stdin: payload)."""
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        payload = {}
+    try:
+        from ax import digest
+
+        text = digest.build(load(), cwd=payload.get("cwd"), exclude=payload.get("session_id"))
+    except Exception:  # a hook must never stop a conversation from starting
+        return
+    if text:
+        typer.echo(json.dumps(digest.hook_output(text)))
+
+
 @hooks_app.command("install")
 def hooks_install(
     apply: bool = _APPLY,
