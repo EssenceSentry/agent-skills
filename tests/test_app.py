@@ -346,6 +346,8 @@ def test_assets_are_public_and_the_data_is_not(served, monkeypatch):
     )
     assert call(f"{base}/assets/index.js")[0] == 200
     assert call(f"{base}/favicon.svg")[0] == 200
+    # The tunnel's health check: public, and it says nothing else.
+    assert call(f"{base}/healthz")[:3:2] == (200, b"ok")
     assert call(f"{base}/assets/../index.html")[0] in (400, 404)
     for path in ("/api/now", "/api/notes", "/api/state", "/classic", "/scorecard", "/events"):
         assert call(f"{base}{path}")[0] == 401, path

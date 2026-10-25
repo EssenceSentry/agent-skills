@@ -212,6 +212,8 @@ def make_server(
                 return self._text(403, "Unknown host name.")
             parts = urlsplit(self.path)
             query = parse_qs(parts.query)
+            if parts.path == "/healthz":  # the tunnel's health check, which has no token
+                return self._text(200, "ok")
             if self._static(parts.path):
                 return None
             how = self._authorised(query)
