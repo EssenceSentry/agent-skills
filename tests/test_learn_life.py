@@ -148,3 +148,16 @@ def test_sync_labels_new_candidates_when_configured(env, monkeypatch):
     result = CliRunner().invoke(app, ["sync"], env={"AX_CONFIG": str(env.config_path)})
     assert result.exit_code == 0, result.output
     assert len(asked) == 1
+
+
+def test_sync_refreshes_the_lifecycle_under_the_sync_lock(env, monkeypatch):
+    from ax import sync as sync_module
+
+    def check(config):
+        with pytest.raises(sync_module.SyncBusy), sync_module.lock(config):
+            pass
+        return []
+
+    monkeypatch.setattr(learn_life, "after_sync", check)
+    result = CliRunner().invoke(app, ["sync"], env={"AX_CONFIG": str(env.config_path)})
+    assert result.exit_code == 0, result.output

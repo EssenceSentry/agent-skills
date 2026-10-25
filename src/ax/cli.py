@@ -525,7 +525,10 @@ def sync(quiet: bool = typer.Option(False, "--quiet", "-q", help="Print nothing 
         typer.echo(f"{busy}; skipping")
         raise typer.Exit(0) from None
     try:
-        updated = learn_life.after_sync(config)
+        with sync_module.lock(config):  # syncs from many sessions must not write notes at once
+            updated = learn_life.after_sync(config)
+    except sync_module.SyncBusy:
+        updated = []  # the sync that holds the lock refreshes the rules
     except Exception as exc:  # the archive is synced either way; report, don't hide it
         report.errors.append(f"learn: {type(exc).__name__}: {exc}")
         updated = []
