@@ -79,6 +79,16 @@ def _positive(amount, what: str) -> float:
     return value
 
 
+def line(b: dict) -> str:
+    """One budget in a line: "annotations: 12.5 of 40 usd, 27.5 left · set by ax:…"."""
+    held = f", {number(b['reserved'])} reserved" if b["reserved"] else ""
+    state = {"near": " · near its limit", "over": " · over its limit"}.get(b["state"], "")
+    extra = [f"set by {b['owner']}" if b["owner"] else "",
+             f"measures {b['path']}" if b["path"] else "", b["why"] or ""]  # fmt: skip
+    return (f"{b['name']}: {number(b['spent'])} of {number(b['cap'])} {b['unit']}{held}, "
+            f"{number(b['left'])} left{state}" + "".join(f" · {x}" for x in extra if x))  # fmt: skip
+
+
 def folder_size(path: str) -> int:
     """Bytes in the files under `path`, without following links; 0 when it's missing."""
     total = 0

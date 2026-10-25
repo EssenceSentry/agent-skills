@@ -649,14 +649,9 @@ def _budget_who(config) -> tuple[str | None, str | None]:
 
 
 def _budget_line(b: dict) -> str:
-    from ax.budget import number
+    from ax import budget
 
-    held = f", {number(b['reserved'])} reserved" if b["reserved"] else ""
-    where = f" · measures {b['path']}" if b["path"] else ""
-    owner = f" · set by {b['owner']}" if b["owner"] else ""
-    state = "" if b["state"] == "ok" else f" · {b['state'].upper()}"
-    return (f"{b['name']:<16} {number(b['spent'])} of {number(b['cap'])} {b['unit']}{held}, "
-            f"{number(b['left'])} left{state}{owner}{where}")  # fmt: skip
+    return budget.line(b)
 
 
 def _budget_call(call, *, pause: list[str] | None = None):
@@ -712,7 +707,7 @@ def budget_set(
         typer.echo(json.dumps(found, indent=2))
         return
     whose = "this repository" if scope.startswith("project:") else "this conversation"
-    typer.echo(f"{_budget_line(found)}\nfor {whose}{': ' + why if why else ''}")
+    typer.echo(f"{_budget_line(found)}\nfor {whose} and its subagents")
 
 
 @budget_app.command("add")
@@ -822,7 +817,7 @@ def budget_show(
     if as_json:
         typer.echo(json.dumps(found, indent=2))
         return
-    typer.echo(_budget_line(found) + (f"\n{found['why']}" if found["why"] else ""))
+    typer.echo(_budget_line(found))
     for e in found["entries"][:20]:
         what = {"add": "spent", "hold": f"held ({e['state']})", "pass": "passed"}[e["kind"]]
         ticket = f"{e['ticket']} " if e["ticket"] else ""

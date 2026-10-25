@@ -215,6 +215,9 @@ def build(
         lines += ["", "## The user's rules", "", *_bullets(rules)]
     lines += ["", "## Limits", "", _LIMITS_INTRO, f"- {_IRREVERSIBLE}"]
     lines += [f"- {x['why']} (`{x['pattern']}`)" for x in _limits(config)]
+    caps = _budgets(config, repo)
+    if caps:
+        lines += ["", "## Budgets", "", _BUDGETS_INTRO, *[f"- {line}" for line in caps]]
     present = [repo / name for name in REPO_INSTRUCTIONS if (repo / name).exists()]
     if present:
         lines += ["", "## This repository's instructions", "", "Read these first:"]
@@ -248,6 +251,24 @@ _IRREVERSIBLE = (
     "a force push or a remote delete, a recursive rm outside disposable folders, cloud "
     "deletes, dropping tables."
 )
+
+
+_BUDGETS_INTRO = (
+    'These caps reach you. Record what you spend with `ax budget add NAME AMOUNT --note "..."`, '
+    "or run `ax budget reserve NAME AMOUNT` before an expensive step and `ax budget settle "
+    "TICKET ACTUAL` after it. If the next step would go over, don't take it: say so in your "
+    "report to the agent that started you."
+)
+
+
+def _budgets(config, repo) -> list[str]:
+    """The open budgets of the conversation writing the brief and of the repository."""
+    from ax import budget, handles
+    from ax.sources.common import project_name
+
+    here = handles.current(config)
+    scopes = [f"project:{project_name(str(repo))}"] + ([f"session:{here[1]}"] if here else [])
+    return [budget.line(b) for b in budget.statuses(config.data, scopes=scopes)]
 
 
 def _limits(config) -> list:

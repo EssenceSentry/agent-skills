@@ -102,3 +102,28 @@ def test_open_todos_of_this_project_and_global_ones_are_in_the_digest(env):
     assert "T1 (demo, from ax:9fe6d7e6): Write one ax skill" in text
     assert "Turn on the job service" in text
     assert "Someone else's" not in text and "Already done" not in text
+
+
+def test_open_budgets_of_this_project_are_in_the_digest(env):
+    from ax import budget
+
+    data = env.config.data
+    budget.create(data, "annotations", 40, "usd", why="Luna labels", owner="ax:9fe6d7e6",
+                  scope="session:s1", project="demo")  # fmt: skip
+    budget.add(data, "annotations", 12.5)
+    budget.create(data, "elsewhere", 5, "usd", scope="project:other", project="other")
+    budget.create(data, "old", 5, "usd", scope="project:demo", project="demo")
+    budget.close(data, "old")
+    text = digest.build(env.config, cwd="/Users/me/Repos/demo", now=NOW)
+    assert "annotations: 12.5 of 40 usd, 27.5 left · set by ax:9fe6d7e6 · Luna labels" in text
+    assert "elsewhere" not in text and "old:" not in text
+
+
+def test_a_digest_with_only_a_budget_still_shows(env, tmp_path):
+    from ax import budget
+
+    budget.create(env.config.data, "downloads", 4, "GB", scope="project:demo", project="demo",
+                  path=str(tmp_path / "raw"))  # fmt: skip
+    assert "downloads: 0 of 4 GB, 4 left · measures" in digest.build(
+        env.config, cwd="/Users/me/Repos/demo", now=NOW
+    )

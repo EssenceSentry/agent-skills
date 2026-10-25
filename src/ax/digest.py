@@ -3,14 +3,14 @@
 An agent searches past work only when it thinks to. The digest gives each new
 conversation a map instead: the user's own conversations of the last week (never
 workers or subagents), newest first with the current project's first, each with its
-handle, the open to-dos of this project and the global ones, and the jobs still
-running with their descriptions. It reads the archive only,
+handle, the open to-dos of this project and the global ones, this project's open
+budgets, and the jobs still running with their descriptions. It reads the archive only,
 with no sync and no model, so a conversation starts about as fast as before.
 """
 
 from datetime import UTC, datetime, timedelta
 
-from ax import handles, jobs, learn, todos
+from ax import budget, handles, jobs, learn, todos
 from ax.sources.common import project_name
 
 DAYS = 7
@@ -74,7 +74,8 @@ def build(config, *, cwd=None, exclude=None, now=None, days=DAYS, limit=LIMIT) -
     rows.sort(key=lambda r: r["project"] != here)  # stable: newest first within each part
     running = [j for j in jobs.list_jobs(config, refresh_active=False) if not j.terminal]
     open_todos = [t for t in todos.listing(config, project=here) if here or t.scope == "global"]
-    if not rows and not running and not open_todos:
+    budgets = budget.statuses(config.data, project=here) if here else []
+    if not rows and not running and not open_todos and not budgets:
         return ""
     synced = _last_sync(config)
     lines = [
@@ -97,6 +98,10 @@ def build(config, *, cwd=None, exclude=None, now=None, days=DAYS, limit=LIMIT) -
         lines += [f"- {todos.line(t)}" for t in open_todos[:TODOS]]
         if len(open_todos) > TODOS:
             lines.append(f"- … and {len(open_todos) - TODOS} more")
+    if budgets:
+        lines += ["", "Open budgets here (`ax budget show NAME`; record spending with "
+                  "`ax budget add`; going over pauses):"]  # fmt: skip
+        lines += [f"- {budget.line(b)}" for b in budgets]
     if running:
         lines += ["", "Jobs still running (`ax job show KEY`):"]
         for j in running:

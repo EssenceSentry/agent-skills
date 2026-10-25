@@ -231,6 +231,34 @@ def test_a_brief_lists_the_limits_its_worker_works_under(env, tmp_path):
     assert "force push" in text  # the irreversible actions it can't take either
 
 
+def test_a_brief_lists_the_budgets_that_reach_its_worker(env, tmp_path, monkeypatch):
+    from ax import brief, budget
+
+    session = "6942b4a0-7d35-4d5e-91a2-460a9fe6d7e6"
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", session)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    data = env.config.data
+    budget.create(data, "annotations", 40, "usd", why="Luna labels", owner="ax:9fe6d7e6",
+                  scope=f"session:{session}", project="other")  # fmt: skip
+    budget.create(data, "downloads", 4, "GB", scope="project:repo", project="repo")
+    budget.create(data, "theirs", 9, "usd", scope="session:another", project="repo")
+    text = brief.build(env.config, "implement", repo=repo, task="Label it.", windows=[]).text
+    section = text.split("## Budgets", 1)[1].split("\n## ", 1)[0]
+    assert "annotations: 0 of 40 usd, 40 left" in section and "downloads" in section
+    assert "theirs" not in section
+    assert "ax budget add" in section and "report" in section
+
+
+def test_a_brief_has_no_budgets_section_when_none_reach_it(env, tmp_path):
+    from ax import brief
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert "## Budgets" not in brief.build(env.config, "review", repo=repo, task="Review it.",
+                                           windows=[]).text  # fmt: skip
+
+
 def test_a_subagent_that_gives_a_reason_to_go_over_a_budget_is_stopped(rules):
     over = 'AX_INTENT="one more batch" ax budget add annotations 5 --note "batch 9"'
     said = ask(rules, over, agent_id="a1", agent_type="general-purpose")
