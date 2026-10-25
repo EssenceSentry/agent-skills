@@ -503,7 +503,12 @@ def serve(
         raise typer.Exit(2)
     # A shared link carries a token that lives only as long as this run.
     run_token = secrets.token_urlsafe(32) if share == "cloudflare" else None
-    server = serve_module.make_server(config, port=port, share_token=run_token)
+    server = serve_module.make_server(
+        config,
+        port=port,
+        share_token=run_token,
+        tailnet=serve_module.Remembered(serve_module.tailnet_identity),
+    )
     base = f"http://127.0.0.1:{server.server_address[1]}"
     url = f"{base}/?token={app_module.token(config)}"
     typer.echo(f"ax at {url} (Ctrl-C to stop)\nThe classic page is at {base}/classic.")
