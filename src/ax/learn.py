@@ -796,6 +796,20 @@ def repo_scope(project: str) -> str:
     return scope if profile._SCOPE.fullmatch(scope) else "global"
 
 
+_SUMMARY = "Proposed by `ax learn` on "
+
+
+def _refresh_why(old: str, summary: str) -> str:
+    """Replace the learner's own summary and evidence list in a note's body, keeping every
+    other paragraph: merge and guard records, contradiction notes, the user's own notes."""
+    parts = [p for p in old.split("\n\n") if p.strip()]
+    start = next((i for i, p in enumerate(parts) if p.startswith(_SUMMARY)), None)
+    if start is None:
+        return "\n\n".join([*parts, summary])
+    end = start + 1 + (start + 1 < len(parts) and parts[start + 1].startswith("Evidence:"))
+    return "\n\n".join([*parts[:start], summary, *parts[end:]])
+
+
 def _scope(group: Group) -> str:
     projects = Counter(c["project"] for c, _ in group.members if c["project"])
     repo_votes = sum(lab["scope"] == "repo" for _, lab in group.members)
@@ -819,7 +833,8 @@ def propose(config, candidates, labels, *, max_pending: int = MAX_PENDING) -> Pr
 
     Groups that land on one note (a pending proposal, or what a merge folded into it
     through its `covers`) are combined first. A pending proposal keeps its wording,
-    scope and level, which the user may have edited; only its evidence is refreshed.
+    scope, level and body, which the user may have edited; only the learner's own summary
+    and evidence list are refreshed, and new evidence ids are added to the old ones.
     New proposals fill the review queue up to `max_pending`, strongest support first;
     the rest wait until the user settles some.
     """
@@ -856,9 +871,8 @@ def propose(config, candidates, labels, *, max_pending: int = MAX_PENDING) -> Pr
         evidence = [c["id"] for c, _ in group.members][:20]
         if rid in pending:
             rule = pending[rid]
-            # Keep the tidy pass's contradiction notes; they hold until the user decides.
-            notes = [n for n in rule.why.split("\n\n") if n.startswith("May contradict")]
-            rule.why, rule.evidence = "\n\n".join([_why(group, kinds), *notes]), evidence
+            rule.why = _refresh_why(rule.why, _why(group, kinds))
+            rule.evidence = list(dict.fromkeys([*rule.evidence, *evidence]))[:40]
             profile._write(rule, rule.path)
         else:
             rule = profile.add(

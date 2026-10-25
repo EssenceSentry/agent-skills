@@ -303,3 +303,33 @@ def test_a_frustration_label_made_from_another_episode_is_made_again(archive):
     assert learn.unlabelled([angry], learn.load_labels(archive.config)) == []
     fuller = {**angry, "episode": "user: Train on the reviewed rows\nuser: Very disappointing!"}
     assert learn.unlabelled([fuller], learn.load_labels(archive.config)) == [fuller]
+
+
+def test_refreshing_a_proposal_replaces_only_its_own_summary(archive):
+    cs = [candidate("a", "s1", "demo"), candidate("b", "s2", "demo")]
+    labels = {c["id"]: keep("tabs", "Use tabs.") for c in cs}
+    learn.propose(archive.config, cs, labels)
+    [note] = profile.load_rules(archive.config)
+    kept = ["Merged in `indent` (\"Indent with tabs.\"):\n- [[Sessions/s9]] 2026-10-01: \"tabs\"",
+            "Guard: `\\t` caught 1 of 1 evidence commands.", "My note: ask the team first."]  # fmt: skip
+    note.why = "\n\n".join([note.why, *kept])
+    note.evidence = [*note.evidence, "recurring error: tab width"]
+    profile._write(note, note.path)
+    more = [*cs, candidate("c", "s3", "demo")]
+    learn.propose(archive.config, more, {c["id"]: keep("tabs", "Use tabs.") for c in more})
+    [note] = profile.load_rules(archive.config)
+    assert note.why.count("Proposed by `ax learn`") == 1 and "3 sessions" in note.why
+    assert all(note.why.count(k) == 1 for k in kept)
+    assert {"a", "b", "c", "recurring error: tab width"} <= set(note.evidence)
+
+
+def test_a_group_that_matches_a_fix_proposal_adds_its_evidence_below_it(archive):
+    profile.add(archive.config, "no-timeout", rule="Use `gtimeout`, not `timeout`, on macOS.",
+                status="proposed", why="Proposed by `ax learn fixes` from an error.",
+                evidence=["recurring error: timeout"])  # fmt: skip
+    cs = [candidate("a", "s1", "demo"), candidate("b", "s2", "demo")]
+    labels = {c["id"]: keep("no-timeout", "Use gtimeout on macOS.") for c in cs}
+    learn.propose(archive.config, cs, labels)
+    [note] = profile.load_rules(archive.config)
+    assert note.why.startswith("Proposed by `ax learn fixes`") and "2 sessions" in note.why
+    assert {"recurring error: timeout", "a", "b"} <= set(note.evidence)
