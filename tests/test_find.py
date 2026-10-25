@@ -78,7 +78,7 @@ def test_hits_are_merged_labelled_and_carry_handles(indexed, monkeypatch):
                  "score": 0.02, "content": "def fetch(url):\n    retry()"}],
     )  # fmt: skip
     monkeypatch.setattr(find, "_run", runner)
-    hits = find.find(indexed.config, "retry the fetch helper", limit=5)
+    hits = find.find(indexed.config, "where is the fetch retry helper", limit=5)
     assert [h["source"] for h in hits] == ["conversation", "code", "memory"]
     talk, code, memory = hits
     assert talk["handle"] == "ax:11111111" and talk["project"] == "demo"
@@ -170,3 +170,42 @@ def test_setup_embeds_everything_and_indexes_each_repository(indexed, monkeypatc
     assert qmd == [["update"], ["embed", "--timeout", "0"]]
     assert [c[3] for c in runner.calls if c[0] == "semble"] == [
         str(indexed.repos / "demo"), str(indexed.repos / "other")]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "query, code",
+    [("where is VCR computed", True), ("load_rules in profile.py", True),
+     ("what does parse_since return", True), ("why did we set LightRAG aside", False),
+     ("what did we decide about the gallery undo stack", False)],
+)  # fmt: skip
+def test_a_query_counts_as_about_code_when_it_names_code(query, code):
+    assert find.code_like(query) is code
+
+
+def test_code_comes_after_the_rest_for_a_question_that_is_not_about_code(indexed, monkeypatch):
+    runner = Runner(
+        qmd=[qmd_hit("claude", note_rel(indexed, CLAUDE_SESSION)),
+             qmd_hit("notes", "Profile/rules/tabs.md")],
+        semble=[{"file_path": "demo/a.css", "start_line": 1, "end_line": 2, "content": "light"}],
+    )  # fmt: skip
+    monkeypatch.setattr(find, "_run", runner)
+    hits = find.find(indexed.config, "why did we set LightRAG aside")
+    assert [h["source"] for h in hits] == ["conversation", "note", "code"]
+
+
+def test_a_running_qmd_daemon_answers_without_loading_models_again(indexed, monkeypatch):
+    runner = Runner()
+    monkeypatch.setattr(find, "_run", runner)
+    posted = []
+
+    def post(url, body, timeout):
+        posted.append((url, body))
+        return {"results": [qmd_hit("claude", note_rel(indexed, CLAUDE_SESSION))]}
+
+    monkeypatch.setattr(find, "_post", post)
+    monkeypatch.setattr(find, "_daemon_up", lambda config: True)
+    [hit] = find.find(indexed.config, "retries", sources=["conversations"])
+    assert hit["handle"] == "ax:11111111" and runner.calls == []
+    url, body = posted[0]
+    assert url.endswith(":8181/query") and body["collections"] == ["claude", "codex"]
+    assert [s["type"] for s in body["searches"]] == ["lex", "vec"] and body["rerank"] is True

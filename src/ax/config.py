@@ -42,6 +42,7 @@ class Config:
     find_extra_repos: tuple[Path, ...] = ()
     find_qmd_dir: Path = Path("~/.config/qmd").expanduser()
     find_refresh_on_sync: bool = True
+    find_qmd_port: int = 8181  # where `ax index serve` keeps qmd's daemon
 
     @property
     def db_path(self) -> Path:
@@ -107,4 +108,5 @@ def load(path: Path | None = None) -> Config:
         find_extra_repos=tuple(Path(r).expanduser() for r in finding.get("extra_repos", ())),
         find_qmd_dir=Path(finding.get("qmd_config_dir", qmd_dir)).expanduser(),
         find_refresh_on_sync=bool(finding.get("refresh_on_sync", True)),
+        find_qmd_port=int(finding.get("qmd_port", 8181)),
     )

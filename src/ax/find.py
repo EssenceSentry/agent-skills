@@ -13,6 +13,8 @@ import json
 import os
 import re
 import subprocess
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote
@@ -24,6 +26,14 @@ from ax.store import Store
 
 INDEX = "ax"
 RRF_K = 60
+OFF_TOPIC_CODE = 0.3  # weight of code hits for a question that names no code
+# A query is about code when it names some: an identifier, a file, a call, or asks where.
+_CODE = re.compile(
+    r"`[^`]+`|\b\w+_\w+\b|\b[a-z]+[A-Z]\w*\b|\w+\(\)"
+    r"|\b\w+\.(?:py|ts|tsx|js|go|rs|sql|ipynb|toml|ya?ml|json|md)\b"
+    r"|(?i:\b(?:where is|where are|where do we|which file|function|class|method|module"
+    r"|implemented|defined|codebase)\b)"
+)
 SNIPPET = 300
 SOURCES = ("conversations", "memories", "notes", "code", "subagents")
 DEFAULT = ("conversations", "memories", "notes", "code")
@@ -112,6 +122,34 @@ def _qmd(config, *args, timeout: int = 600) -> str:
     return _run(argv, timeout=timeout, env={"QMD_CONFIG_DIR": str(config.find_qmd_dir)})
 
 
+def code_like(query: str) -> bool:
+    return bool(_CODE.search(query))
+
+
+def _daemon_up(config) -> bool:
+    """Whether `ax index serve` left qmd's HTTP daemon running, with its models loaded."""
+    try:
+        with urllib.request.urlopen(f"http://localhost:{config.find_qmd_port}/health", timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+def _post(url: str, body: dict, timeout: float) -> dict:
+    request = urllib.request.Request(
+        url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as reply:
+        return json.loads(reply.read())
+
+
+def serve(config, *, stop: bool = False) -> str:
+    """Start or stop qmd's daemon for the ax index: models stay loaded between searches."""
+    if stop:
+        return _qmd(config, "mcp", "stop").strip()
+    return _qmd(config, "mcp", "--http", "--daemon", "--port", str(config.find_qmd_port)).strip()
+
+
 def _snippet(text: str) -> str:
     lines = [ln for ln in (text or "").splitlines() if not ln.startswith("@@")]
     text = re.sub(r"\s+", " ", " ".join(lines)).strip()
@@ -133,11 +171,27 @@ def _day(value) -> str:
     return str(value or "")[:10]
 
 
-def _from_qmd(config, query, collections, *, n, fast) -> list[dict]:
+def _ask_qmd(config, query, collections, *, n, fast) -> list:
+    """qmd's hits: from the daemon when it runs (a keyword and a vector search, reranked,
+    without the slow query rewriting), else from a qmd process that loads its models."""
+    if _daemon_up(config):
+        searches = [{"type": "lex", "query": query}]
+        searches += [] if fast else [{"type": "vec", "query": query}]
+        body = {"searches": searches, "collections": list(collections), "limit": n,
+                "rerank": not fast}  # fmt: skip
+        url = f"http://localhost:{config.find_qmd_port}/query"
+        try:
+            return _post(url, body, timeout=120).get("results") or []
+        except (OSError, ValueError):
+            pass  # a daemon that just went away: ask qmd directly
     args = ["search" if fast else "query", query, "--format", "json", "-n", str(n)]
     for name in collections:
         args += ["-c", name]
-    found = json.loads(_qmd(config, *args) or "[]")
+    return json.loads(_qmd(config, *args) or "[]")
+
+
+def _from_qmd(config, query, collections, *, n, fast) -> list[dict]:
+    found = _ask_qmd(config, query, collections, n=n, fast=fast)
     roots = qmd_collections(config)
     hits = []
     for item in found if isinstance(found, list) else []:
@@ -193,10 +247,23 @@ def find(config, query: str, *, sources=DEFAULT, limit: int = 10, project=None, 
     sources = [s for s in sources if s in SOURCES]
     filtered = bool(project or provider or since)
     n = limit * (4 if filtered else 2)
-    lists = []
     collections = [c for s in sources for c in _COLLECTIONS.get(s, ())]
-    if collections:
-        hits = _from_qmd(config, query, collections, n=n, fast=fast)
+    paths = [p for p in repos(config) if not project or p.name == project]
+    with ThreadPoolExecutor(max_workers=2) as pool:  # qmd and Semble at once
+        asked = (
+            pool.submit(_from_qmd, config, query, collections, n=n, fast=fast)
+            if collections
+            else None
+        )
+        coded = (
+            pool.submit(_from_semble, config, query, paths, n=n)
+            if "code" in sources and paths
+            else None
+        )
+        notes, code = (asked.result() if asked else None), (coded.result() if coded else None)
+    lists = []  # (weight, hits)
+    if notes is not None:
+        hits = notes
         rows = _session_rows(config)
         for hit in hits:
             row = rows.get(os.path.relpath(hit["path"], config.vault))
@@ -204,13 +271,14 @@ def find(config, query: str, *, sources=DEFAULT, limit: int = 10, project=None, 
                 hit.update(handle=handles.tag(row["session_id"]), project=row["project"],
                            provider=row["provider"], date=_day(row["started"]),
                            title=row["title"] or hit["title"])  # fmt: skip
-        lists.append([h for h in hits if _keep(h, project=project, provider=provider, since=since)])
-    if "code" in sources:
-        paths = [p for p in repos(config) if not project or p.name == project]
-        lists.append(_from_semble(config, query, paths, n=n) if paths else [])
+        kept = [h for h in hits if _keep(h, project=project, provider=provider, since=since)]
+        lists.append((1.0, kept))
+    if code is not None:
+        about_code = code_like(query) or list(sources) == ["code"]
+        lists.append((1.0 if about_code else OFF_TOPIC_CODE, code))
     scored = [
-        (1 / (RRF_K + rank), order, hit)
-        for order, hits in enumerate(lists)
+        (weight / (RRF_K + rank), order, hit)
+        for order, (weight, hits) in enumerate(lists)
         for rank, hit in enumerate(hits, 1)
     ]
     scored.sort(key=lambda t: (-t[0], t[1]))

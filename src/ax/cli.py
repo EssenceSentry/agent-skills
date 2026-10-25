@@ -703,6 +703,18 @@ def index_refresh():
     typer.echo("refreshed")
 
 
+@index_app.command("serve")
+def index_serve(stop: bool = typer.Option(False, "--stop", help="Stop the daemon instead.")):
+    """Keep qmd's models loaded in a daemon, so `ax find` answers in seconds."""
+    from ax import find
+
+    try:
+        typer.echo(find.serve(load(), stop=stop) or ("stopped" if stop else "started"))
+    except find.FindError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+
+
 @index_app.command("eval")
 def index_eval(
     cases: Path = typer.Argument(..., help="YAML list of {query, expect, in} questions."),
