@@ -21,6 +21,7 @@ from pathlib import Path
 
 import zstandard
 
+from ax import handles
 from ax.config import Config
 from ax.model import Session
 from ax.redact import redact
@@ -29,7 +30,7 @@ from ax.sources import claude, codex
 from ax.store import Store
 
 # Bump when parsing or rendering changes, so the next sync rebuilds every note.
-PARSER_VERSION = "5"
+PARSER_VERSION = "6"
 
 
 class SyncBusy(RuntimeError):
@@ -226,12 +227,20 @@ def _write_note(config: Config, store: Store, session: Session, report: Report) 
         return
     parent = store.session(session.parent_key) if session.parent_key else None
     parent_note = Path(parent["note_path"]).stem if parent and parent["note_path"] else None
-    children = [
-        (Path(c["note_path"]).stem, c["title"])
-        for c in store.children(session.key)
-        if c["note_path"]
-    ]
-    text = render(session, parent_note=parent_note, raw_path=row["raw_path"], children=children)
+    kids = store.children(session.key)
+    children = [(Path(c["note_path"]).stem, c["title"]) for c in kids if c["note_path"]]
+    store.set_mentions(session.key, _mentioned(store, session, {c["key"] for c in kids}))
+    builds_on = list(
+        {
+            r["target_key"]: (Path(r["note_path"]).stem, r["title"])
+            for r in store.links_from(session.key)
+            if r["note_path"]
+        }.values()
+    )
+    text = render(
+        session, parent_note=parent_note, raw_path=row["raw_path"], children=children,
+        builds_on=builds_on,
+    )  # fmt: skip
     target = config.vault / row["note_path"]
     if target.exists() and target.read_text(encoding="utf-8") == text:
         return
@@ -241,6 +250,19 @@ def _write_note(config: Config, store: Store, session: Session, report: Report) 
         fh.write(text)
     os.replace(tmp, target)
     report.written += 1
+
+
+def _mentioned(store: Store, session: Session, children: set) -> set:
+    """Conversations this one refers to by handle, recall command or full id, other than
+    itself and the parent and subagents its note already links."""
+    refs = set().union(*(handles.mentions(e.text) for e in session.events if e.text))
+    skip = {session.key, session.parent_key, *children}
+    found = set()
+    for ref in refs:
+        rows = handles.lookup(store, ref)
+        if len(rows) == 1 and rows[0]["key"] not in skip:
+            found.add(rows[0]["key"])
+    return found
 
 
 def _remove_note(path: Path, session: Session) -> None:

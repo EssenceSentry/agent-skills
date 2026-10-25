@@ -16,6 +16,11 @@ from ax.store import Store
 
 PREFIX = "ax:"
 _REF = re.compile(r"[0-9a-f][0-9a-f-]{5,35}")
+# What counts as one conversation mentioning another: a tagged handle, a recall command,
+# or a full session id. A bare eight-character hex word is too often a commit or colour.
+_TAGGED = re.compile(r"\bax:([0-9a-f]{8})\b")
+_RECALLED = re.compile(r"\bax recall\s+(?:ax:)?([0-9a-f][0-9a-f-]{5,35})\b")
+_UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
 _ENV = (("codex", "CODEX_THREAD_ID"), ("claude", "CLAUDE_CODE_SESSION_ID"))
 _COLUMNS = (
     "key, provider, session_id, kind, parent_key, title, project, started, ended, "
@@ -96,3 +101,8 @@ def current(config, env=None) -> tuple[str, str] | None:
         return path.stat().st_mtime if path else 0.0
 
     return max(found, key=written)
+
+
+def mentions(text: str) -> set[str]:
+    """References to other conversations in a piece of text, still to be resolved."""
+    return set(_TAGGED.findall(text)) | set(_RECALLED.findall(text)) | set(_UUID.findall(text))

@@ -49,8 +49,10 @@ def render(
     parent_note: str | None = None,
     raw_path: str | None = None,
     children: list[tuple[str, str]] = (),
+    builds_on: list[tuple[str, str]] = (),
 ) -> str:
-    """The full note text. `children` lists (note stem, title) of known subagents."""
+    """The full note text. `children` lists (note stem, title) of known subagents, and
+    `builds_on` the conversations this one recalled or mentioned."""
     title = redact(session.title or "Untitled")
     front = {
         "type": "session",
@@ -73,12 +75,16 @@ def render(
         "tokens_out": session.tokens_out,
         "cost_usd": session.cost_usd,
         "parent": f"[[{parent_note}]]" if parent_note else None,
+        "builds_on": [f"[[{stem}]]" for stem, _ in builds_on] or None,
         "raw": raw_path,
         "tags": ["session", session.provider, _tag(redact(session.project))],
     }
     lines = ["---", *_yaml(front), "---", "", f"# {title}", "", _byline(session)]
     if parent_note:
         lines += ["", f"Parent: [[{parent_note}]]"]
+    if builds_on:
+        links = ", ".join(f"[[{stem}|{redact(t or stem)}]]" for stem, t in builds_on)
+        lines += ["", f"Builds on: {links}"]
     body = _transcript(session)
     lines += ["", body] if body else []
     linked = {e.child for e in session.events if e.child}

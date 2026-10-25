@@ -72,6 +72,14 @@ CREATE TABLE IF NOT EXISTS unknown_records (
     PRIMARY KEY (session_key, record_type)
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS links (
+    source_key TEXT NOT NULL,
+    target_key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    PRIMARY KEY (source_key, target_key, kind)
+);
+CREATE INDEX IF NOT EXISTS links_target ON links(target_key);
 CREATE TABLE IF NOT EXISTS usage_snapshots (
     provider TEXT NOT NULL,
     window TEXT NOT NULL,
@@ -312,6 +320,36 @@ class Store:
             (provider, window),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def add_link(self, source: str, target: str, kind: str) -> None:
+        """Record that one conversation builds on another: `recall` or `mention`."""
+        self.db.execute(
+            "INSERT OR IGNORE INTO links VALUES (?, ?, ?, ?)", (source, target, kind, _now())
+        )
+
+    def set_mentions(self, source: str, targets) -> None:
+        """Replace a conversation's mention links; its recall links stay."""
+        self.db.execute("DELETE FROM links WHERE source_key = ? AND kind = 'mention'", (source,))
+        for target in sorted(set(targets)):
+            self.add_link(source, target, "mention")
+
+    def links_from(self, source: str) -> list:
+        """The conversations this one builds on, oldest first, with their notes."""
+        return self.db.execute(
+            "SELECT l.target_key, l.kind, s.session_id, s.title, s.note_path, s.started "
+            "FROM links l JOIN sessions s ON s.key = l.target_key WHERE l.source_key = ? "
+            "ORDER BY s.started, l.kind",
+            (source,),
+        ).fetchall()
+
+    def links_to(self, target: str) -> list:
+        """The conversations that build on this one, oldest first."""
+        return self.db.execute(
+            "SELECT l.source_key, l.kind, s.session_id, s.title, s.note_path, s.started "
+            "FROM links l JOIN sessions s ON s.key = l.source_key WHERE l.target_key = ? "
+            "ORDER BY s.started, l.kind",
+            (target,),
+        ).fetchall()
 
     def get_meta(self, key: str) -> str | None:
         row = self.db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
