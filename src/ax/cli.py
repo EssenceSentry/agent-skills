@@ -1304,13 +1304,18 @@ def _learn_inputs():
 
 
 @learn_app.command("propose")
-def learn_propose():
+def learn_propose(
+    max_pending: int = typer.Option(20, help="Most proposals waiting for review at once."),
+):
     """Write proposal notes for groups with enough support, and report reinforced rules."""
     from ax import learn
 
     config, candidates, labels = _learn_inputs()
-    for rule in learn.propose(config, candidates, labels):
+    found = learn.propose(config, candidates, labels, max_pending=max_pending)
+    for rule in found:
         typer.echo(f"proposed {rule.id} ({rule.scope}): {rule.rule}")
+    if found.waiting:
+        typer.echo(f"{found.waiting} more wait for room; settle some proposals to see them")
     for rule_id, counts in sorted(learn.reinforcement(config, candidates, labels).items()):
         typer.echo(
             f"reinforces {rule_id}: {counts['support']} sessions, "

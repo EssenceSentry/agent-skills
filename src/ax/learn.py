@@ -22,7 +22,7 @@ proposals are rule notes with status "proposed", settled with `ax learn accept` 
    confirmed frustration moment three times, and two projects to be global. A group
    that restates an active rule reinforces it instead, and quotes dated after the rule
    was added count as recurrences. A rejected proposal returns only once its support
-   has doubled.
+   has doubled. At most twenty proposals wait for review at once, strongest first.
 """
 
 import hashlib
@@ -49,6 +49,7 @@ KINDS = (
 WEIGHTS = {"frustration": 3, "explicit": 2}
 MIN_SUPPORT = 2
 MIN_PROJECTS_GLOBAL = 2
+MAX_PENDING = 20  # proposals waiting for review at once; the strongest go first
 QUOTES = 3
 MAX_MESSAGE = 2000
 EPISODE_BATCH = 5
@@ -73,7 +74,7 @@ _CORRECTION = re.compile(
 )
 _EXPLICIT = re.compile(
     r"(?i)(?:^|[.!?\n]\s*)(?:please\s+)?remember\b(?:\s+(?:this|that))?\s*[:,]|\bremember to\b"
-    r"|\bfrom now on\b|\bgoing forward\b|\bin (?:the )?future\b|\bkeep in mind\b"
+    r"|\bfrom now on\b|\bgoing forward\b|(?:^|[.!?\n]\s*)in (?:the )?future\s*,|\bkeep in mind\b"
     r"|\bfor future (?:sessions|reference)\b"
 )
 _FRUSTRATION = re.compile(
@@ -792,12 +793,24 @@ def _scope(group: Group) -> str:
     return "global"
 
 
-def propose(config, candidates, labels) -> list:
+class Proposed(list):
+    """The proposals written or refreshed, and how many more groups wait for room."""
+
+    waiting = 0
+
+
+def _rank(group: Group) -> tuple:
+    return (group.support, len(group.sessions), max(c["ts"] or "" for c, _ in group.members))
+
+
+def propose(config, candidates, labels, *, max_pending: int = MAX_PENDING) -> Proposed:
     """Write a proposal note for each new group with enough support; returns them.
 
     Groups that land on one note (a pending proposal, or what a merge folded into it
     through its `covers`) are combined first. A pending proposal keeps its wording,
     scope and level, which the user may have edited; only its evidence is refreshed.
+    New proposals fill the review queue up to `max_pending`, strongest support first;
+    the rest wait until the user settles some.
     """
     rules = profile.load_rules(config)
     rejected = _ledger(config, "rejected.json")
@@ -816,12 +829,18 @@ def propose(config, candidates, labels) -> list:
             rid = next(folded, None) or _rule_id(group.topic, taken)
             taken.add(rid)
         targets.setdefault(rid, Group(group.topic)).members.extend(group.members)
-    written = []
-    for rid, group in targets.items():
-        if group.support < MIN_SUPPORT:
-            continue
-        if rid in rejected and group.support < 2 * rejected[rid]["support"]:
-            continue
+    ready = [
+        (rid, group)
+        for rid, group in targets.items()
+        if group.support >= MIN_SUPPORT
+        and not (rid in rejected and group.support < 2 * rejected[rid]["support"])
+    ]
+    fresh = sorted((t for t in ready if t[0] not in pending), key=lambda t: _rank(t[1]),
+                   reverse=True)  # fmt: skip
+    room = max(0, max_pending - sum(r.status == "proposed" for r in rules))
+    written = Proposed()
+    written.waiting = max(0, len(fresh) - room)
+    for rid, group in [t for t in ready if t[0] in pending] + fresh[:room]:
         kinds = Counter(lab["kind"] for _, lab in group.members)
         evidence = [c["id"] for c, _ in group.members][:20]
         if rid in pending:

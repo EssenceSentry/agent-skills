@@ -251,3 +251,37 @@ def test_calls_counts_episodes_in_smaller_batches():
     plain = [candidate(str(i), "s", "demo") for i in range(21)]
     angry = [candidate(f"f{i}", "s", "demo", signals=["frustration"]) for i in range(6)]
     assert learn.calls(plain + angry, batch=20) == 2 + 2
+
+
+@pytest.mark.parametrize(
+    "text, explicit",
+    [("Remember: never train on the testing split.", True),
+     ("From now on, ask before pushing.", True),
+     ("In the future, ask before pushing.", True),
+     ("Keep the launcher there for potential future repurposing.", False),
+     ("Set up SSO now so it is ready in the future.", False)],
+)  # fmt: skip
+def test_explicit_means_a_request_to_remember(text, explicit):
+    assert ("explicit" in learn._signals(text, "", False)) is explicit
+
+
+def test_only_the_strongest_proposals_wait_for_review_at_once(archive):
+    cs = [candidate("a", "s1", "demo", signals=["frustration"]),
+          candidate("b1", "s2", "demo", ts="2026-10-01T10:00:00Z"),
+          candidate("b2", "s3", "demo", ts="2026-10-02T10:00:00Z"),
+          candidate("c", "s4", "demo", signals=["explicit"]),
+          candidate("d1", "s5", "demo", ts="2026-10-20T10:00:00Z"),
+          candidate("d2", "s6", "demo", ts="2026-10-21T10:00:00Z")]  # fmt: skip
+    labels = {"a": keep("check-runs", "Check results before long runs.", frustrated=True),
+              "b1": keep("tabs", "Use tabs."), "b2": keep("tabs", "Use tabs."),
+              "c": keep("no-pickle", "Never use pickle."),
+              "d1": keep("short-names", "Use short names."),
+              "d2": keep("short-names", "Use short names.")}  # fmt: skip
+    found = learn.propose(archive.config, cs, labels, max_pending=2)
+    assert [r.id for r in found] == ["check-runs", "short-names"] and found.waiting == 2
+    again = learn.propose(archive.config, cs, labels, max_pending=2)
+    assert again == [] or {r.id for r in again} <= {"check-runs", "short-names"}
+    assert again.waiting == 2
+    learn.reject(archive.config, "short-names")
+    assert [r.id for r in learn.propose(archive.config, cs, labels, max_pending=2)
+            if r.id not in ("check-runs",)] == ["tabs"]  # fmt: skip
