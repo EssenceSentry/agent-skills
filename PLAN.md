@@ -174,7 +174,7 @@ Rules:
 
 | Path | Contents | In Git? |
 | --- | --- | --- |
-| `~/Documents/Codex/agent-skills/` | `ax` source, skills, hooks, synthetic fixtures | Public repo |
+| `~/Repos/agent-skills/` | `ax` source, skills, hooks, synthetic fixtures | Public repo |
 | `~/Vaults/agents/` | The vault | Private repo `agent-vault` |
 | `~/.local/share/ax/ax.db` | SQLite tables: sessions, messages (FTS5), runs, usage, experiments | No |
 | `~/.local/share/ax/raw/` | zstd copy of every raw transcript | No (Time Machine covers it) |
