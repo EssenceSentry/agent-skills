@@ -143,6 +143,11 @@ def _messages(config):
         ]
 
 
+def scanned(text: str) -> bool:
+    """Whether the learner reads a user message: not empty, pasted boilerplate or too long."""
+    return bool(text) and not text.startswith(_BOILERPLATE) and len(text) <= MAX_MESSAGE
+
+
 def frustrated(text: str) -> bool:
     """Whether a message carries a frustration marker; the labeller confirms it."""
     return bool(_FRUSTRATION.search(text) or _SHOUT.search(text))
@@ -247,7 +252,7 @@ def _from_messages(config) -> list[dict]:
             interrupted = True
             continue
         text = _request(raw)
-        if not text or text.startswith(_BOILERPLATE) or len(text) > MAX_MESSAGE:
+        if not scanned(text):
             turns.append(("user", text or raw))
             interrupted, commands = False, []
             continue

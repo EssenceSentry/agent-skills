@@ -323,7 +323,7 @@ def build(config, *, weeks: int = 6, now: datetime | None = None) -> dict:
             w["repeats"] += 1
         if NUDGE.search(text):
             w["nudges"] += 1
-        if learn.frustrated(text):
+        if learn.scanned(text) and learn.frustrated(text):
             confirmed = labels.get(f"m{m['id']}", {}).get("frustrated")
             if confirmed is None:
                 w["frustration_unchecked"] += 1

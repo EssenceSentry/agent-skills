@@ -82,7 +82,8 @@ def card(env, tmp_path):
         add_session(db, "x2", LAST_WEEK, source=transcript("x2", 411, codex=True))
         add_messages(db, "x2", LAST_WEEK, ("user", "Never commit without asking."),
                      ("user", "Very disappointing! You ignored the plan."),
-                     ("user", "This is unacceptable."))  # fmt: skip
+                     ("user", "This is unacceptable."),
+                     ("user", "Too long for the learner!! " + "x" * 2100))  # fmt: skip
         [(confirmed,)] = db.execute(
             "SELECT id FROM messages WHERE text LIKE 'Very disappointing%'"
         ).fetchall()
