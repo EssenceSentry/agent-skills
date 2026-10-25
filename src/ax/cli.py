@@ -457,10 +457,19 @@ def serve(
 
 
 @vault_app.command("init")
-def vault_init():
-    """Add the starter Obsidian views and Home note where they are missing."""
-    for path in vault_module.init(load().vault):
-        typer.echo(f"created {path}")
+def vault_init(
+    refresh: bool = typer.Option(
+        False,
+        "--refresh",
+        help="Also replace the starter views and Home note with the current ones.",
+    ),
+):
+    """Add the starter Obsidian views, Home note and Obsidian settings where they are missing."""
+    written = vault_module.init(load().vault, refresh=refresh)
+    for path in written:
+        typer.echo(f"wrote {path}")
+    if not written:
+        typer.echo("nothing to change")
 
 
 @vault_app.command("commit")
@@ -1145,12 +1154,18 @@ def brief_cmd(
 @app.command("scorecard")
 def scorecard_cmd(
     weeks: int = typer.Option(6, help="How many weeks back, this one included."),
+    note: bool = typer.Option(False, "--note", help="Also write it to Scorecard.md in the vault."),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ):
     """Corrections, nudges, guard blocks, worker denials, recurring errors and cost, by week."""
     from ax import scorecard
 
-    card = scorecard.build(load(), weeks=weeks)
+    config = load()
+    card = scorecard.build(config, weeks=weeks)
+    if note:
+        path = config.vault / "Scorecard.md"
+        path.write_text(scorecard.markdown(card), encoding="utf-8")
+        typer.echo(f"wrote {path}", err=True)
     typer.echo(json.dumps(card, indent=2) if as_json else scorecard.text(card))
 
 

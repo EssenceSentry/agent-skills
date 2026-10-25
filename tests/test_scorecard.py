@@ -136,3 +136,14 @@ def test_the_page_and_the_command_render(card, env):
     assert "corrections" in result.output
     state = serve.collect_state(env.config, usage_of=lambda c: [], runs_of=lambda c: [])
     assert 'href="/scorecard"' in serve.render_body(state)
+
+
+def test_the_scorecard_note_is_markdown_for_the_vault(card, env):
+    note = scorecard.markdown(card)
+    assert note.startswith("---\n") and "type: scorecard" in note
+    assert "| Week |" in note and "| 2026-W43 |" in note
+    assert "new pyright version" in note and "unused-skill" in note
+    result = CliRunner().invoke(app, ["scorecard", "--weeks", "2", "--note"],
+                                env={"AX_CONFIG": str(env.config_path)})  # fmt: skip
+    assert result.exit_code == 0, result.output
+    assert "| Week |" in (env.config.vault / "Scorecard.md").read_text()

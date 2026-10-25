@@ -28,8 +28,12 @@ GITLEAKS_CONFIG = _TEMPLATES / "gitleaks.toml"
 _STARTERS = {
     "Sessions.base": "Bases/Sessions.base",
     "Experiments.base": "Bases/Experiments.base",
+    "Rules.base": "Bases/Rules.base",
     "Home.md": "Home.md",
 }
+# Obsidian's own settings: written when the vault has none, never replaced, since the
+# app rewrites them as you change settings.
+_OBSIDIAN = ("app.json", "core-plugins.json", "bookmarks.json")
 _GITHUB = re.compile(
     r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
     r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$"
@@ -69,17 +73,25 @@ class CommitResult:
     findings: list[Finding] = field(default_factory=list)
 
 
-def init(path: Path) -> list[Path]:
-    """Write the starter views and Home note where they are missing; never overwrite."""
-    created = []
-    for template, relative in _STARTERS.items():
-        target = Path(path) / relative
-        if target.exists():
+def init(path: Path, *, refresh: bool = False) -> list[Path]:
+    """Write the starter views, the Home note and Obsidian's settings where they are missing.
+
+    `refresh` also replaces the starter views and Home note with the current templates,
+    for a vault set up by an older ax. Obsidian's settings and every other note are
+    never overwritten.
+    """
+    written = []
+    starters = {_TEMPLATES / t: Path(path) / r for t, r in _STARTERS.items()}
+    settings = {_TEMPLATES / "obsidian" / n: Path(path) / ".obsidian" / n for n in _OBSIDIAN}
+    for source, target in [*starters.items(), *settings.items()]:
+        text = source.read_text(encoding="utf-8")
+        replace = refresh and target in starters.values()
+        if target.exists() and (not replace or target.read_text(encoding="utf-8") == text):
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text((_TEMPLATES / template).read_text(encoding="utf-8"), encoding="utf-8")
-        created.append(target)
-    return created
+        target.write_text(text, encoding="utf-8")
+        written.append(target)
+    return written
 
 
 def commit(config: Config, *, scan: Scan | None = None) -> CommitResult:

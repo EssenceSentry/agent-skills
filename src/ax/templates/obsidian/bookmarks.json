@@ -1,0 +1,10 @@
+{
+  "items": [
+    {"type": "file", "ctime": 1793000000000, "path": "Home.md", "title": "Home"},
+    {"type": "file", "ctime": 1793000000001, "path": "Scorecard.md", "title": "Scorecard"},
+    {"type": "file", "ctime": 1793000000002, "path": "Bases/Rules.base", "title": "Rules"},
+    {"type": "file", "ctime": 1793000000003, "path": "Bases/Sessions.base", "title": "Sessions"},
+    {"type": "file", "ctime": 1793000000004, "path": "Bases/Experiments.base", "title": "Research"},
+    {"type": "folder", "ctime": 1793000000005, "path": "Projects", "title": "Your notes"}
+  ]
+}

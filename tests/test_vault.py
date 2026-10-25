@@ -241,3 +241,57 @@ def test_push_scans_commits_ax_did_not_make(repo, tmp_path):
     git(repo.vault, "commit", "-qm", "made by hand")
     with pytest.raises(vault.UnsafeContent):
         vault.push(repo.config, visibility_of=lambda url: "PRIVATE")
+
+
+def test_init_adds_the_rules_view_and_a_home_that_opens_on_what_needs_you(env):
+    import yaml
+
+    vault.init(env.config.vault)
+    rules = yaml.safe_load((env.vault / "Bases" / "Rules.base").read_text())
+    assert [v["name"] for v in rules["views"]] == ["Proposed", "Active", "Enforced", "Retired"]
+    assert 'file.inFolder("Profile/rules")' in rules["filters"]["and"]
+    sessions = yaml.safe_load((env.vault / "Bases" / "Sessions.base").read_text())
+    recent = next(v for v in sessions["views"] if v["name"] == "Recent")
+    assert any("sdk-cli" in f for f in recent["filters"]["and"])
+    assert "Workers" in [v["name"] for v in sessions["views"]]
+    home = (env.vault / "Home.md").read_text()
+    for embed in ("Rules.base#Proposed", "Sessions.base#Recent", "Rules.base#Active",
+                  "Experiments.base#Open", "[[Scorecard]]"):  # fmt: skip
+        assert embed in home
+
+
+def test_init_sets_up_obsidian_once_and_never_overrides_its_settings(env):
+    import json
+
+    vault.init(env.config.vault)
+    settings = env.vault / ".obsidian"
+    plugins = json.loads((settings / "core-plugins.json").read_text())
+    assert plugins["bases"] is True and plugins["bookmarks"] is True
+    bookmarks = json.loads((settings / "bookmarks.json").read_text())
+    assert bookmarks["items"][0]["path"] == "Home.md"
+    app = json.loads((settings / "app.json").read_text())
+    assert app["newFileFolderPath"] == "Projects"
+    (settings / "app.json").write_text('{"mine": true}')
+    vault.init(env.config.vault, refresh=True)
+    assert json.loads((settings / "app.json").read_text()) == {"mine": True}
+
+
+def test_refresh_replaces_the_starter_views_but_nothing_else(env):
+    vault.init(env.config.vault)
+    (env.vault / "Home.md").write_text("old home")
+    (env.vault / "Projects").mkdir(exist_ok=True)
+    (env.vault / "Projects" / "mine.md").write_text("mine")
+    refreshed = vault.init(env.config.vault, refresh=True)
+    assert env.vault / "Home.md" in refreshed
+    assert "Rules.base#Proposed" in (env.vault / "Home.md").read_text()
+    assert (env.vault / "Projects" / "mine.md").read_text() == "mine"
+
+
+def test_cli_init_refresh(env):
+    vault.init(env.config.vault)
+    (env.vault / "Home.md").write_text("old home")
+    result = runner.invoke(
+        app, ["vault", "init", "--refresh"], env={"AX_CONFIG": str(env.config_path)}
+    )
+    assert result.exit_code == 0, result.output
+    assert "Home.md" in result.output and "old home" not in (env.vault / "Home.md").read_text()

@@ -9,20 +9,25 @@ properties:
     displayName: Turns
   tool_calls:
     displayName: Tool calls
+  cost_usd:
+    displayName: Cost (USD)
 views:
   - type: table
     name: Recent
     filters:
       and:
         - 'kind == "main"'
+        - 'entrypoint != "sdk-cli"'
+        - 'entrypoint != "codex_exec"'
+        - 'entrypoint != "requirements_forum"'
     order:
       - started
       - provider
       - project
       - file.name
       - user_turns
-      - tool_calls
       - model
+      - effort
     sort:
       - property: started
         direction: DESC
@@ -32,6 +37,9 @@ views:
     filters:
       and:
         - 'kind == "main"'
+        - 'entrypoint != "sdk-cli"'
+        - 'entrypoint != "codex_exec"'
+        - 'entrypoint != "requirements_forum"'
     groupBy:
       property: project
       direction: ASC
@@ -43,6 +51,26 @@ views:
     sort:
       - property: started
         direction: DESC
+  - type: table
+    name: Workers
+    filters:
+      and:
+        - 'kind == "main"'
+        - or:
+            - 'entrypoint == "sdk-cli"'
+            - 'entrypoint == "codex_exec"'
+    order:
+      - started
+      - provider
+      - project
+      - file.name
+      - model
+      - effort
+      - cost_usd
+    sort:
+      - property: started
+        direction: DESC
+    limit: 100
   - type: table
     name: Subagents
     filters:

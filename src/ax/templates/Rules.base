@@ -1,0 +1,63 @@
+filters:
+  and:
+    - file.inFolder("Profile/rules")
+properties:
+  file.name:
+    displayName: Rule id
+  rule:
+    displayName: Rule
+  scope:
+    displayName: Scope
+  level:
+    displayName: Level
+  status:
+    displayName: Status
+  added:
+    displayName: Added
+views:
+  - type: table
+    name: Proposed
+    filters:
+      and:
+        - 'status == "proposed"'
+    order:
+      - file.name
+      - rule
+      - scope
+      - added
+    sort:
+      - property: added
+        direction: DESC
+  - type: table
+    name: Active
+    filters:
+      and:
+        - 'status == "active"'
+    groupBy:
+      property: scope
+      direction: ASC
+    order:
+      - file.name
+      - rule
+      - level
+      - tools
+  - type: table
+    name: Enforced
+    filters:
+      and:
+        - 'status == "active"'
+        - 'level == "block"'
+    order:
+      - file.name
+      - rule
+      - scope
+  - type: table
+    name: Retired
+    filters:
+      and:
+        - 'status == "retired"'
+    order:
+      - file.name
+      - rule
+      - scope
+      - retire_when
