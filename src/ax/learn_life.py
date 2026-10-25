@@ -61,8 +61,9 @@ def events(config, candidates, labels) -> dict:
     found = {rid: list(sessions.values()) for rid, sessions in by_session.items()}
     for c in candidates:
         against = (labels.get(c["id"]) or {}).get("against")
-        if against in rules:
-            event = Event((c["ts"] or "")[:10], "override", 1, c["note"], c["project"], c["id"])
+        day = (c["ts"] or "")[:10]
+        if against in rules and day > rules[against].added:  # set aside once it was adopted
+            event = Event(day, "override", 1, c["note"], c["project"], c["id"])
             found.setdefault(against, []).append(event)
     for entry in scorecard._guard_log(config):
         if entry.get("rule") in rules:

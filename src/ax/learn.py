@@ -912,9 +912,11 @@ def _proposed(config, rule_id: str):
     return rule
 
 
-def accept(config, rule_id: str):
+def accept(config, rule_id: str, *, today: date | None = None):
+    """Make a proposal active; `added` becomes the adoption date, which separates the
+    evidence that led to the rule from corrections that come back after it."""
     rule = _proposed(config, rule_id)
-    rule.status = "active"
+    rule.status, rule.added = "active", (today or date.today()).isoformat()
     profile._write(rule, rule.path)
     return rule
 

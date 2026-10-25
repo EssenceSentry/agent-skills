@@ -161,3 +161,29 @@ def test_sync_refreshes_the_lifecycle_under_the_sync_lock(env, monkeypatch):
     monkeypatch.setattr(learn_life, "after_sync", check)
     result = CliRunner().invoke(app, ["sync"], env={"AX_CONFIG": str(env.config_path)})
     assert result.exit_code == 0, result.output
+
+
+def test_accepting_dates_the_adoption_so_evidence_from_the_queue_supports_the_rule(archive):
+    cs = [candidate("a", "s1", "demo", ts="2026-09-10T10:00:00Z"),
+          candidate("b", "s2", "demo", ts="2026-09-20T10:00:00Z")]  # fmt: skip
+    labels = {c["id"]: keep("tabs", "Use tabs.") for c in cs}
+    learn.propose(archive.config, cs, labels)
+    [note] = profile.load_rules(archive.config)
+    note.added = "2026-09-01"  # proposed then; it waited in the queue
+    profile._write(note, note.path)
+    learn.accept(archive.config, "tabs", today=date(2026, 10, 1))
+    [note] = profile.load_rules(archive.config)
+    assert note.added == "2026-10-01"
+    learn_life.refresh(archive.config, cs, labels, today=TODAY)
+    [note] = profile.load_rules(archive.config)
+    assert (note.support, note.recurrences) == (2, 0) and not note.review
+
+
+def test_an_override_from_before_the_adoption_does_not_count(archive):
+    profile.add(archive.config, "tabs", rule="Use tabs.", added="2026-09-01")
+    cs = [candidate("a", "s1", "demo", ts="2026-08-20T10:00:00Z"),
+          candidate("b", "s2", "demo", ts="2026-09-20T10:00:00Z")]  # fmt: skip
+    labels = {c["id"]: {**keep("spaces", "Use spaces here.", kind="none"), "against": "tabs"}
+              for c in cs}  # fmt: skip
+    [override] = learn_life.events(archive.config, cs, labels)["tabs"]
+    assert (override.kind, override.day) == ("override", "2026-09-20")
