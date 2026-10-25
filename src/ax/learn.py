@@ -98,7 +98,7 @@ _REASON = re.compile(
     r"(?i)\b(?:because|that'?s (?:exactly )?(?:how|what)|this is (?:exactly )?(?:how|what)"
     r"|i (?:like|love|prefer|want)|keep (?:doing|it)|like this|this way|the way you)\b"
 )
-_RAN = re.compile(r"ran (?:[\w.-]+ )?(`+) ?(.*?) ?\1$")
+_RAN = re.compile(r"ran (`+) ?(.*?) ?\1$")  # a shell command; "ran NAME `…`" is a tool's input
 _REJECTED = "The user doesn't want to proceed with this tool use."
 _SAID = "the user said:\n"
 _STOP = frozenset(

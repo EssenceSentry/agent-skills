@@ -141,3 +141,32 @@ def test_a_note_edited_while_the_model_answers_is_not_overwritten(archive, pushe
     found = rule(archive)
     assert result.status == "changed" and found.rule == "Never force-push to main."
     assert found.guard is None
+
+
+def test_only_shell_lines_count_as_commands():
+    assert learn._command("ran `git status`") == "git status"
+    assert learn._command("ran `` echo `date` ``") == "echo `date`"
+    assert learn._command("ran write_stdin `y`") is None  # a Codex tool's input, not a command
+
+
+def test_guards_are_tested_on_whole_commands_from_the_transcripts(recent, tmp_path):
+    long = "cd repo && make build && echo done\ngit push --force origin main"
+    use = {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": long}}
+    path = tmp_path / "recent.jsonl"
+    path.write_text(json.dumps({"type": "assistant", "message": {"content": [use]}}) + "\n")
+    with Store(recent.config.db_path) as store:
+        session(store.db, "full", provider="claude", entrypoint="claude-desktop")
+        store.db.execute("UPDATE sessions SET source_path = ? WHERE key = 'full'", (str(path),))
+        messages(store.db, "full", ("tool", "ran `cd repo && make build && echo done`"))
+        store.commit()
+    commands = learn_guards.recent_commands(recent.config, exclude=set(), now=NOW)
+    assert long in commands and "cd repo && make build && echo done" not in commands
+    assert "git push origin main" in commands  # sessions without a transcript keep their lines
+    assert learn_guards._expand(["cd repo && make build && echo done"], commands) == [long]
+
+
+def test_violations_may_be_named_by_number(archive, pushes):
+    [result] = learn_guards.propose_guards(
+        archive.config, pushes, model=answers(reply(violations=[2, 3])), now=NOW
+    )
+    assert result.status == "guarded" and (result.caught, result.evidence) == (2, 2)
