@@ -6,9 +6,10 @@ Reusable skills for working with Claude Code, Codex, and ChatGPT.
 
 | Skill | What it provides |
 | --- | --- |
+| [ax](skills/ax/SKILL.md) | The map of every `ax` command for agents in both tools: what each is for, which focused skill has the details, and what an agent may run alone or must ask about. A test keeps it complete. |
 | [delegation](skills/delegation/SKILL.md) | Authorized Claude/Codex workers, usage and lifecycle helpers, ChatGPT Pro consultation, native conversation messaging and history retrieval, and technical infographics. |
 | [research-director](skills/research-director/SKILL.md) | How agents run research campaigns through `ax exp`: weigh each experiment by the decision it can change, re-rank after every result, stop when results change nothing. |
-| [session-recall](skills/session-recall/SKILL.md) | When and how agents search past Claude Code and Codex sessions with `ax search`, and how to cite what they find. |
+| [session-recall](skills/session-recall/SKILL.md) | How agents find and build on past conversations, memories, notes and code with `ax find`, `ax recall`, `ax here` and `ax search`, and how to cite what they find. |
 | [jobs](skills/jobs/SKILL.md) | How agents register long work with `ax job`, wait on it without polling, and wake when it ends. |
 
 Each skill's references and Python helpers are part of that skill, not
