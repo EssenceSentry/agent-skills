@@ -524,6 +524,22 @@ The vault stays: plain Markdown in a git repository, readable in VS Code and in 
 - **Keep:** the notes and their frontmatter, `[[wiki links]]` (the reader resolves them, and VS Code shows them as text), `ax vault commit` and `push`. Nothing in the vault is deleted without the user: removing the old views and Home from the user's vault is a step the user approves.
 - **Docs:** README, skills and PLAN stop pointing at Obsidian once the app replaces each part.
 
+### 18. A rules workshop on spare allowance (agreed 2026-10-25)
+
+A weekly window that ends its week with allowance left resets it unused. The workshop spends that allowance on the rules: strong agents consolidate and design them, and their work waits for the user as proposals.
+
+- **When it starts:** by itself, with no approval per run; the user's rule to agree on agents first does not apply to this job. The scheduled sync (every 30 minutes) checks Claude's and Codex's main weekly windows. A window qualifies in its last 24 hours when it is spare by the usage band's rule (more than 1.5 × 100/7 % a day left) and enough is left above the floor for one agent. After a run, it starts again only while rule work and allowance both remain.
+- **Who works:** Claude's spare allowance pays for Opus 5.5 agents (`claude -p` through the delegation worker), and Codex's pays for Sol 6.1 agents (`codex exec`), all at high effort. When both windows are spare, each tool's agents critique the other's drafts.
+- **How many:** sized from the load and the allowance, going all in.
+  - **Load:** the rule work waiting (proposals, rules flagged for review, merge candidates, frustration lessons and recurring errors no rule covers, `ax profile check` conflicts), grouped into topic clusters.
+  - **Team:** a designer per cluster, one consolidator over all rules, one critic per tool, then one synthesis pass that writes the proposals.
+  - **Pacing:** a supervisor launches as many agents as the allowance and the hours before the reset allow. It measures each agent's burn from the usage readings, and keeps launching until the work is done or the window reaches its floor.
+- **Floor:** all in, down to a small floor (3% by default, `[workshop] floor`), so a run never stops the user's own work at a hard limit. Codex credits are never used: a run stops as soon as Codex reports its window reached or credits being spent.
+- **What the agents may change:** nothing directly. They read the rules and their evidence, frustration episodes, the scorecard and the profile check, and return structured JSON. ax validates it and writes proposals (status `proposed`, `source: workshop`) plus one report note per run. Accepting, rejecting and merging stay with the user, in the app. Agents never edit a repository, commit, publish or delegate.
+- **Seeing it:** an ntfy message when a run starts and when it ends (agents, allowance spent, proposals written). The run is an `ax job`, so the app shows it under jobs, and its proposals reach the waiting list with the report linked.
+- **Commands:** `ax workshop status` (whether a run would start now, with how many agents and why), `ax workshop run [--dry-run]`, `ax workshop stop`; config `[workshop]` with `enabled`, `floor` and `max_agents`.
+- **Build order, test-first:** the condition and the sizing (with `status` and `--dry-run`); the supervisor, with fake runners in tests; the validated writer for proposals and the report; the schedule check; the app's view; then a live `--dry-run` on the real archive before the first real run.
+
 ## Schedule
 
 ### Saturday, afternoon and evening
