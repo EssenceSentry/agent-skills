@@ -57,6 +57,36 @@ def test_codex_windows_come_from_the_newest_rate_limit_report(tmp_path):
     assert weekly.observed_at == datetime(2026, 10, 21, 13, 6, tzinfo=UTC)
 
 
+CREDITS = (
+    '"resets_at": 1793000000}, '
+    '"credits": {"has_credits": true, "unlimited": false, "balance": "62430.7782515000"}}'
+)
+
+
+def with_credits(home):
+    """A newer Codex rollout whose rate-limit report carries a credit balance."""
+    newer = (
+        home / "sessions" / "2026" / "10" / "21" / CODEX_MAIN.name.replace("10-20T10", "10-21T10")
+    )
+    newer.parent.mkdir(parents=True, exist_ok=True)
+    text = CODEX_MAIN.read_text().replace('"resets_at": 1793000000}}', CREDITS)
+    newer.write_text(text.replace("2026-10-20T13", "2026-10-21T13"))
+
+
+def test_codex_credits_come_from_the_newest_rate_limit_report(tmp_path):
+    home = tmp_path / "codex"
+    shutil.copytree(FIXTURES / "codex", home)
+    assert usage.codex_credits(home) is None  # a report without a credits block
+    with_credits(home)
+    credits = usage.codex_credits(home, now=datetime(2026, 10, 21, 14, tzinfo=UTC))
+    assert credits.provider == "codex" and credits.balance == pytest.approx(62430.778)
+    assert credits.has_credits and not credits.unlimited
+    assert credits.observed_at == datetime(2026, 10, 21, 13, 6, tzinfo=UTC)
+    assert credits.status == "fresh"
+    later = usage.codex_credits(home, now=datetime(2026, 10, 23, 14, tzinfo=UTC))
+    assert later.status == "stale"
+
+
 def test_claude_windows_come_from_the_delegation_usage_helper(usage_env):
     windows = {w.name: w for w in usage.claude_windows(usage_env, refresh=False)}
     assert windows["session"].used == 40.0
@@ -107,6 +137,19 @@ def test_usage_command_prints_both_tools(usage_env, env, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "claude" in result.output and "codex" in result.output
     assert "60% used" in result.output
+
+
+def test_usage_command_shows_codex_credits_and_keeps_its_json_to_windows(
+    usage_env, env, monkeypatch
+):
+    monkeypatch.setattr(usage, "load_config", lambda: usage_env)
+    with_credits(env.codex_home)
+    result = runner.invoke(app, ["usage", "--cached"])
+    assert result.exit_code == 0, result.output
+    [line] = [x for x in result.output.splitlines() if "credits" in x]
+    assert line.startswith("codex  credits") and "62,431 left" in line
+    data = json.loads(runner.invoke(app, ["usage", "--cached", "--json"]).output)
+    assert all("name" in w for w in data)
 
 
 def test_usage_guard_command_exits_with_the_guard_code(usage_env, monkeypatch):

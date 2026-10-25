@@ -102,6 +102,42 @@ def codex_windows(codex_home: Path, *, now: datetime | None = None) -> list[Wind
     return [Window("codex", "weekly", None, None, None, "unavailable")]
 
 
+@dataclass
+class Credits:
+    """A tool's credit balance: what is left beyond its plan's windows. It never resets."""
+
+    provider: str
+    balance: float | None
+    unlimited: bool
+    has_credits: bool
+    observed_at: datetime
+    status: str  # "fresh", or "stale" once the reading is a day old
+
+
+CREDITS_STALE = timedelta(days=1)
+
+
+def codex_credits(codex_home: Path, *, now: datetime | None = None) -> Credits | None:
+    """The credit balance in Codex's newest rate-limit report, when it carries one."""
+    now = now or datetime.now(UTC)
+    for path in sorted(codex_rollouts(codex_home), key=_mtime, reverse=True)[:30]:
+        latest = _latest_rate_limits(path)
+        if not latest:
+            continue
+        observed, limits = latest
+        block = limits.get("credits")
+        if not isinstance(block, dict):
+            return None
+        try:
+            balance = float(block.get("balance"))
+        except (TypeError, ValueError):
+            balance = None
+        status = "stale" if now - observed > CREDITS_STALE else "fresh"
+        return Credits("codex", balance, bool(block.get("unlimited")),
+                       bool(block.get("has_credits")), observed, status)  # fmt: skip
+    return None
+
+
 def forecast(
     window: Window, history: list[tuple[datetime, float]], now: datetime
 ) -> Forecast | None:

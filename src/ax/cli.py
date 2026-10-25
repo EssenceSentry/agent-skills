@@ -158,6 +158,9 @@ def usage_show(
         return
     for w, f in rows:
         typer.echo(_usage_line(w, f, now))
+    credits = usage_module.codex_credits(config.codex_home, now=now)
+    if credits:
+        typer.echo(_credits_line(credits))
 
 
 @usage_app.command("guard")
@@ -204,6 +207,16 @@ def _usage_line(w, f, now) -> str:
     if w.status != "fresh":
         line += f" [{w.status}]"
     return line
+
+
+def _credits_line(c) -> str:
+    left = (
+        "unlimited" if c.unlimited
+        else "unknown" if c.balance is None
+        else f"{c.balance:,.0f} left"
+    )  # fmt: skip
+    line = f"{c.provider:<6} {'credits':<12} {left} · read {c.observed_at.astimezone():%a %H:%M}"
+    return line if c.status == "fresh" else f"{line} [{c.status}]"
 
 
 def _usage_json(w, f) -> dict:
