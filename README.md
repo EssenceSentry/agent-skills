@@ -29,7 +29,11 @@ take effect at once; after a change to the dependencies, run the same command wi
 | --- | --- |
 | `ax sync` | Archive new and changed sessions into the vault |
 | `ax doctor` | Check retention, the vault, the last sync and format drift |
-| `ax search "words" [--json]` | Find past sessions by what was said in them |
+| `ax search "words" [--json]` | Find past sessions by the exact words said in them |
+| `ax find "question" [--in …] [--json]` | One search over conversations, memories, vault notes and code (qmd and Semble) |
+| `ax index` (`setup`, `refresh`, `eval`) | Build and refresh the index behind `ax find`, and score it on questions with known answers |
+| `ax here` / `ax recall <handle>` | This conversation's handle; an earlier conversation brought into this one, linked in both notes |
+| `ax mcp` / `ax mcp install` | `find`, `recall` and `here` for agents over MCP, and their registration in both tools |
 | `ax runs` (`watch`, `show`, `stop`) | Delegated, background and subagent runs from both tools in one list |
 | `ax exp` (`init`, `propose`, `list`, `start`, `finish`, `abandon`) | Research campaigns whose experiments must pass a value gate |
 | `ax usage` / `ax usage guard` | Allowance left per tool and window, a forecast to reset, and a guard for scripts (exit 0 safe, 1 below, 69 unknown) |
@@ -132,6 +136,32 @@ recurrences, a narrower scope after an override, `retire` or `keep` after 90 sil
 days. Sync labels up to 40 new candidates with Haiku itself; `[learn] label_on_sync =
 false` turns that off.
 `recall` reports how many active rules the labels rediscover.
+
+### Conversations you can build on
+
+Every conversation has a handle: the last eight characters of its session id,
+written `ax:9fe6d7e6`, the same short id its note's file name ends with. Ask an
+agent for "the id" and it runs `ax here`. In another conversation, in either
+tool, `ax recall ax:9fe6d7e6` brings it in as an outline with no model call (the
+user's turns, where it ended, the files it changed and the note's path);
+`--card` adds a summary Haiku writes once per conversation, and `--for "task"`
+has a model return only what that task needs. Recalling from inside a
+conversation links the two, and so does mentioning `ax:<handle>` or a full
+session id: sync writes the links into the notes as `builds_on`, and Obsidian
+shows the backlinks and the graph.
+
+### One search
+
+`ax find` asks qmd (conversation notes, Claude's and Codex's memories and the
+vault's own notes, on a qmd index named `ax`) and Semble (every git checkout
+under `~/Repos` plus `[find] extra_repos`) and interleaves their rankings. Each
+hit is labelled conversation, memory, note or code; conversation hits carry
+their handle, and `--project`, `--provider` and `--since` filter them. `--fast`
+uses keywords only. `ax index setup` builds the indexes once (qmd downloads
+about 2 GB of local models); sync refreshes them whenever it writes notes.
+`ax index eval questions.yml` reports how many questions with known answers
+(`{query, expect}`, where `expect` is a handle or part of a path) come back in
+the top five. Agents get the same through the session-recall skill or `ax mcp`.
 
 ### Measuring it
 
