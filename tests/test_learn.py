@@ -136,9 +136,21 @@ def test_frustration_moments_are_labelled_with_their_episode(archive):
     cs = [angry, candidate("p", "s2", "demo")]
     model = FakeModel(lambda i: keep("test-split", frustrated=i == "f"))
     labels = learn.label(archive.config, cs, model=model)
-    assert labels["f"]["frustrated"] is True and labels["p"]["frustrated"] is False
+    assert labels["f"]["frustrated"] is True and "frustrated" not in labels["p"]
     [prompt] = [p for p in model.prompts if "train.py --all-rows" in p]
     assert '"id": "p"' not in prompt
+
+
+def test_a_frustration_moment_labelled_without_its_episode_is_labelled_again(archive):
+    angry = candidate("f", "s1", "demo", text="Very disappointing!", signals=["frustration"])
+    learn.label(
+        archive.config, [{**angry, "signals": ["phrase"]}], model=FakeModel(lambda i: keep("x"))
+    )
+    assert learn.unlabelled([angry], learn.load_labels(archive.config)) == [angry]
+    model = FakeModel(lambda i: keep("x", frustrated=True))
+    labels = learn.label(archive.config, [angry], model=model)
+    assert labels["f"]["frustrated"] is True and len(model.prompts) == 1
+    assert learn.unlabelled([angry], labels) == []
 
 
 def test_two_sessions_make_a_repo_proposal_and_two_projects_a_global_one(archive):

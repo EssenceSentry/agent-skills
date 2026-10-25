@@ -1,11 +1,12 @@
 """A weekly scorecard of how the agent setup is doing, from the archive alone.
 
 Each week counts, in the user's own sessions of both tools: messages, corrections
-(and the "I said" or "again" kind that repeat one), progress nudges, guard blocks,
-permission denials in headless Claude workers, and cost by model and effort (Codex
-reports no cost, only sessions). Across the whole window it lists each active rule
-with how often its guard fired, errors that recur across sessions, and installed
-skills nobody used. Nothing calls a model.
+(and the "I said" or "again" kind that repeat one), progress nudges, frustration
+moments (those `ax learn label` confirmed, plus marked ones it hasn't checked yet),
+guard blocks, permission denials in headless Claude workers, and cost by model and
+effort (Codex reports no cost, only sessions). Across the whole window it lists each
+active rule with how often its guard fired, errors that recur across sessions, and
+installed skills nobody used. Nothing calls a model.
 """
 
 import html
@@ -274,7 +275,8 @@ def build(config, *, weeks: int = 6, now: datetime | None = None) -> dict:
     since = start.isoformat()
     week = {
         n: {"week": n, "sessions": Counter(), "user_messages": 0, "corrections": 0, "repeats": 0,
-            "nudges": 0, "guard_fires": 0, "denials": 0,
+            "nudges": 0, "frustration": 0, "frustration_unchecked": 0, "guard_fires": 0,
+            "denials": 0,
             "cost": defaultdict(lambda: {"sessions": 0, "usd": None})}
         for n in names
     }  # fmt: skip
@@ -290,10 +292,11 @@ def build(config, *, weeks: int = 6, now: datetime | None = None) -> dict:
             w["sessions"][s["provider"]] += 1
     users = _rows(
         config,
-        "SELECT m.text, COALESCE(m.ts, s.ended) AS ts FROM messages m JOIN sessions s "
+        "SELECT m.id, m.text, COALESCE(m.ts, s.ended) AS ts FROM messages m JOIN sessions s "
         f"ON s.key = m.session_key WHERE {_human()} AND m.role = 'user' AND s.ended >= ?",
         (since,),
     )
+    labels = learn.load_labels(config)
     for m in users:
         text = learn._request(m["text"])
         if not text or text.startswith(learn._BOILERPLATE) or (w := slot(m["ts"])) is None:
@@ -305,6 +308,12 @@ def build(config, *, weeks: int = 6, now: datetime | None = None) -> dict:
             w["repeats"] += 1
         if NUDGE.search(text):
             w["nudges"] += 1
+        if learn.frustrated(text):
+            confirmed = labels.get(f"m{m['id']}", {}).get("frustrated")
+            if confirmed is None:
+                w["frustration_unchecked"] += 1
+            elif confirmed:
+                w["frustration"] += 1
     fires = Counter()
     for entry in _guard_log(config):
         fires[entry.get("rule")] += 1
@@ -349,9 +358,21 @@ def build(config, *, weeks: int = 6, now: datetime | None = None) -> dict:
     }
 
 
+def _frustration(week: dict, *, long: bool = False) -> str:
+    """Confirmed frustration moments, and those the labeller hasn't checked yet."""
+    unchecked = week["frustration_unchecked"]
+    if not unchecked:
+        return str(week["frustration"])
+    return (
+        f"{week['frustration']} (+{unchecked} unchecked)"
+        if long
+        else f"{week['frustration']}+{unchecked}?"
+    )
+
+
 def text(card: dict) -> str:
     """The scorecard for a terminal."""
-    lines = ["week      sessions  messages  corrections  repeats  nudges  guard  denials"]
+    lines = ["week      sessions  messages  corrections  repeats  nudges  frustr.  guard  denials"]
     for w in card["weeks"]:
         sessions = sum(w["sessions"].values())
         rate = (
@@ -361,7 +382,7 @@ def text(card: dict) -> str:
         )
         lines.append(
             f"{w['week']:<9} {sessions:>8}  {w['user_messages']:>8}  {rate:>11}  {w['repeats']:>7}  "
-            f"{w['nudges']:>6}  {w['guard_fires']:>5}  {w['denials']:>7}"
+            f"{w['nudges']:>6}  {_frustration(w):>7}  {w['guard_fires']:>5}  {w['denials']:>7}"
         )
     quiet = [r["id"] for r in card["rules"] if r["level"] == "block" and not r["guard_fires"]]
     if quiet:
@@ -393,9 +414,9 @@ def markdown(card: dict) -> str:
         "",
         "## Weeks",
         "",
-        '| Week | Sessions | Messages | Corrections | "I said" / again | Nudges | Guard blocks '
-        "| Worker denials |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        '| Week | Sessions | Messages | Corrections | "I said" / again | Nudges | Frustration '
+        "| Guard blocks | Worker denials |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for w in card["weeks"]:
         share = (
@@ -403,8 +424,8 @@ def markdown(card: dict) -> str:
         )
         lines.append(
             f"| {w['week']} | {sum(w['sessions'].values())} | {w['user_messages']} | "
-            f"{w['corrections']}{share} | {w['repeats']} | {w['nudges']} | {w['guard_fires']} | "
-            f"{w['denials']} |"
+            f"{w['corrections']}{share} | {w['repeats']} | {w['nudges']} | "
+            f"{_frustration(w, long=True)} | {w['guard_fires']} | {w['denials']} |"
         )
     lines += [
         "",
@@ -443,11 +464,12 @@ def render(card: dict) -> str:
     e = html.escape
     head = "".join(f"<th>{e(h)}</th>" for h in (
         "Week", "Sessions", "Messages", "Corrections", "“I said”/again", "Nudges",
-        "Guard blocks", "Worker denials"))  # fmt: skip
+        "Frustration", "Guard blocks", "Worker denials"))  # fmt: skip
     rows = "".join(
         f"<tr><td>{e(w['week'])}</td><td>{sum(w['sessions'].values())}</td>"
         f"<td>{w['user_messages']}</td><td>{w['corrections']}</td><td>{w['repeats']}</td>"
-        f"<td>{w['nudges']}</td><td>{w['guard_fires']}</td><td>{w['denials']}</td></tr>"
+        f"<td>{w['nudges']}</td><td>{e(_frustration(w, long=True))}</td>"
+        f"<td>{w['guard_fires']}</td><td>{w['denials']}</td></tr>"
         for w in card["weeks"]
     )
     cost_rows = "".join(

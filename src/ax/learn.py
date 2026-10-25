@@ -553,7 +553,7 @@ def _parse(answer: str) -> list[dict]:
     return [x for x in found if isinstance(x, dict) and isinstance(x.get("id"), str)]
 
 
-def _clean_label(raw: dict) -> dict:
+def _clean_label(raw: dict, *, episode: bool = False) -> dict:
     kind = raw.get("kind") if raw.get("kind") in KINDS else "none"
     topic = re.sub(r"[^a-z0-9]+", "-", str(raw.get("topic") or "").lower()).strip("-")[:60]
     return {
@@ -562,7 +562,8 @@ def _clean_label(raw: dict) -> dict:
         "rule": str(raw.get("rule") or "").strip(),
         "topic": topic,
         "scope": "repo" if raw.get("scope") == "repo" else "global",
-        "frustrated": raw.get("frustrated") is True,
+        # Only a label made from the episode says whether the user was frustrated.
+        **({"frustrated": raw.get("frustrated") is True} if episode else {}),
     }
 
 
@@ -571,10 +572,20 @@ def load_labels(config) -> dict:
     return json.loads(path.read_text()) if path.exists() else {}
 
 
+def unlabelled(candidates, labels) -> list:
+    """Candidates with no label, or a frustration moment labelled without its episode."""
+    return [
+        c
+        for c in candidates
+        if c["id"] not in labels
+        or ("frustration" in c["signals"] and "frustrated" not in labels[c["id"]])
+    ]
+
+
 def label(config, candidates, *, model=None, batch: int = 20, workers: int = 4) -> dict:
-    """Label every candidate that has no label yet; returns all labels."""
+    """Label every candidate that needs it (see `unlabelled`); returns all labels."""
     labels = load_labels(config)
-    todo = [c for c in candidates if c["id"] not in labels]
+    todo = unlabelled(candidates, labels)
     if not todo:
         return labels
     model = model or claude_model()
@@ -589,7 +600,7 @@ def label(config, candidates, *, model=None, batch: int = 20, workers: int = 4) 
         with lock:
             for raw in answer:
                 if raw["id"] in wanted:
-                    labels[raw["id"]] = _clean_label(raw)
+                    labels[raw["id"]] = _clean_label(raw, episode=build is _episode_prompt)
             tmp = path.with_suffix(".tmp")
             tmp.write_text(json.dumps(labels, indent=1))
             tmp.replace(path)

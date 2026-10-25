@@ -80,11 +80,19 @@ def card(env, tmp_path):
         add_messages(db, "x1", THIS_WEEK, ("user", "Looks good."),
                      ("tool", "ran `sed -n 1,80p /Users/me/.codex/skills/plotting/SKILL.md`"))  # fmt: skip
         add_session(db, "x2", LAST_WEEK, source=transcript("x2", 411, codex=True))
-        add_messages(db, "x2", LAST_WEEK, ("user", "Never commit without asking."))
+        add_messages(db, "x2", LAST_WEEK, ("user", "Never commit without asking."),
+                     ("user", "Very disappointing! You ignored the plan."),
+                     ("user", "This is unacceptable."))  # fmt: skip
+        [(confirmed,)] = db.execute(
+            "SELECT id FROM messages WHERE text LIKE 'Very disappointing%'"
+        ).fetchall()
         add_session(db, "w1", THIS_WEEK, provider="claude", entrypoint="sdk-cli",
                     model="claude-opus-5-5", effort="high", cost=2.0, source=str(worker_log))  # fmt: skip
         add_messages(db, "w1", THIS_WEEK, ("user", "Never do X; you are a worker."))
         store.commit()
+    labels = env.config.data / "learn" / "labels.json"
+    labels.parent.mkdir(parents=True)
+    labels.write_text(json.dumps({f"m{confirmed}": {"kind": "none", "frustrated": True}}))
     (env.config.data / "guard.jsonl").write_text(
         json.dumps({"ts": "2026-10-23T10:00:00-0300", "rule": "stage-explicit-paths"}) + "\n"
     )
@@ -105,6 +113,14 @@ def test_weeks_count_corrections_nudges_and_sessions(card):
     assert this["sessions"] == {"claude": 1, "codex": 1} and this["user_messages"] == 4
     assert this["corrections"] == 2 and this["repeats"] == 1 and this["nudges"] == 1
     assert last["corrections"] == 1 and last["sessions"] == {"codex": 1}
+
+
+def test_frustration_moments_count_once_the_labeller_confirms_them(card):
+    last, this = card["weeks"][0], card["weeks"][-1]
+    assert last["frustration"] == 1 and last["frustration_unchecked"] == 1
+    assert this["frustration"] == 0 and this["frustration_unchecked"] == 0
+    assert "Frustration" in scorecard.markdown(card) and "Frustration" in scorecard.render(card)
+    assert "1 (+1 unchecked)" in scorecard.markdown(card)
 
 
 def test_worker_denials_and_guard_fires_are_counted(card):

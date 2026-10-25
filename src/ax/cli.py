@@ -1272,7 +1272,7 @@ def learn_label(
         typer.echo("no candidates; run `ax learn scan` first", err=True)
         raise typer.Exit(1)
     labels = learn.load_labels(config)
-    todo = [c for c in candidates if c["id"] not in labels][: limit or None]
+    todo = learn.unlabelled(candidates, labels)[: limit or None]
     calls = -(-len(todo) // batch)
     if dry_run:
         typer.echo(f"would label {len(todo)} candidates in {calls} calls to {model}")
