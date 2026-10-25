@@ -256,6 +256,9 @@ _IRREVERSIBLE = [
      "deletes something on GitHub", None),
 ]  # fmt: skip
 _INTENT = re.compile(r"""(?:^|[\s;&|(])AX_INTENT=(?:"([^"]*)"|'([^']*)'|([^\s;&|]+))""")
+# `ax budget` pauses whoever would go over; a reason in front passes it, which only the
+# main agent may give (see ax.budget).
+_BUDGET_PASS = re.compile(r"\bax\s+budget\s+(?:add|check|reserve)\b")
 
 
 def caller(payload: dict, tool: str) -> str:
@@ -551,6 +554,8 @@ def _main(argv=None, *, stdin=None, stdout=None) -> int:
         limit = None
         if not hit and not found and who != "main":
             limit = _limit(data, payload.get("session_id"), command)
+            if not limit and intent(command) and _BUDGET_PASS.search(code_only(command)):
+                found = {"id": "budget-over", "what": "goes past a budget's limit", "detail": ""}
     except Exception as exc:  # fail open: a guard bug never stops the work, but it says so
         _log(data, {**entry, "kind": "error", "error": f"{type(exc).__name__}: {exc}"})
         return 0

@@ -229,3 +229,22 @@ def test_a_brief_lists_the_limits_its_worker_works_under(env, tmp_path):
     text = brief.build(env.config, "review", repo=repo, task="Review it.", windows=[]).text
     assert "## Limits" in text and "No publishing from workers." in text
     assert "force push" in text  # the irreversible actions it can't take either
+
+
+def test_a_subagent_that_gives_a_reason_to_go_over_a_budget_is_stopped(rules):
+    over = 'AX_INTENT="one more batch" ax budget add annotations 5 --note "batch 9"'
+    said = ask(rules, over, agent_id="a1", agent_type="general-purpose")
+    assert said.startswith("Stopped:") and "budget" in said and "report" in said
+    assert logged(rules)[-1]["rule"] == "budget-over" and logged(rules)[-1]["kind"] == "stop"
+    assert ask(rules, "ax budget add annotations 5", agent_id="a1") is None  # the ledger answers
+    assert ask(rules, 'AX_INTENT="the user asked" ax budget reserve annotations 5') is None
+
+
+def test_a_codex_worker_that_gives_a_reason_to_go_over_a_budget_is_stopped(rules, tmp_path):
+    transcript = tmp_path / "rollout.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "session_meta", "payload": {"source": "exec"}}) + "\n"
+    )
+    said = ask(rules, 'AX_INTENT="needed" ax budget check downloads 2', tool="codex",
+               transcript_path=str(transcript))  # fmt: skip
+    assert said.startswith("Stopped:")
