@@ -766,7 +766,10 @@ def load_state(config) -> dict:
 
 
 def _window_key(found: Opening) -> str:
-    return f"{found.tool}:{found.resets_at.isoformat(timespec='minutes')}"
+    """The window's tool and reset, to the nearest hour: the reported reset moves by a
+    minute between readings (23:59, then 00:00)."""
+    hour = (found.resets_at + timedelta(minutes=30)).replace(minute=0, second=0, microsecond=0)
+    return f"{found.tool}:{hour.isoformat(timespec='minutes')}"
 
 
 def remember(config, ready: list, work: Load, share: dict, *, took: bool = True) -> None:

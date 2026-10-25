@@ -670,6 +670,14 @@ def test_a_window_is_not_worked_twice_on_the_same_items(work):
     assert started
 
 
+def test_a_window_keeps_its_key_when_its_reported_reset_moves_a_minute():
+    base = opening("claude", 40, 10)
+    moved = workshop.Opening(
+        **{**base.__dict__, "resets_at": base.resets_at - timedelta(minutes=1)}
+    )
+    assert workshop._window_key(moved) == workshop._window_key(base)
+
+
 def test_a_dry_run_writes_the_material_and_briefs_and_launches_nothing(work):
     env, _ = work
     found = workshop.run(env.config, dry_run=True, readings=spare(), now=NOW,
