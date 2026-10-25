@@ -19,6 +19,7 @@ input or missing rules never block anything.
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -187,6 +188,158 @@ def evaluate(rules: list[dict], command: str, cwd: str) -> dict | None:
                 return rule
         except re.error:
             continue  # a broken pattern guards nothing; it must not stop every command
+    return None
+
+
+# Friction without walls (PLAN component 19). The main agent, which has the whole
+# conversation, pauses once before something it can't undo and goes on when it says why;
+# a subagent or worker, with only part of the context, is stopped.
+
+_SEG = r"[^;&|\n]*"  # within one command of a line
+_GIT = r"\bgit(?:\s+-[Cc]\s+\S+)*\s+"
+_DISPOSABLE = {"node_modules", "dist", "build", "__pycache__", ".pytest_cache", ".ruff_cache",
+               ".mypy_cache", ".venv", "venv", "checks", "coverage", ".next", ".turbo",
+               ".cache", "target", ".parcel-cache"}  # fmt: skip
+_TEMP = ("/tmp/", "/private/tmp/", "/var/folders/")
+_SQL_CLIENT = re.compile(r"\b(?:psql|snowsql|sqlite3|mysql|duckdb|bq)\b")
+_SQL_DROP = re.compile(r"(?i)\b(?:drop\s+(?:table|database|schema|view)|truncate\s+table)\b")
+# (id, pattern over what runs, what it does, the check that can tell nothing would be lost)
+_IRREVERSIBLE = [
+    ("git-reset-hard", rf"{_GIT}reset\b{_SEG}--hard\b", "discards uncommitted changes", "tracked"),
+    ("git-checkout-paths", rf"{_GIT}checkout\b(?:{_SEG}\s--(?:\s|$)|\s+\.(?:\s|$))",
+     "discards uncommitted changes", "tracked"),
+    ("git-restore", rf"{_GIT}restore\b{_SEG}", "discards uncommitted changes", "restore"),
+    ("git-clean", rf"{_GIT}clean\b{_SEG}\s-[a-zA-Z]*f", "deletes untracked files", "untracked"),
+    ("git-stash-drop", rf"{_GIT}stash\s+(?:drop|clear)\b", "deletes stashed work", None),
+    ("git-branch-delete", rf"{_GIT}branch\b{_SEG}(?:\s-[a-zA-Z]*D\b|--delete\s+--force|--force\s+--delete)",
+     "deletes a branch whether or not it was merged", None),
+    ("git-force-push", rf"{_GIT}push\b{_SEG}(?:\s--force(?:-with-lease)?\b|\s-[a-zA-Z]*f\b|\s\+\S)",
+     "overwrites history on the remote", None),
+    ("git-remote-delete", rf"{_GIT}push\b{_SEG}(?:\s--delete\b|\s-d\b|\s:\S)",
+     "deletes a branch or tag on the remote", None),
+    ("git-worktree-force", rf"{_GIT}worktree\s+remove\b{_SEG}(?:--force\b|\s-f\b)",
+     "removes a worktree with any uncommitted work in it", None),
+    ("git-history", rf"{_GIT}(?:reflog\s+expire\b|gc\b{_SEG}--prune=now|filter-branch\b|filter-repo\b|update-ref\s+-d\b)",
+     "rewrites or prunes history git keeps for recovery", None),
+    ("rm-recursive", rf"(?:^|[\s;&|(])rm\s+{_SEG}", "deletes files and folders recursively", "rm"),
+    ("find-delete", rf"\bfind\b{_SEG}\s-delete\b", "deletes every file find matches", None),
+    ("cloud-delete", r"\baws\s+s3\s+(?:rm|rb)\b|\baws\s+[a-z0-9-]+\s+(?:delete|terminate|remove|deregister|purge)-[a-z0-9-]+"
+     rf"|\baws\s+s3\s+sync\b{_SEG}--delete\b|\bgcloud\b{_SEG}\sdelete\b|\bkubectl\s+delete\b"
+     rf"|\bterraform\s+(?:destroy\b|apply\b{_SEG}-destroy\b)",
+     "deletes cloud resources or data", None),
+    ("github-delete", rf"\bgh\s+(?:repo|release)\s+delete\b|\bgh\s+api\b{_SEG}(?:-X|--method)\s*DELETE\b",
+     "deletes something on GitHub", None),
+]  # fmt: skip
+_INTENT = re.compile(r"""(?:^|[\s;&|(])AX_INTENT=(?:"([^"]*)"|'([^']*)'|([^\s;&|]+))""")
+
+
+def caller(payload: dict, tool: str) -> str:
+    """main, subagent or worker. Claude marks a subagent's calls with agent_id; Codex says
+    who started a session in the first line of its transcript."""
+    if payload.get("agent_id"):
+        return "subagent"
+    path = payload.get("transcript_path")
+    if tool == "codex" and isinstance(path, str):
+        try:
+            with open(path) as f:
+                meta = json.loads(f.readline()).get("payload") or {}
+        except (OSError, ValueError, AttributeError):
+            return "main"
+        source = meta.get("source") if isinstance(meta, dict) else None
+        if isinstance(source, dict) and "subagent" in source:
+            return "subagent"
+        if source == "exec" or meta.get("originator") == "codex_exec":
+            return "worker"
+    return "main"
+
+
+def intent(command: str) -> str | None:
+    """The reason given as AX_INTENT="…" in front of the command, if any."""
+    found = _INTENT.search(command)
+    if not found or "AX_INTENT=" not in code_only(command):
+        return None  # only inside a string or a heredoc: not given
+    value = next(g for g in found.groups() if g is not None).strip()
+    return value if len(value) >= 3 else None
+
+
+def _git(cwd: str, segment: str, *args: str) -> list[str] | None:
+    where = re.search(r"\bgit\s+-C\s+(\S+)", segment)
+    folder = os.path.join(cwd, where.group(1)) if where else cwd
+    try:
+        done = subprocess.run(["git", "-C", folder, *args], capture_output=True, text=True,
+                              timeout=2)  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return done.stdout.splitlines() if done.returncode == 0 else None
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _rm_targets(segment: str) -> list[str]:
+    words = segment.split()
+    start = next((i for i, w in enumerate(words) if w == "rm"), None)
+    return [] if start is None else words[start + 1 :]
+
+
+def _loss(check: str | None, segment: str, cwd: str) -> str | None:
+    """What would be lost, "" when it can't be told, None when nothing would be."""
+    if check in ("tracked", "restore"):
+        if (
+            check == "restore"
+            and "--staged" in segment
+            and not re.search(r"--worktree|\s-W\b", segment)
+        ):
+            return None  # only unstages
+        changed = _git(cwd, segment, "status", "--porcelain", "--untracked-files=no")
+        if changed is None:
+            return ""
+        return _plural(len(changed), "uncommitted change") if changed else None
+    if check == "untracked":
+        flags = "".join(
+            w[1:] for w in segment.split() if w.startswith("-") and not w.startswith("--")
+        )
+        extra = [f"-{c}" for c in "dxX" if c in flags]
+        doomed = _git(cwd, segment, "clean", "-n", *extra)
+        if doomed is None:
+            return ""
+        return _plural(len(doomed), "untracked file") if doomed else None
+    if check == "rm":
+        words = _rm_targets(segment)
+        flags = [w for w in words if w.startswith("-")]
+        if not any(re.fullmatch(r"-[a-zA-Z]*[rR][a-zA-Z]*|--recursive", f) for f in flags):
+            return None  # one file at a time is ordinary work
+        targets = [w for w in words if not w.startswith("-")]
+
+        def disposable(t: str) -> bool:
+            path = os.path.expanduser(t).rstrip("/")
+            return (os.path.isabs(path) and (path + "/").startswith(_TEMP)) or (
+                os.path.basename(path) in _DISPOSABLE
+            )
+
+        if targets and all(disposable(t) for t in targets):
+            return None
+        return ", ".join(t for t in targets if not disposable(t))[:120] or ""
+    return ""
+
+
+def destructive(command: str, cwd: str) -> dict | None:
+    """The first irreversible thing the command would do, with what would be lost; an
+    action that would lose nothing (a reset on a clean tree) is not one."""
+    code = code_only(command)
+    sql = _SQL_CLIENT.search(code) and _SQL_DROP.search(command)
+    if sql:
+        return {"id": "sql-drop", "what": "drops a table or database", "detail": ""}
+    for line in code.splitlines():
+        for segment in re.split(r"&&|\|\||;|\|", line):
+            for rule_id, pattern, what, check in _IRREVERSIBLE:
+                if not re.search(pattern, segment):
+                    continue
+                lost = _loss(check, segment, cwd)
+                if lost is None:
+                    continue
+                return {"id": rule_id, "what": what, "detail": lost}
     return None
 
 
@@ -364,17 +517,39 @@ def _main(argv=None, *, stdin=None, stdout=None) -> int:
     if not isinstance(command, str) or not isinstance(rules, list):
         return 0
     cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else os.getcwd()
-    hit = evaluate(rules, command, cwd)
-    if not hit:
+    entry = {"tool": tool, "cwd": cwd, "session": payload.get("session_id"),
+             "command": command[:300]}  # fmt: skip
+    try:
+        who = caller(payload, tool)
+        hit = evaluate(rules, command, cwd)
+        found = None if hit else destructive(command, cwd)
+    except Exception as exc:  # fail open: a guard bug never stops the work, but it says so
+        _log(data, {**entry, "kind": "error", "error": f"{type(exc).__name__}: {exc}"})
         return 0
-    rule_id = str(hit.get("id") or "unnamed")
-    _log(data, {"tool": tool, "rule": rule_id, "cwd": cwd,
-                "session": payload.get("session_id"), "command": command[:300]})  # fmt: skip
-    message = hit.get("message") or "This command breaks a rule in the user's profile."
-    reason = (
-        f"{message} (blocked by the user's profile rule {rule_id}; "
-        "if it is wrong here, ask the user rather than working around it)"
-    )
+    if not hit and not found:
+        return 0
+    rule_id = str(hit.get("id") or "unnamed") if hit else found["id"]
+    if hit:
+        what = hit.get("message") or "This command breaks a rule in the user's profile."
+        what = f"{what.rstrip('.')} (your profile rule {rule_id})"
+    else:
+        detail = f": {found['detail']}" if found["detail"] else ""
+        what = f"this {found['what']}{detail}"
+    entry |= {"rule": rule_id, "caller": who}
+    reason_given = intent(command) if who == "main" else None
+    if reason_given:
+        _log(data, {**entry, "kind": "pass", "intent": reason_given})
+        return 0
+    if who == "main":
+        _log(data, {**entry, "kind": "pause"})
+        preview = command if len(command) <= 120 else command[:117] + "..."
+        reason = (f"Pause: {what}. If you mean it, run the same command again with your reason "
+                  f'in front: AX_INTENT="<why>" {preview}')  # fmt: skip
+    else:
+        _log(data, {**entry, "kind": "stop"})
+        reason = (f"Stopped: {what}. An agent started by another agent doesn't do this; say "
+                  "what you needed in your report to the agent that started you, which can "
+                  "run it.")  # fmt: skip
     stdout.write(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
