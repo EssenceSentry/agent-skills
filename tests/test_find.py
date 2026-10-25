@@ -209,3 +209,4 @@ def test_a_running_qmd_daemon_answers_without_loading_models_again(indexed, monk
     url, body = posted[0]
     assert url.endswith(":8181/query") and body["collections"] == ["claude", "codex"]
     assert [s["type"] for s in body["searches"]] == ["lex", "vec"] and body["rerank"] is True
+    assert body["candidateLimit"] == find.RERANK

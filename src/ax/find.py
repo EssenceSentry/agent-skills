@@ -26,6 +26,7 @@ from ax.store import Store
 
 INDEX = "ax"
 RRF_K = 60
+RERANK = 20  # candidates the reranker reads: half qmd's default, half the time
 OFF_TOPIC_CODE = 0.3  # weight of code hits for a question that names no code
 # A query is about code when it names some: an identifier, a file, a call, or asks where.
 _CODE = re.compile(
@@ -178,13 +179,14 @@ def _ask_qmd(config, query, collections, *, n, fast) -> list:
         searches = [{"type": "lex", "query": query}]
         searches += [] if fast else [{"type": "vec", "query": query}]
         body = {"searches": searches, "collections": list(collections), "limit": n,
-                "rerank": not fast}  # fmt: skip
+                "rerank": not fast, "candidateLimit": RERANK}  # fmt: skip
         url = f"http://localhost:{config.find_qmd_port}/query"
         try:
             return _post(url, body, timeout=120).get("results") or []
         except (OSError, ValueError):
             pass  # a daemon that just went away: ask qmd directly
     args = ["search" if fast else "query", query, "--format", "json", "-n", str(n)]
+    args += [] if fast else ["-C", str(RERANK)]
     for name in collections:
         args += ["-c", name]
     return json.loads(_qmd(config, *args) or "[]")
