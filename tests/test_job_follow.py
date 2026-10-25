@@ -217,3 +217,64 @@ def test_cli_notify_without_a_topic_is_refused(env, monkeypatch):
     jobs.new(env.config, "score")
     result = cli(env, "follow", "score", "--notify")
     assert result.exit_code == 2 and "no ntfy topic" in result.stderr
+
+
+def follow_with(env, script, **kw):
+    timeline = Timeline(jobs.events_path(env.config, "score"), script)
+    hooks = {k: kw.pop(k) for k in ("waker", "alerter", "diagnoser", "checker") if k in kw}
+    opts = job_follow.FollowOptions(dashboard=False, interval=60, linger=60, wake="auto", **kw)
+    return job_follow.follow(env.config, "score", opts, clock=timeline, sleep=timeline.sleep,
+                             **hooks)  # fmt: skip
+
+
+def test_a_wake_that_fails_or_lands_in_a_copy_alerts_the_user(env):
+    from ax.job_wake import WakeError
+
+    jobs.new(env.config, "score", env={"CODEX_THREAD_ID": "th-1"})
+    alerts = []
+
+    def refuse(job):
+        raise WakeError("codex exited with 1")
+
+    follow_with(env, {1: [{"status": "done"}]}, waker=refuse, alerter=alerts.append)
+    assert (
+        "couldn't reach" in alerts[0]["message"] and "codex exited with 1" in alerts[0]["message"]
+    )
+    jobs.forget(env.config, "score")
+    jobs.new(env.config, "score", env={"CLAUDE_CODE_SESSION_ID": "s-1"})
+    follow_with(env, {1: [{"status": "done"}]}, alerter=alerts.append,
+                waker=lambda job: {"agent": "claude", "copy": True, "via": "resume"})  # fmt: skip
+    assert "copy" in alerts[1]["message"]
+
+
+def test_a_failed_job_is_diagnosed_before_the_agent_is_woken(env):
+    from ax import job_wake
+
+    jobs.new(env.config, "score", env={"CODEX_THREAD_ID": "th-1"})
+    notes = []
+    follow_with(env, {1: [{"status": "failed", "message": "exit 1"}]},
+                diagnoser=lambda job: "DuckDB API mismatch",
+                waker=lambda job: notes.append(job_wake.packet(env.config, job)))  # fmt: skip
+    assert "Diagnosis: DuckDB API mismatch" in notes[0]
+
+
+def test_a_finished_job_needs_no_diagnosis(env):
+    jobs.new(env.config, "score", env={"CODEX_THREAD_ID": "th-1"})
+    asked = []
+    follow_with(env, {1: [{"status": "done"}]}, waker=lambda job: None,
+                diagnoser=lambda job: asked.append(job) or "x")  # fmt: skip
+    assert asked == []
+
+
+def test_the_health_check_wakes_the_agent_once_per_problem(env):
+    jobs.new(env.config, "score", env={"CODEX_THREAD_ID": "th-1"})
+    problems = iter([None, "every row errors with KeyError", "every row errors with KeyError",
+                     "disk is full"])  # fmt: skip
+    woken, alerts = [], []
+    follow_with(env, {15: [{"status": "done"}]}, check_every=180,
+                checker=lambda job: next(problems, None), alerter=alerts.append,
+                waker=lambda job, note=None: woken.append(note))  # fmt: skip
+    looks_wrong = [n for n in woken if n]
+    assert len(looks_wrong) == 2 and "every row errors" in looks_wrong[0]
+    assert "disk is full" in looks_wrong[1] and len(alerts) == 2
+    assert [e["type"] for e in jobs.events(env.config, "score")].count("problem") == 2

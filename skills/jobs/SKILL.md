@@ -28,6 +28,12 @@ session when the job ends. Every command takes `--json`.
 Pick a short key that names the work (`score-violence-v5`); runs of one family that
 share a key stem (`score-…`) teach the estimator their usual duration.
 
+**Always describe the job** with `--label`: what it does and what you will do next
+when it succeeds or fails ("Extract candidate text and embeddings; then build the
+annotation pilot. On failure, fix and relaunch from the saved scores"). The
+dashboard, the notifications and the note that wakes you all carry it. If you forgot,
+`ax job describe KEY --label "…"` adds it to a job already running.
+
 ## Wait without polling
 
 - **Claude Code:** run `ax job wait KEY` as a background command
@@ -39,6 +45,14 @@ share a key stem (`score-…`) teach the estimator their usual duration.
   and end your turn: the thread is resumed with a note when the job ends.
 - **Overnight or unattended:** add `--wake auto` to `run`, `watch` or `new`; it resumes
   the session that registered the job once it ends.
+
+With `--wake`, the note reaches your conversation even while it is open: a Codex
+thread open in the app gets it through `codex queue`; a Claude session that is still
+running gets it in a background copy (`claude agents` lists it), and the user gets a
+push saying so. If a job fails, Haiku reads the end of its log first and the note
+starts with its diagnosis. While it runs, Haiku checks the log every 30 minutes
+(`--check-every`, 0 to turn off) and wakes you once per problem it sees, such as the
+same error on every item. If no route reaches you, the user gets a push.
 
 `ax job wait` exit codes: 0 done, 1 failed, 2 stopped or ended, 3 stalled (with
 `--until stalled`), 4 the source check kept failing (credentials, a wrong name),

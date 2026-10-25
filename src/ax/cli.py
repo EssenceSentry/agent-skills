@@ -1217,6 +1217,9 @@ def job_follow_cmd(
     interval: float = typer.Option(3.0, help="Seconds between refreshes."),
     detach: bool = typer.Option(False, "--detach", help="Run in the background; print the link."),
     wake: str = _WAKE,
+    check_every: float = typer.Option(
+        None, help="Minutes between Haiku health checks of the log; 30 with --wake, 0 for none."
+    ),
     resumed: bool = typer.Option(
         False, "--resumed", hidden=True, help="Restarted by the poller: send nothing twice."
     ),
@@ -1228,6 +1231,7 @@ def job_follow_cmd(
         share=share, notify=notify, every=every * 60, notify_stages=notify_stages,
         stall_after=None if stall_after is None else stall_after * 60, linger=linger,
         show_log=show_log, interval=interval, port=port, wake=wake, resumed=resumed,
+        check_every=(30.0 if wake and check_every is None else check_every or 0) * 60 or None,
     )  # fmt: skip
     if detach:
         args = job_follow.options_args(options)

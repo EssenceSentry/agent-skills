@@ -42,6 +42,7 @@ class FollowOptions:
     dashboard: bool = True
     wake: str | None = None  # auto, claude or codex: resume that session when the job ends
     resumed: bool = False  # restarted by the poller: don't repeat what was already sent
+    check_every: float | None = None  # seconds between model health checks of a running job
 
 
 def options_args(options: FollowOptions) -> list[str]:
@@ -55,6 +56,7 @@ def options_args(options: FollowOptions) -> list[str]:
     if options.stall_after is not None:
         args += ["--stall-after", str(options.stall_after / 60)]
     args += ["--wake", options.wake] if options.wake else []
+    args += ["--check-every", str((options.check_every or 0) / 60)]
     args += ["--resumed"] if options.resumed else []
     return args
 
@@ -118,6 +120,9 @@ def follow(
     *,
     notifier=None,
     waker=None,
+    alerter=None,
+    diagnoser=None,
+    checker=None,
     on_ready=None,
     clock=time.time,
     sleep=time.sleep,
@@ -153,20 +158,77 @@ def follow(
     if options.wake and waker is None:
         from ax import job_wake
 
-        def waker(job):
-            return job_wake.wake(config, job, options.wake)
+        def waker(job, note=None):
+            return job_wake.wake(config, job, options.wake, note=note)
 
-    def wake(job) -> None:
+    if alerter is None and (ntfy_alerts := job_notify.settings(config)):
+
+        def alerter(message):
+            return job_notify.send(ntfy_alerts, **message)
+
+    if options.wake and diagnoser is None:
+        from ax import job_triage
+
+        def diagnoser(job):
+            return job_triage.diagnose(config, job)
+
+    if options.check_every and checker is None:
+        from ax import job_triage
+
+        def checker(job):
+            return job_triage.check(config, job)
+
+    def alert(title: str, text: str) -> None:
+        """A push to the user's phone when an agent couldn't be reached, whatever --notify says."""
+        if alerter is None:
+            return
+        error = alerter({"title": title, "message": text, "tags": ("warning",), "priority": 4})
+        jobs.record_event(config, key, "alert_failed" if error else "alerted", {"title": title})
+
+    def wake(job, note=None) -> None:
         if not options.wake or waker is None:
             return
-        if options.resumed and _already(config, key, "woke"):
+        if note is None and options.resumed and _already(config, key, "woke"):
             return
         from ax.job_wake import WakeError
 
         try:
-            waker(job)
+            found = waker(job) if note is None else waker(job, note)
         except (WakeError, OSError) as exc:
             jobs.record_event(config, key, "wake_failed", {"error": str(exc)})
+            alert(f"{key}: couldn't reach the agent",
+                  f"{job.key} {job.status}; couldn't reach its conversation: {exc}")  # fmt: skip
+            return
+        if isinstance(found, dict) and found.get("copy"):
+            alert(f"{key}: woke a copy",
+                  f"{job.key} {job.status}; the conversation was busy, so a copy of it took "
+                  "the note: see `claude agents`.")  # fmt: skip
+
+    def diagnose(job) -> None:
+        if diagnoser is None or job.status not in ("failed", "ended"):
+            return
+        if options.resumed and _already(config, key, "diagnosis"):
+            return
+        try:
+            text = diagnoser(job)
+        except Exception as exc:  # a diagnosis is a courtesy; the wake must still happen
+            jobs.record_event(config, key, "diagnosis_failed", {"error": str(exc)[-300:]})
+            return
+        if text:
+            jobs.record_event(config, key, "diagnosis", {"text": text})
+
+    def check(job, state: dict) -> None:
+        """Ask the model whether a running job looks wrong; wake the agent once per problem."""
+        try:
+            problem = checker(job)
+        except Exception as exc:
+            jobs.record_event(config, key, "check_failed", {"error": str(exc)[-300:]})
+            return
+        if problem and problem != state.get("problem"):
+            jobs.record_event(config, key, "problem", {"text": problem})
+            wake(job, problem)
+            alert(f"{key}: looks wrong", problem)
+        state["problem"] = problem
 
     stopping = threading.Event()
     previous = None
@@ -207,7 +269,7 @@ def follow(
         relink = server.link if options.dashboard else None
         return _loop(
             config, key, options, job, link, links, share, relink, notify, wake, stopping, clock,
-            sleep,
+            sleep, diagnose=diagnose, check=check if checker else None,
         )  # fmt: skip
     finally:
         for close in reversed(closers):
@@ -226,9 +288,11 @@ def _eta(config, job, options) -> dict | None:
 
 
 def _loop(
-    config, key, options, job, link, links, share, relink, notify, wake, stopping, clock, sleep
-) -> str:
+    config, key, options, job, link, links, share, relink, notify, wake, stopping, clock, sleep,
+    *, diagnose=None, check=None,
+) -> str:  # fmt: skip
     end_at = None
+    checked_at, health = clock(), {}
     last_note, noted = clock(), (job.done, job.stage)
     last_stage = job.stage
     stalled_sent = False
@@ -247,6 +311,8 @@ def _loop(
                 message = job_notify.finished(job, link)
                 if not (options.resumed and _already(config, key, "notified", message["title"])):
                     notify(message)
+                if diagnose:
+                    diagnose(job)
                 wake(job)
             if now - end_at >= options.linger:
                 break
@@ -261,6 +327,9 @@ def _loop(
             ):
                 notify(job_notify.progress(job, link, _eta(config, job, options)))
                 last_note, noted = now, (job.done, job.stage)
+            if check and options.check_every and now - checked_at >= options.check_every:
+                checked_at = now
+                check(job, health)
             if options.stall_after is not None:
                 quiet = now - jobs.parse_iso(job.changed).timestamp()
                 if quiet >= options.stall_after and not stalled_sent:
