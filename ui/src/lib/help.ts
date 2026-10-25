@@ -146,6 +146,13 @@ export const areas: Area[] = [
     commands: ["ax exp"],
   },
   {
+    id: "budgets",
+    area: "Budgets",
+    title: "Caps agents keep, and you can watch",
+    body: 'Tell an agent "no more than $40 on annotations and 4 GB of downloads" and it registers both. Agents add what they spend, or reserve before an expensive call and settle after, so parallel workers can\'t overshoot together; a download budget measures its folder by itself. Going over pauses the main agent until it gives a reason, which is logged on the budget; subagents report back instead. Each budget shows on the Now screen.',
+    commands: ["ax budget"],
+  },
+  {
     id: "todos",
     area: "To-dos",
     title: "Follow-ups every conversation sees",
@@ -160,6 +167,7 @@ export const commands: [string, string][] = [
   ["ax search", "Exact words said in past conversations"],
   ["ax here · ax recall", "This conversation's handle; an earlier one brought into this one"],
   ["ax todo", "To-dos, global or per project, in every digest"],
+  ["ax budget", "Caps agents register, add to, reserve against and check"],
   ["ax job", "Long jobs any agent can register, wait on and be woken by"],
   ["ax usage", "Allowance per tool and window, Codex credits, a guard for scripts"],
   ["ax app", "This app in the background: start, stop, status, open, launchd service"],
@@ -188,6 +196,7 @@ export const alone = [
   "read the scorecard, usage, runs and rules",
   "start, check and open this app",
   "set limits for their own subagents",
+  "keep budgets: set, add, reserve, check, show",
 ]
 
 export const askFirst = [

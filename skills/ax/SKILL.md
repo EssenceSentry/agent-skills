@@ -85,6 +85,24 @@ command has `--help`; most take `--json` for agents.
 - `ax todo list` (this project's and the global ones; `--all`), `ax todo done T3`,
   `ax todo drop T3`. Close a to-do when its work is done in this conversation.
 
+## Budgets
+
+- `ax budget set NAME LIMIT --unit usd` (`--why`, `--project`, `--path DIR`): when
+  the user gives a cap ("no more than $40 on annotations", "don't download more than
+  4 GB"), register it. It belongs to this conversation and its subagents, or to the
+  repository with `--project`; with `--path` it measures that folder's size (B, KB,
+  MB, GB or TB) instead of taking additions.
+- `ax budget add NAME AMOUNT --note "..."` after spending. Before an expensive step,
+  `ax budget reserve NAME AMOUNT` prints a ticket such as R3; afterwards `ax budget
+  settle R3 ACTUAL`, or `release R3` if nothing was spent. A hold never settled keeps
+  counting, so parallel workers can't overshoot together.
+- `ax budget check NAME AMOUNT` exits 0 when the amount fits; `show [NAME]` gives
+  spent, reserved, left and the ledger; `close NAME` ends it. All take `--json`.
+- **Going over pauses:** the command says what is spent and left. If you mean it, run
+  it again with `AX_INTENT="why"` in front; the reason is logged on the budget. A
+  subagent or worker never passes a budget: it reports back to the agent that
+  started it.
+
 ## Plumbing the user runs
 
 - `ax sync`: archive new conversations (hooks and a schedule run it).
@@ -105,7 +123,8 @@ command has `--help`; most take `--json` for agents.
 - **Alone:** find, search, recall (outline), here, job show and wait, todo list,
   todo add or done when the user asked, scorecard, usage, runs, profile list and
   check, learn list and review, doctor, app start, status and open, workshop status,
-  policy add, list and remove for your own subagents, any `--help` or `--dry-run`.
+  policy add, list and remove for your own subagents, every `budget` command, any
+  `--help` or `--dry-run`.
 - **Ask first:** anything that spends (`learn label`, `lab run`, `recall --for` or
   `--card`, briefs that launch workers, `index setup`), changes the user's rules or
   tools (`learn accept|reject|keep|retire|guard`, `profile add` or `compile

@@ -35,6 +35,7 @@ take effect at once; after a change to the dependencies, run the same command wi
 | `ax index` (`setup`, `refresh`, `eval`) | Build and refresh the index behind `ax find`, and score it on questions with known answers |
 | `ax here` / `ax recall <handle>` | This conversation's handle; an earlier conversation brought into this one, linked in both notes |
 | `ax todo` (`add`, `list`, `done`, `drop`) | To-dos, global or per project, linked to the conversation that raised them and shown in every new conversation's digest |
+| `ax budget` (`set`, `add`, `check`, `reserve`, `settle`, `release`, `show`, `close`) | Caps such as $40 of annotations or 4 GB of downloads: agents add to them or reserve before spending, a folder budget measures itself, and going over pauses the main agent until it gives a reason; subagents report back instead |
 | `ax mcp` / `ax mcp install` | `find`, `recall` and `here` for agents over MCP, and their registration in both tools |
 | `ax runs` (`watch`, `show`, `stop`) | Delegated, background and subagent runs from both tools in one list |
 | `ax exp` (`init`, `propose`, `list`, `start`, `finish`, `abandon`) | Research campaigns whose experiments must pass a value gate |

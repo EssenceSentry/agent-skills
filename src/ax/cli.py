@@ -630,6 +630,216 @@ def policy_remove(limit_id: str = typer.Argument(..., help="Its id, such as L3."
     typer.echo(f"removed {limit_id}")
 
 
+budget_app = typer.Typer(
+    no_args_is_help=True,
+    help="Budgets agents register, add to and ask about: dollars, gigabytes, calls, hours.",
+)
+app.add_typer(budget_app, name="budget")
+_BUDGET_JSON = typer.Option(False, "--json", help="Machine-readable output.")
+_PAUSE_ELSE = ("A subagent or worker doesn't go over a budget: it says what it needed in its "
+               "report to the agent that started it.")  # fmt: skip
+
+
+def _budget_who(config) -> tuple[str | None, str | None]:
+    """This conversation's handle and its session id, when inside one."""
+    from ax import handles
+
+    found = handles.current(config)
+    return (handles.tag(found[1]), found[1]) if found else (None, None)
+
+
+def _budget_line(b: dict) -> str:
+    from ax.budget import number
+
+    held = f", {number(b['reserved'])} reserved" if b["reserved"] else ""
+    where = f" · measures {b['path']}" if b["path"] else ""
+    owner = f" · set by {b['owner']}" if b["owner"] else ""
+    state = "" if b["state"] == "ok" else f" · {b['state'].upper()}"
+    return (f"{b['name']:<16} {number(b['spent'])} of {number(b['cap'])} {b['unit']}{held}, "
+            f"{number(b['left'])} left{state}{owner}{where}")  # fmt: skip
+
+
+def _budget_call(call, *, pause: list[str] | None = None):
+    """Run a ledger call: going over pauses (exit 1) and says how to pass; bad input or a
+    missing budget exits 2."""
+    import shlex
+
+    from ax import budget
+
+    try:
+        return call()
+    except budget.OverLimit as exc:
+        again = shlex.join(["ax", "budget", *(pause or [])])
+        typer.echo(f"Pause: {exc}. If you mean it, run the same command again with your "
+                   f'reason in front: AX_INTENT="<why>" {again}. {_PAUSE_ELSE}')  # fmt: skip
+        raise typer.Exit(1) from None
+    except budget.BudgetError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+
+
+def _intent() -> str | None:
+    given = (os.environ.get("AX_INTENT") or "").strip()
+    return given if len(given) >= 3 else None
+
+
+@budget_app.command("set")
+def budget_set(
+    name: str = typer.Argument(..., help="A short name, such as annotations or downloads."),
+    limit: float = typer.Argument(..., help="The most it may reach."),
+    unit: str = typer.Option(..., help="usd, GB, MB, hours, calls, rows: any unit."),
+    why: str = typer.Option(None, help="What it is for, in a few words."),
+    path: Path = typer.Option(None, help="Measure this folder's size instead of adding to it."),
+    for_project: bool = typer.Option(
+        False,
+        "--project",
+        help="For this repository, not only this conversation and its subagents.",
+    ),  # fmt: skip
+    as_json: bool = _BUDGET_JSON,
+):
+    """Open a budget, or change the limit of one that is open."""
+    from ax import budget
+    from ax.sources.common import project_name
+
+    config = load()
+    owner, session = _budget_who(config)
+    project = project_name(os.getcwd())
+    scope = f"project:{project}" if for_project or not session else f"session:{session}"
+    found = _budget_call(lambda: budget.create(
+        config.data, name, limit, unit, why=why, owner=owner, scope=scope, project=project,
+        path=str(path) if path else None))  # fmt: skip
+    if as_json:
+        typer.echo(json.dumps(found, indent=2))
+        return
+    whose = "this repository" if scope.startswith("project:") else "this conversation"
+    typer.echo(f"{_budget_line(found)}\nfor {whose}{': ' + why if why else ''}")
+
+
+@budget_app.command("add")
+def budget_add(
+    name: str = typer.Argument(..., help="The budget."),
+    amount: float = typer.Argument(..., help="What was spent, in the budget's unit."),
+    note: str = typer.Option(None, help="What it was spent on."),
+    as_json: bool = _BUDGET_JSON,
+):
+    """Record what was spent. Going over pauses; AX_INTENT="why" in front goes through."""
+    from ax import budget
+
+    config = load()
+    owner, _ = _budget_who(config)
+    again = ["add", name, budget.number(amount), *(["--note", note] if note else [])]
+    found = _budget_call(lambda: budget.add(config.data, name, amount, note=note, agent=owner,
+                                            intent=_intent()), pause=again)  # fmt: skip
+    typer.echo(json.dumps(found, indent=2) if as_json else _budget_line(found))
+
+
+@budget_app.command("check")
+def budget_check(
+    name: str = typer.Argument(..., help="The budget."),
+    amount: float = typer.Argument(..., help="The amount about to be spent."),
+    as_json: bool = _BUDGET_JSON,
+):
+    """Whether the next amount fits: exit 0 when it does, 1 when it would go over."""
+    from ax import budget
+
+    config = load()
+    owner, _ = _budget_who(config)
+    found = _budget_call(lambda: budget.check(config.data, name, amount, agent=owner,
+                                              intent=_intent()),
+                         pause=["check", name, budget.number(amount)])  # fmt: skip
+    typer.echo(json.dumps(found, indent=2) if as_json else f"fits · {_budget_line(found)}")
+
+
+@budget_app.command("reserve")
+def budget_reserve(
+    name: str = typer.Argument(..., help="The budget."),
+    amount: float = typer.Argument(..., help="The most the next step may spend."),
+    note: str = typer.Option(None, help="What it is for."),
+    as_json: bool = _BUDGET_JSON,
+):
+    """Hold an amount before an expensive step; settle the ticket with what it cost."""
+    from ax import budget
+
+    config = load()
+    owner, _ = _budget_who(config)
+    again = ["reserve", name, budget.number(amount), *(["--note", note] if note else [])]
+    ticket = _budget_call(lambda: budget.reserve(config.data, name, amount, note=note,
+                                                 agent=owner, intent=_intent()),
+                          pause=again)  # fmt: skip
+    found = budget.status(config.data, name)
+    if as_json:
+        typer.echo(json.dumps({"ticket": ticket, "budget": found}, indent=2))
+        return
+    typer.echo(f"{ticket} holds {budget.number(amount)} {found['unit']} · {_budget_line(found)}")
+
+
+@budget_app.command("settle")
+def budget_settle(
+    ticket: str = typer.Argument(..., help="The ticket reserve gave, such as R3."),
+    actual: float = typer.Argument(None, help="What it really cost; a folder budget measures it."),
+    as_json: bool = _BUDGET_JSON,
+):
+    """Replace a hold with what was really spent."""
+    from ax import budget
+
+    config = load()
+    owner, _ = _budget_who(config)
+    found = _budget_call(lambda: budget.settle(config.data, ticket, actual, agent=owner))
+    typer.echo(json.dumps(found, indent=2) if as_json else _budget_line(found))
+
+
+@budget_app.command("release")
+def budget_release(
+    ticket: str = typer.Argument(..., help="The ticket reserve gave."),
+    as_json: bool = _BUDGET_JSON,
+):
+    """Return a hold that wasn't spent."""
+    from ax import budget
+
+    found = _budget_call(lambda: budget.release(load().data, ticket))
+    typer.echo(json.dumps(found, indent=2) if as_json else _budget_line(found))
+
+
+@budget_app.command("show")
+def budget_show(
+    name: str = typer.Argument(None, help="One budget, with its ledger; default: all open."),
+    as_json: bool = _BUDGET_JSON,
+):
+    """Limit, spent, reserved and what is left."""
+    from ax import budget
+    from ax.budget import number
+
+    data = load().data
+    if name is None:
+        found = budget.statuses(data)
+        if as_json:
+            typer.echo(json.dumps(found, indent=2))
+            return
+        typer.echo("\n".join(_budget_line(b) for b in found) or "no open budgets")
+        return
+    found = _budget_call(lambda: budget.status(data, name))
+    found["entries"] = budget.entries(data, name)
+    if as_json:
+        typer.echo(json.dumps(found, indent=2))
+        return
+    typer.echo(_budget_line(found) + (f"\n{found['why']}" if found["why"] else ""))
+    for e in found["entries"][:20]:
+        what = {"add": "spent", "hold": f"held ({e['state']})", "pass": "passed"}[e["kind"]]
+        ticket = f"{e['ticket']} " if e["ticket"] else ""
+        reason = f'  AX_INTENT="{e["intent"]}"' if e["intent"] else ""
+        typer.echo(f"  {e['at'][:16]}  {ticket}{what} {number(e['amount'])}"
+                   f"  {e['note'] or ''}  {e['agent'] or ''}{reason}".rstrip())  # fmt: skip
+
+
+@budget_app.command("close")
+def budget_close(name: str = typer.Argument(..., help="The budget to end.")):
+    """End a budget; its ledger is kept and the name is free again."""
+    from ax import budget
+
+    found = _budget_call(lambda: budget.close(load().data, name))
+    typer.echo(f"closed {_budget_line(found)}")
+
+
 workshop_app = typer.Typer(
     no_args_is_help=True,
     help="The rules workshop: a weekly window's spare allowance, spent on the rules.",
