@@ -69,11 +69,11 @@ export const exampleNow: NowState = {
   waiting: [
     {
       kind: "job",
-      id: "seed-annotation",
-      title: "Annotate 17,451 discovery pairs with Luna",
-      detail: "failed",
-      status: "failed",
-      updated: at(-14),
+      id: "review-leakage",
+      title: "Opus review: holdout and provenance safeguards",
+      detail: "no progress in 40 min",
+      status: "running",
+      updated: at(-41),
       actions: [],
     },
     {

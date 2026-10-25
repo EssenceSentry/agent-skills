@@ -25,7 +25,6 @@ COOKIE = "ax_token"
 NEAR_LIMIT = 80  # percent of a usage window that puts it on the waiting list
 RUNS_OUT_SOON = timedelta(days=1)  # or a forecast that runs out this soon
 CONVERSATIONS = 15
-_FLAGGED = {"failed", "ended"}  # job endings worth a look; "stopped" was someone's choice
 _IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}  # not SVG: it can carry script
 _COMPILE = "run `ax profile compile --apply` to"
 
@@ -62,7 +61,8 @@ def now_state(config, *, usage_of=None, credits_of=None) -> dict:
     def gather_jobs():
         rows = serve._jobs(config)
         state["jobs"] = [j for j in rows if j["status"] == "running"]
-        found["job"] = [_job_item(j) for j in rows if j["status"] in _FLAGGED or j["check_error"]]
+        # Only what can still be acted on: running jobs a health check flagged.
+        found["job"] = [_job_item(j) for j in state["jobs"] if j["check_error"]]
 
     def gather_rules():
         problems: list = []

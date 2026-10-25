@@ -59,7 +59,8 @@ def test_now_lists_what_waits_for_the_user_with_its_actions(queue):
     todo = found[("todo", "T1")]
     assert todo["title"] == "Approve the start hook" and todo["origin"] == "ax:48402546"
     assert todo["actions"] == ["done", "drop"] and todo["note"].startswith("Todos/T1 ")
-    assert found[("job", "score-1")]["detail"] == "failed"
+    # Only jobs still running need a look; one that already failed is past.
+    assert ("job", "score-1") not in found
     assert found[("job", "embed-1")]["detail"] == "no progress in 40 min"
     assert found[("usage", "claude-weekly")]["title"] == "Claude weekly: 86% used"
     assert found[("usage", "claude-weekly")]["detail"] == "7% a day left for 2 days"
