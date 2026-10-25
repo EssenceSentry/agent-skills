@@ -10,6 +10,7 @@ a rule, and feedback memories the profile does not cover yet.
 
 import difflib
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -357,7 +358,7 @@ def _instruction_files(config) -> list[Path]:
         config.claude_home / "plugins", *config.profile_extra_dirs,
     ):  # fmt: skip
         if skills.is_dir():
-            files += sorted(skills.rglob("SKILL.md"))
+            files += _skill_files(skills)
     files += sorted(config.claude_home.glob("projects/*/memory/*.md"))
     vault_rules = rules_dir(config)
     return [
@@ -365,6 +366,22 @@ def _instruction_files(config) -> list[Path]:
         for p in dict.fromkeys(files)
         if p.is_file() and vault_rules not in p.parents and ".trash" not in p.parts
     ]
+
+
+def _skill_files(root: Path) -> list[Path]:
+    """Every SKILL.md under `root`, including skills linked in from a repository: `rglob`
+    doesn't follow a symlinked folder, and `ax skills link` makes them."""
+    found, seen = [], set()
+    for folder, dirs, files in os.walk(root, followlinks=True):
+        real = os.path.realpath(folder)
+        if real in seen:  # a link back up the tree
+            dirs[:] = []
+            continue
+        seen.add(real)
+        dirs.sort()
+        if "SKILL.md" in files:
+            found.append(Path(folder) / "SKILL.md")
+    return found
 
 
 def _frontmatter(text: str) -> dict:

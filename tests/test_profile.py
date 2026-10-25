@@ -30,6 +30,17 @@ def rule(home, rule_id, **fields):
     return profile.add(home.config, rule_id, **fields)
 
 
+def test_instruction_files_include_skills_linked_from_a_repository(home):
+    # `ax skills link` puts symlinks in the skills folders; their SKILL.md still counts.
+    real = home.repo / "skills" / "jobs"
+    real.mkdir(parents=True)
+    (real / "SKILL.md").write_text("---\nname: jobs\n---\nRegister long jobs.\n")
+    linked = home.config.claude_home / "skills"
+    linked.mkdir(parents=True, exist_ok=True)
+    (linked / "jobs").symlink_to(real)
+    assert linked / "jobs" / "SKILL.md" in profile._instruction_files(home.config)
+
+
 def test_seed_writes_the_starting_rules_once(home):
     written = profile.seed(home.config)
     rules = profile.load_rules(home.config)
