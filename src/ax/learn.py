@@ -87,7 +87,39 @@ _SHOUT = re.compile(r"\b[A-Z]{2,}(?:\s+[A-Z]{2,}){2,}\b")
 _CODE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
 # Capitals that are code, not shouting: SQL keywords, and acronyms under four letters.
 _SQL = frozenset(
-    ["SELECT", "FROM", "WHERE", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "FULL", "CROSS", "GROUP", "ORDER", "HAVING", "LIMIT", "NULL", "INSERT", "INTO", "UPDATE", "DELETE", "CREATE", "TABLE", "VALUES", "DISTINCT", "UNION", "CASE", "WHEN", "THEN", "ELSE", "LIKE", "BETWEEN", "WITH"]
+    [
+        "SELECT",
+        "FROM",
+        "WHERE",
+        "JOIN",
+        "LEFT",
+        "RIGHT",
+        "INNER",
+        "OUTER",
+        "FULL",
+        "CROSS",
+        "GROUP",
+        "ORDER",
+        "HAVING",
+        "LIMIT",
+        "NULL",
+        "INSERT",
+        "INTO",
+        "UPDATE",
+        "DELETE",
+        "CREATE",
+        "TABLE",
+        "VALUES",
+        "DISTINCT",
+        "UNION",
+        "CASE",
+        "WHEN",
+        "THEN",
+        "ELSE",
+        "LIKE",
+        "BETWEEN",
+        "WITH",
+    ]
 )
 _PRAISE = re.compile(
     r"(?i)^\W*(?:great|perfect|excellent|awesome|amazing|nice|beautiful|brilliant|fantastic"
@@ -637,6 +669,7 @@ def label(config, candidates, *, model=None, batch: int = 20, workers: int = 4) 
     path = folder(config) / "labels.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     lock = threading.Lock()
+    mine: dict = {}
 
     def run(job):
         chunk, build = job
@@ -646,8 +679,11 @@ def label(config, candidates, *, model=None, batch: int = 20, workers: int = 4) 
             for raw in answer:
                 if raw["id"] in wanted:
                     key = _episode_key(wanted[raw["id"]]) if build is _episode_prompt else None
-                    labels[raw["id"]] = _clean_label(raw, episode=key)
-            tmp = path.with_suffix(".tmp")
+                    mine[raw["id"]] = _clean_label(raw, episode=key)
+            # A sync may label at the same time: merge into the file as it is now.
+            labels.update(load_labels(config))
+            labels.update(mine)
+            tmp = path.with_suffix(f".{os.getpid()}.tmp")
             tmp.write_text(json.dumps(labels, indent=1))
             tmp.replace(path)
 

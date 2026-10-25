@@ -358,3 +358,16 @@ def test_a_rejected_proposal_stays_rejected_under_a_new_topic(archive):
     labels = {c["id"]: keep("tabs", "Use tabs.") for c in cs}
     labels |= {c["id"]: keep("tab-indent", "Use tabs.") for c in more}
     assert learn.propose(archive.config, cs + more, labels) == []  # 3 sessions, not 4
+
+
+def test_labels_written_by_another_run_meanwhile_are_kept(archive):
+    path = archive.config.data / "learn" / "labels.json"
+
+    def model(prompt):
+        theirs = json.loads(path.read_text()) if path.exists() else {}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({**theirs, "other": keep("x")}))  # a sync labelling too
+        return FakeModel(lambda i: keep("y"))(prompt)
+
+    labels = learn.label(archive.config, [candidate("a", "s1", "demo")], model=model)
+    assert {"a", "other"} <= set(labels) and {"a", "other"} <= set(json.loads(path.read_text()))
