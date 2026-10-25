@@ -64,6 +64,12 @@ def test_scan_finds_frustration_explicit_requests_and_praise(env):
         ("You just had to run the repository that was proven to work!", True),
         ("Run the AWS S3 sync with the KMS key.", False),
         ("This looks good, thanks!", False),
+        ("Use a LEFT OUTER JOIN here.", False),
+        ("Check the GCP BQ API quota.", False),
+        ("The regex (?!foo) is a negative lookahead.", False),
+        ("Run this:\n```\nSELECT * FROM T WHERE X!!\n```", False),
+        ("Why `git push --force`?!", True),
+        ("PLEASE STOP NOW", True),
     ],
 )
 def test_frustration_markers(text, marked):

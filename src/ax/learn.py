@@ -81,9 +81,14 @@ _FRUSTRATION = re.compile(
     r"(?i)\b(?:disappoint\w*|frustrat\w*|unacceptable|ridiculous|terrible|awful|useless|pathetic"
     r"|sloppy|careless|wtf|what the (?:hell|heck|fuck)|for (?:god'?s|christ'?s) sake|seriously"
     r"|come on|how many times|i (?:already|just) (?:told|said|asked)|you (?:just )?had to"
-    r"|you (?:broke|ruined|wasted|destroyed)|waste of (?:my )?time|not again)\b|!!|\?!|!\?"
+    r"|you (?:broke|ruined|wasted|destroyed)|waste of (?:my )?time|not again)\b|!!|(?<!\()\?!|!\?"
 )
 _SHOUT = re.compile(r"\b[A-Z]{2,}(?:\s+[A-Z]{2,}){2,}\b")
+_CODE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
+# Capitals that are code, not shouting: SQL keywords, and acronyms under four letters.
+_SQL = frozenset(
+    ["SELECT", "FROM", "WHERE", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "FULL", "CROSS", "GROUP", "ORDER", "HAVING", "LIMIT", "NULL", "INSERT", "INTO", "UPDATE", "DELETE", "CREATE", "TABLE", "VALUES", "DISTINCT", "UNION", "CASE", "WHEN", "THEN", "ELSE", "LIKE", "BETWEEN", "WITH"]
+)
 _PRAISE = re.compile(
     r"(?i)^\W*(?:great|perfect|excellent|awesome|amazing|nice|beautiful|brilliant|fantastic"
     r"|good job|well done|love (?:it|this)|exactly|that'?s (?:it|perfect|great|exactly))\b"
@@ -161,8 +166,14 @@ def scanned(text: str) -> bool:
 
 
 def frustrated(text: str) -> bool:
-    """Whether a message carries a frustration marker; the labeller confirms it."""
-    return bool(_FRUSTRATION.search(text) or _SHOUT.search(text))
+    """Whether a message carries a frustration marker outside code; the labeller confirms it."""
+    text = _CODE.sub(" ", text)
+    if _FRUSTRATION.search(text):
+        return True
+    return any(
+        sum(len(w) >= 4 and w not in _SQL for w in run.group().split()) >= 2
+        for run in _SHOUT.finditer(text)
+    )
 
 
 def _praise(text: str, context: str) -> bool:
