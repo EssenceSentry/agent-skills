@@ -8,7 +8,13 @@ import { defineConfig } from "vite"
 export default defineConfig({
   plugins: [react(), tailwindcss(), atelierTheme()],
   // The build ships inside the ax package, which `ax serve` hosts without Node.
-  build: { outDir: "../src/ax/web", emptyOutDir: true },
+  build: {
+    outDir: "../src/ax/web",
+    emptyOutDir: true,
+    // Fonts stay files: the app's Content-Security-Policy refuses data: fonts, and Vite
+    // would inline a subset under 4 KB.
+    assetsInlineLimit: (file) => (/\.(woff2?|ttf|otf)$/.test(file) ? false : undefined),
+  },
   resolve: {
     alias: {
       "@": resolve(import.meta.dirname, "./src"),

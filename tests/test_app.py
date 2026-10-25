@@ -530,6 +530,17 @@ def test_the_identity_is_asked_again_after_a_miss_and_kept_once_found():
     assert found() == TAILNET_ID and found() == TAILNET_ID and len(asked) == 3
 
 
+def test_the_shipped_app_embeds_nothing_its_policy_blocks():
+    # The policy allows data: URLs for images only; Vite inlines small files, and an
+    # inlined font is refused by the browser (one JetBrains Mono subset was).
+    import re
+
+    inlined = {m for css in (app.WEB / "assets").glob("*.css")
+               for m in re.findall(r"url\(\s*['\"]?data:([^;,)]+)", css.read_text())}  # fmt: skip
+    assert not {kind for kind in inlined if not kind.startswith("image/")}
+    assert "img-src 'self' data:" in serve._APP_HEADERS["Content-Security-Policy"]
+
+
 def test_other_host_names_are_refused(served):
     _, base, token = served
     assert call(f"{base}/api/now", cookie=token, headers={"Host": "evil.example"})[0] == 403
