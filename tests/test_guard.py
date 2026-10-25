@@ -315,3 +315,23 @@ def test_odd_transcripts_never_crash_the_stop_check(env, tmp_path, lines):
 
 def test_a_non_string_transcript_path_is_ignored(env):
     assert stop(env, 7) is None
+
+
+def test_repo_rules_follow_a_worktree_back_to_its_repository(rules, ds_models, tmp_path):
+    worktree = tmp_path / "wt" / "ds-models-fix"
+    worktree.mkdir(parents=True)
+    (worktree / ".git").write_text(f"gitdir: {ds_models}/.git/worktrees/ds-models-fix\n")
+    assert blocked(rules, "uv sync", str(worktree)) == "ds-models-uv"
+
+
+def test_repo_rules_recognize_a_renamed_clone_by_its_origin(rules, tmp_path):
+    clone = tmp_path / "ds-models-2"
+    (clone / ".git").mkdir(parents=True)
+    (clone / ".git" / "config").write_text(
+        '[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:pix/ds-models.git\n'
+    )
+    assert blocked(rules, "uv sync", str(clone)) == "ds-models-uv"
+    other = tmp_path / "elsewhere"
+    (other / ".git").mkdir(parents=True)
+    (other / ".git" / "config").write_text('[remote "origin"]\n\turl = https://x/y/other.git\n')
+    assert blocked(rules, "uv sync", str(other)) is None

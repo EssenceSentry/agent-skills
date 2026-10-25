@@ -31,13 +31,45 @@ def log_path(data: Path) -> Path:
     return Path(data) / "guard.jsonl"
 
 
-def _repo_name(cwd) -> str | None:
-    """The folder name of the git repository containing cwd, found without running git."""
+def _origin_name(git_dir: Path) -> str | None:
+    """The repository name in the origin remote's URL, read from .git/config."""
+    try:
+        text = (git_dir / "config").read_text(errors="replace")
+    except OSError:
+        return None
+    section = None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("["):
+            section = line
+        elif section == '[remote "origin"]' and line.startswith("url"):
+            url = line.split("=", 1)[-1].strip().rstrip("/")
+            return url.rsplit("/", 1)[-1].rsplit(":", 1)[-1].removesuffix(".git") or None
+    return None
+
+
+def _repo_names(cwd) -> set[str]:
+    """Names the repository containing cwd goes by, found without running git: its
+    folder, the main checkout's folder when cwd is in a worktree, and its origin's name.
+    """
     path = Path(cwd if isinstance(cwd, str) and cwd else ".")
     for folder in (path, *path.parents):
-        if (folder / ".git").exists():
-            return folder.name
-    return None
+        dot_git = folder / ".git"
+        if not dot_git.exists():
+            continue
+        names, git_dir = {folder.name}, dot_git
+        if dot_git.is_file():  # a worktree: "gitdir: <main>/.git/worktrees/<name>"
+            try:
+                pointer = dot_git.read_text(errors="replace").strip()
+            except OSError:
+                return names
+            if pointer.startswith("gitdir:"):
+                worktree_git = Path(pointer.split(":", 1)[1].strip())
+                git_dir = worktree_git.parent.parent
+                names.add(git_dir.parent.name)
+        origin = _origin_name(git_dir)
+        return names | ({origin} if origin else set())
+    return set()
 
 
 _HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
@@ -114,8 +146,8 @@ def evaluate(rules: list[dict], command: str, cwd: str) -> dict | None:
         if rule.get("tool", "shell") != "shell":
             continue
         if rule.get("repo"):
-            repo = repo or _repo_name(cwd) or ""
-            if repo != rule["repo"]:
+            repo = _repo_names(cwd) if repo is None else repo
+            if rule["repo"] not in repo:
                 continue
         text = command
         if rule.get("where") == "command":
