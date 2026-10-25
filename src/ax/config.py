@@ -45,6 +45,8 @@ class Config:
     find_qmd_port: int = 8181  # where `ax index serve` keeps qmd's daemon
     # `ax sync` copies Claude's memories into Codex's ad-hoc memory notes unless false.
     share_memories: bool = True
+    # The rules workshop's [workshop] settings, read by `ax.workshop.settings`.
+    workshop: dict = field(default_factory=dict)
 
     @property
     def db_path(self) -> Path:
@@ -112,4 +114,5 @@ def load(path: Path | None = None) -> Config:
         find_refresh_on_sync=bool(finding.get("refresh_on_sync", True)),
         find_qmd_port=int(finding.get("qmd_port", 8181)),
         share_memories=bool(raw.get("memory", {}).get("share", True)),
+        workshop=dict(raw.get("workshop", {})),
     )
