@@ -285,3 +285,21 @@ def test_only_the_strongest_proposals_wait_for_review_at_once(archive):
     learn.reject(archive.config, "short-names")
     assert [r.id for r in learn.propose(archive.config, cs, labels, max_pending=2)
             if r.id not in ("check-runs",)] == ["tabs"]  # fmt: skip
+
+
+def test_a_long_frustrated_message_still_gets_the_work_before_it():
+    turns = [("user", "Train the model on the reviewed rows and report the AUC on the test split."),
+             ("tool", "uv run python train.py --all-rows"), ("assistant", "Done: AUC 0.97.")]  # fmt: skip
+    angry = "Very disappointing! You trained on the test rows again after I said to use the reviewed split."
+    episode = learn._episode([*turns, ("user", angry)])
+    assert episode.startswith("user: Train the model on the reviewed rows")
+    assert "tool: uv run python train.py --all-rows" in episode and episode.endswith(angry)
+
+
+def test_a_frustration_label_made_from_another_episode_is_made_again(archive):
+    angry = {**candidate("f", "s1", "demo", text="Very disappointing!", signals=["frustration"]),
+             "episode": "user: Very disappointing!"}  # fmt: skip
+    learn.label(archive.config, [angry], model=FakeModel(lambda i: keep("x", frustrated=True)))
+    assert learn.unlabelled([angry], learn.load_labels(archive.config)) == []
+    fuller = {**angry, "episode": "user: Train on the reviewed rows\nuser: Very disappointing!"}
+    assert learn.unlabelled([fuller], learn.load_labels(archive.config)) == [fuller]

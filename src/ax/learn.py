@@ -185,9 +185,9 @@ def _squash(text: str, limit: int, *, tail: bool = False) -> str:
 
 
 def _episode(turns: list) -> str:
-    """The turns since the request that started the work a message reacts to."""
+    """The turns since the request that started the work the last message reacts to."""
     start, asked = 0, 0
-    for i in range(len(turns) - 1, -1, -1):
+    for i in range(len(turns) - 2, -1, -1):  # the last turn is the reaction, not the request
         if turns[i][0] != "user":
             continue
         asked += 1
@@ -561,7 +561,12 @@ def _parse(answer: str) -> list[dict]:
     return [x for x in found if isinstance(x, dict) and isinstance(x.get("id"), str)]
 
 
-def _clean_label(raw: dict, *, episode: bool = False) -> dict:
+def _episode_key(candidate: dict) -> str:
+    """Names the episode a frustration label was made from, so a changed one is relabelled."""
+    return hashlib.sha1((candidate.get("episode") or "").encode()).hexdigest()[:12]
+
+
+def _clean_label(raw: dict, *, episode: str | None = None) -> dict:
     kind = raw.get("kind") if raw.get("kind") in KINDS else "none"
     topic = re.sub(r"[^a-z0-9]+", "-", str(raw.get("topic") or "").lower()).strip("-")[:60]
     return {
@@ -572,7 +577,7 @@ def _clean_label(raw: dict, *, episode: bool = False) -> dict:
         "scope": "repo" if raw.get("scope") == "repo" else "global",
         "against": re.sub(r"[^a-z0-9]+", "-", str(raw.get("against") or "").lower()).strip("-"),
         # Only a label made from the episode says whether the user was frustrated.
-        **({"frustrated": raw.get("frustrated") is True} if episode else {}),
+        **({"frustrated": raw.get("frustrated") is True, "episode": episode} if episode else {}),
     }
 
 
@@ -582,12 +587,12 @@ def load_labels(config) -> dict:
 
 
 def unlabelled(candidates, labels) -> list:
-    """Candidates with no label, or a frustration moment labelled without its episode."""
+    """Candidates with no label, or a frustration moment not labelled from its episode."""
     return [
         c
         for c in candidates
         if c["id"] not in labels
-        or ("frustration" in c["signals"] and "frustrated" not in labels[c["id"]])
+        or ("frustration" in c["signals"] and labels[c["id"]].get("episode") != _episode_key(c))
     ]
 
 
@@ -611,11 +616,12 @@ def label(config, candidates, *, model=None, batch: int = 20, workers: int = 4) 
     def run(job):
         chunk, build = job
         answer = _parse(model(build(config, chunk)))
-        wanted = {c["id"] for c in chunk}
+        wanted = {c["id"]: c for c in chunk}
         with lock:
             for raw in answer:
                 if raw["id"] in wanted:
-                    labels[raw["id"]] = _clean_label(raw, episode=build is _episode_prompt)
+                    key = _episode_key(wanted[raw["id"]]) if build is _episode_prompt else None
+                    labels[raw["id"]] = _clean_label(raw, episode=key)
             tmp = path.with_suffix(".tmp")
             tmp.write_text(json.dumps(labels, indent=1))
             tmp.replace(path)
