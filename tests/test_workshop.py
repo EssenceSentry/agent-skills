@@ -234,7 +234,9 @@ VERDICTS = (
 FINAL = (
     'Here it is:\n{"proposals": [{"kind": "new", "id": "tests-before-claims", '
     '"rule": "Run the tests before saying they pass.", "scope": "global", "level": "advice", '
-    '"replaces": [], "evidence": ["c1"], "why": "Corrected twice."}], "summary": "One rule."}'
+    '"replaces": [], "evidence": ["c1", "c2"], "why": "Corrected twice.", '
+    '"pattern": "Claiming tests pass without running them.", "checked": ["instructions/INDEX.md"]}], '
+    '"summary": "One rule."}'
 )
 
 
@@ -548,12 +550,14 @@ def test_stopping_an_agent_asks_its_runner_to_stop(scripts):
 
 def proposal(**fields):
     return {"kind": "new", "id": "tests-before-claims", "rule": "Run the tests before saying they pass.",
-            "scope": "global", "level": "advice", "replaces": [], "evidence": ["c1"],
-            "why": "Corrected twice.", **fields}  # fmt: skip
+            "scope": "global", "level": "advice", "replaces": [], "evidence": ["c1", "c2"],
+            "why": "Corrected twice.", "pattern": "Claiming tests pass without running them.",
+            **fields}  # fmt: skip
 
 
-def outcome_of(*proposals, drafts=(), summary="Two rules."):
-    found = workshop.Outcome(proposals=list(proposals), drafts=list(drafts), summary=summary)
+def outcome_of(*proposals, drafts=(), summary="Two rules.", keep=(), withdraw=(), warnings=()):
+    found = workshop.Outcome(proposals=list(proposals), drafts=list(drafts), summary=summary,
+                             keep=list(keep), withdraw=list(withdraw), warnings=list(warnings))  # fmt: skip
     found.results = [
         workshop.AgentResult(
             workshop.Agent("claude-synthesis", "synthesis", "claude", 3), "completed", cost=2.5
@@ -656,13 +660,94 @@ def test_accepting_a_workshop_proposal_retires_or_drops_what_it_replaces(work):
     assert rules["say-less"].status == "rejected"  # a proposal it replaced is rejected, kept
     assert rules["say-less"].superseded_by == "clean-changes"
     assert rules["unrelated-files"].superseded_by == "clean-changes"
-    learn.restore(env.config, "clean-changes")  # changing your mind brings them back
+    assert "rules workshop" in rules["say-less"].decided_by  # off the list when written
+    learn.restore(env.config, "clean-changes")  # changing your mind about the acceptance
     rules = {r.id: r for r in profile.load_rules(env.config)}
     assert rules["clean-changes"].status == "proposed"
     assert (
         rules["unrelated-files"].status == "active" and not rules["unrelated-files"].superseded_by
     )
-    assert rules["say-less"].status == "proposed"
+    assert rules["say-less"].status == "rejected"  # the workshop's withdrawal stands
+
+
+def test_the_final_list_keeps_replaces_or_withdraws_every_waiting_proposal(work):
+    env, _ = work
+    profile.add(env.config, "tabs", rule="Use tabs.", status="proposed")
+    profile.add(env.config, "old-idea", rule="Say it twice.", status="proposed",
+                extra={"source": "workshop", "workshop": "2026-10-25 1811 claude"})  # fmt: skip
+    found = workshop.load(env.config, candidates=[], labels={}, findings=[])
+    written = workshop.write(env.config, outcome_of(
+        proposal(kind="merge", id="clean-changes", rule="Change only what the task needs.",
+                 replaces=["say-less"], evidence=["say-less"]),
+        keep=["tabs"],
+        withdraw=[{"id": "old-idea", "why": "The ax skill already says it."}],
+    ), found, now=NOW)  # fmt: skip
+    rules = {r.id: r for r in profile.load_rules(env.config)}
+    assert rules["clean-changes"].status == "proposed" and rules["tabs"].status == "proposed"
+    assert rules["say-less"].status == "rejected"
+    assert rules["say-less"].superseded_by == "clean-changes"
+    assert "rules workshop" in rules["say-less"].decided_by
+    assert rules["old-idea"].status == "rejected" and not rules["old-idea"].superseded_by
+    assert "The ax skill already says it." in rules["old-idea"].why
+    report = written.report.read_text()
+    assert "## Kept" in report and "## Withdrawn" in report and "tabs" in report
+
+
+def test_proposals_the_final_agent_left_out_stay_and_are_named(work):
+    env, found = work
+    written = workshop.write(env.config, outcome_of(proposal()), found, now=NOW)
+    assert (
+        next(r for r in profile.load_rules(env.config) if r.id == "say-less").status == "proposed"
+    )
+    assert "## Not reviewed" in written.report.read_text()
+
+
+def test_a_new_rule_must_rest_on_two_sessions_or_a_standing_request(work):
+    env, found = work
+    one = proposal(id="one-session", evidence=["c1"])
+    no_pattern = proposal(id="no-pattern", pattern="")
+    found.evidence["c5"] = ("s5", True)  # c5 asked to keep it "from now on"
+    standing = proposal(id="standing", rule="Rename buttons in the design file.", evidence=["c5"])
+    written = workshop.write(env.config, outcome_of(one, no_pattern, standing, proposal()),
+                             found, now=NOW)  # fmt: skip
+    skipped = dict(written.skipped)
+    assert "one session" in skipped["one-session"] and "pattern" in skipped["no-pattern"]
+    assert sorted(written.proposals) == ["standing", "tests-before-claims"]
+
+
+def test_warnings_about_instructions_reach_the_report_and_the_app(work):
+    from ax import app
+
+    env, found = work
+    warning = {"file": "/Users/me/Repos/demo/AGENTS.md",
+               "problem": "Says to work on branches, but you commit on main.",
+               "suggestion": "Say to commit on main.", "evidence": ["c1", "c2"]}  # fmt: skip
+    written = workshop.write(env.config, outcome_of(proposal(), warnings=[warning]), found, now=NOW)
+    report = written.report.read_text()
+    assert "## Instructions to check" in report and "/Users/me/Repos/demo/AGENTS.md" in report
+    state = app.now_state(env.config, usage_of=lambda config: [])
+    [item] = [w for w in state["waiting"] if w["kind"] == "instruction"]
+    assert item["title"].startswith("/Users/me/Repos/demo/AGENTS.md")
+    assert "commit on main" in item["detail"] and item["actions"] == ["dismiss"]
+    app.act(env.config, "instruction-dismiss", {"id": item["id"]})
+    state = app.now_state(env.config, usage_of=lambda config: [])
+    assert not [w for w in state["waiting"] if w["kind"] == "instruction"]
+
+
+def test_the_final_brief_names_every_waiting_proposal_to_settle(work):
+    env, found = work
+    final = workshop.Agent("claude-synthesis", "synthesis", "claude", 3)
+    text = workshop.brief(final, waiting=["say-less", "tabs"])
+    assert "say-less" in text and "tabs" in text
+    assert '"keep"' in text and '"withdraw"' in text and '"warnings"' in text
+
+
+def test_a_run_does_not_start_again_on_its_own_proposals(work):
+    env, found = work
+    workshop.remember(env.config, [opening("claude", 40, 10)], found, {})
+    workshop.write(env.config, outcome_of(proposal()), found, now=NOW)  # the run's own output
+    never = lambda config, key, label: pytest.fail("started on its own proposals")  # noqa: E731
+    assert workshop.maybe_start(env.config, readings=spare(), launch=never, now=NOW) is None
 
 
 def test_the_app_puts_a_suggested_retirement_up_for_review_and_keep_clears_it(work):
@@ -748,8 +833,13 @@ def test_a_dry_run_writes_the_material_and_briefs_and_launches_nothing(work):
     assert found["dry_run"] and found["team"] and "item(s) to design" in found["reason"]
 
 
-def test_a_run_supervises_writes_tells_the_user_and_remembers_the_window(work):
+def test_a_run_supervises_writes_tells_the_user_and_remembers_the_window(work, rules, monkeypatch):
+    from ax import learn
+
     env, _ = work
+    _, candidates, labels = rules
+    monkeypatch.setattr(learn, "load_candidates", lambda config: candidates)  # what sync saved
+    monkeypatch.setattr(learn, "load_labels", lambda config: labels)
     told, clock = [], Clock()
     found = workshop.run(env.config, readings=spare(), runner=FakeRunner(), now=NOW,
                          clock=clock, sleep=clock.sleep,

@@ -117,6 +117,7 @@ class Load:
     active: list
     uncovered: list  # learn.Group evidence no rule covers
     conflicts: list  # profile.Finding of kind "conflict"
+    evidence: dict = field(default_factory=dict)  # candidate id -> (session, said as standing)
 
     @property
     def design_items(self) -> list:
@@ -160,6 +161,7 @@ def load(config, *, candidates=None, labels=None, findings=None) -> Load:
         active=active,
         uncovered=uncovered,
         conflicts=[f for f in findings if f.kind == "conflict"],
+        evidence={c["id"]: (c["session"], "explicit" in c["signals"]) for c in candidates},
     )
 
 
@@ -242,13 +244,23 @@ PHASES = {1: "drafts", 2: "critiques", 3: "proposals"}
 _DRAFT = (
     '{"key": "d1", "kind": "new|merge|rewrite|retire", "id": "kebab-case-id", '
     '"rule": "one sentence", "scope": "global or repo:NAME", "level": "advice|check|block", '
-    '"replaces": ["rule ids"], "evidence": ["candidate or rule ids"], "why": "short reason"}'
+    '"replaces": ["rule ids"], "evidence": ["candidate or rule ids"], '
+    '"pattern": "the recurring situation it covers, not one incident", '
+    '"checked": ["instructions/ files you searched"], "why": "short reason"}'
+)
+_WARNING = (
+    '{"file": "the original path, from instructions/INDEX.md", "problem": "what it gets wrong", '
+    '"evidence": ["candidate or rule ids"], "suggestion": "what to change"}'
 )
 _FORMATS = {
-    "drafts": '{"drafts": [' + _DRAFT + "]}",
+    "drafts": '{"drafts": [' + _DRAFT + '], "warnings": [' + _WARNING + "]}",
     "verdicts": '{"verdicts": [{"draft": "d1", "verdict": "keep|revise|drop", "why": "...", '
     '"revision": {...same fields as a draft, when revised}}]}',
-    "proposals": '{"proposals": [' + _DRAFT.replace('"key": "d1", ', "") + '], "summary": "..."}',
+    "proposals": '{"proposals": [' + _DRAFT.replace('"key": "d1", ', "") + "], "
+    '"keep": ["ids of waiting proposals kept as they are"], '
+    '"withdraw": [{"id": "a waiting proposal", "why": "...", '
+    '"superseded_by": "the id of one of your proposals, or empty"}], '
+    '"warnings": [' + _WARNING + '], "summary": "..."}',
 }
 _ANSWERS = {"designer": "drafts", "consolidator": "drafts", "critic": "verdicts",
             "synthesis": "proposals", "solo": "proposals"}  # fmt: skip
@@ -272,19 +284,29 @@ _COMMON = (
 )
 _ROLES = {
     "designer": "Design rules for the items below: one rule per real lesson, a rewrite for "
-    "a flagged rule, a resolution for a conflict. Say which rules a draft replaces.",
+    "a flagged rule, a resolution for a conflict. Say which rules a draft replaces. Also "
+    "warn about any instruction file or skill the conversations show to be wrong, out of "
+    "date, or the cause of a correction.",
     "consolidator": "Go through every rule in rules.md. Draft merges of rules that say the "
     "same thing, rewrites that make a rule clearer or narrower, and retirements of rules "
-    "with no recent evidence or that another rule already covers.",
-    "critic": "Judge every draft below against the evidence and the existing rules: keep it, "
-    "revise it (give the revision) or drop it, with a reason. Drop drafts that duplicate a "
-    "rule, rest on one session, or are too vague to act on.",
-    "synthesis": "Write the final proposals from the drafts and the critiques below: apply "
-    "every revision, drop what the critics dropped, settle disagreements, and keep at most "
-    "twelve. Add a one-paragraph summary for the user.",
+    "with no recent evidence or that another rule or an instruction file already covers. "
+    "Warn about instruction files or skills that contradict the rules or each other.",
+    "critic": "Judge every draft below against the evidence, the existing rules and "
+    "instructions/: keep it, revise it (give the revision) or drop it, with a reason. Drop "
+    "drafts that duplicate a rule or an instruction, rest on one session or one incident, "
+    "or are too vague to act on.",
+    "synthesis": "Write the one list the user will review. Every proposal waiting for the "
+    "user (listed below) ends up in exactly one place: kept as it is (keep), replaced by "
+    "one of your proposals (name it in that proposal's replaces), or withdrawn with a "
+    "reason (withdraw). Apply every revision, drop what the critics dropped and settle "
+    "disagreements; your proposals and the kept ones are at most twelve together. Keep the "
+    "warnings about instruction files that the evidence supports. Add a one-paragraph "
+    "summary for the user.",
     "solo": "Do the whole workshop alone: design rules for the items below, consolidate the "
-    "existing rules, criticise your own drafts, and write the final proposals (at most "
-    "twelve) with a one-paragraph summary.",
+    "existing rules, criticise your own drafts, warn about instruction files the "
+    "conversations show to be wrong, and write the one list the user will review: every "
+    "proposal waiting for the user (listed below) kept, replaced or withdrawn, at most "
+    "twelve together, with a one-paragraph summary.",
 }
 
 
@@ -366,9 +388,12 @@ def copy_instructions(config, folder: Path) -> list[str]:
     return lines
 
 
-def brief(agent: Agent, *, drafts=(), verdicts=()) -> str:
+def brief(agent: Agent, *, drafts=(), verdicts=(), waiting=()) -> str:
     answer = _ANSWERS[agent.role]
     parts = [_COMMON, "", f"Your part: {_ROLES[agent.role]}"]
+    if answer == "proposals":
+        parts += ["", "Proposals waiting for the user (settle each one):",
+                  *([f"- {rid}" for rid in waiting] or ["- none"])]  # fmt: skip
     if agent.consolidates and agent.role in ("designer", "solo"):
         parts.append("Also consolidate the existing rules, as a consolidator would.")
     if agent.items:
@@ -379,6 +404,10 @@ def brief(agent: Agent, *, drafts=(), verdicts=()) -> str:
         parts += ["", "The critiques:", "```json", json.dumps(list(verdicts), indent=1), "```"]
     parts += ["", "Answer with one JSON object and nothing else, in this shape:", _FORMATS[answer]]
     return "\n".join(parts)
+
+
+def _list(value) -> list:
+    return value if isinstance(value, list) else []
 
 
 def parse(text: str) -> dict | None:
@@ -417,6 +446,9 @@ class Outcome:
     drafts: list = field(default_factory=list)
     verdicts: list = field(default_factory=list)
     proposals: list = field(default_factory=list)
+    keep: list = field(default_factory=list)  # waiting proposals the final list keeps
+    withdraw: list = field(default_factory=list)  # and those it takes off the list
+    warnings: list = field(default_factory=list)  # instruction files that look wrong
     summary: str = ""
     stopped: str | None = None
     share: dict = field(default_factory=dict)
@@ -556,18 +588,26 @@ def supervise(config, crew: Team, work: Load, s: Settings, *, runner, readings, 
     write_dossier(folder / "dossier", work, config=config)
     run = _Run(crew, s, runner, readings, folder, clock, sleep, interval, stop_file)
     outcome = run.outcome
+    waiting = [r.id for r in work.proposals]
     for number in (1, 2, 3):
         agents = [a for a in crew.agents if a.phase == number]
         if not agents or outcome.stopped:
             continue
         done = run.phase(number, agents, lambda a: brief(a, drafts=outcome.drafts,
-                                                          verdicts=outcome.verdicts))  # fmt: skip
+                                                          verdicts=outcome.verdicts,
+                                                          waiting=waiting))  # fmt: skip
         for result in done:
             outcome.drafts += result.answer.get("drafts", [])
             outcome.verdicts += result.answer.get("verdicts", [])
-            if "proposals" in result.answer:
-                outcome.proposals = result.answer["proposals"]
-                outcome.summary = str(result.answer.get("summary", ""))
+            if "proposals" not in result.answer:
+                outcome.warnings += _list(result.answer.get("warnings"))
+                continue
+            outcome.proposals = result.answer["proposals"]
+            outcome.summary = str(result.answer.get("summary", ""))
+            outcome.keep = [str(k) for k in _list(result.answer.get("keep"))]
+            outcome.withdraw = _list(result.answer.get("withdraw"))
+            if "warnings" in result.answer:  # the final list's warnings replace the drafts'
+                outcome.warnings = _list(result.answer["warnings"])
     for agent in crew.agents:  # never launched: a stop came first
         if not any(r.agent is agent for r in outcome.results):
             outcome.results.append(AgentResult(agent, "skipped", error=outcome.stopped))
@@ -647,10 +687,14 @@ class Written:
     proposals: list = field(default_factory=list)
     retire: list = field(default_factory=list)
     skipped: list = field(default_factory=list)  # (id, reason)
+    kept: list = field(default_factory=list)  # waiting proposals the final list kept
+    withdrawn: list = field(default_factory=list)  # (id, why) taken off the list
+    unreviewed: list = field(default_factory=list)  # waiting proposals it left unsettled
+    warnings: list = field(default_factory=list)  # instruction files that look wrong
     report: object = None
 
 
-def _problem(entry: dict, rules: dict) -> str | None:
+def _problem(entry: dict, rules: dict, evidence: dict) -> str | None:
     kind, rid = entry.get("kind"), entry.get("id")
     if kind not in KINDS:
         return f"kind must be one of {', '.join(KINDS)}, not {kind!r}"
@@ -666,6 +710,12 @@ def _problem(entry: dict, rules: dict) -> str | None:
         return f"scope must be global or repo:NAME, not {entry.get('scope')!r}"
     if (entry.get("level") or "advice") not in ("advice", "check", "block"):
         return f"level must be advice, check or block, not {entry.get('level')!r}"
+    if not str(entry.get("pattern") or "").strip():
+        return "a proposal names the recurring pattern it covers"
+    if kind == "new":
+        seen = [evidence[e] for e in _list(entry.get("evidence")) if e in evidence]
+        if len({session for session, _ in seen}) < 2 and not any(said for _, said in seen):
+            return "it rests on one session: a rule must generalise"
     return None
 
 
@@ -682,7 +732,7 @@ def write(config, outcome: Outcome, work: Load, *, now: datetime) -> Written:
     """Write valid proposals as rule notes (`proposed`, from the workshop), put suggested
     retirements on the rules themselves, and record the run in a report note."""
     rules = {r.id: r for r in profile.load_rules(config, problems=[])}
-    entries, unreviewed = outcome.proposals, False
+    entries, unreviewed = _list(outcome.proposals), False
     if not entries and outcome.drafts:
         entries, unreviewed = outcome.drafts, True  # no synthesis ran: the drafts as they are
     tools = sorted({r.agent.tool for r in outcome.results}) or ["claude"]
@@ -692,9 +742,12 @@ def write(config, outcome: Outcome, work: Load, *, now: datetime) -> Written:
     written = Written(report=report)
     day = now.astimezone().strftime("%Y-%m-%d")
     lines: list[str] = []
+    waiting = {r.id for r in work.proposals}
+    by = f"the rules workshop ({report.stem})"
+    withdrawn: list = []  # (id, why)
     for entry in entries:
         entry = entry if isinstance(entry, dict) else {}
-        problem = _problem(entry, rules)
+        problem = _problem(entry, rules, work.evidence)
         if problem:
             written.skipped.append((str(entry.get("id")), problem))
             continue
@@ -727,6 +780,27 @@ def write(config, outcome: Outcome, work: Load, *, now: datetime) -> Written:
         rules[rule.id] = rule
         merged = f"; replaces {', '.join(replaces)}" if replaces else ""
         lines.append(f"- [[Profile/rules/{rule.id}]]: {rule.rule} ({entry['kind']}{merged})")
+        for old in replaces:  # one list: a waiting proposal it replaces leaves the queue now
+            if old in waiting and rules[old].status == "proposed":
+                learn.reject(config, old, by=by, superseded_by=rule.id)
+                withdrawn.append((old, f"replaced by [[Profile/rules/{rule.id}]]"))
+    for entry in outcome.withdraw:
+        entry = entry if isinstance(entry, dict) else {}
+        rid, why = str(entry.get("id") or ""), str(entry.get("why") or "").strip()[:600]
+        current = next((r for r in profile.load_rules(config, problems=[]) if r.id == rid), None)
+        if rid not in waiting or current is None or current.status != "proposed":
+            continue
+        instead = str(entry.get("superseded_by") or "")
+        instead = instead if instead in written.proposals else ""
+        learn.reject(config, rid, by=by, superseded_by=instead, note=why)
+        withdrawn.append(
+            (rid, why + (f" Replaced by [[Profile/rules/{instead}]]." if instead else ""))
+        )
+    kept = [k for k in outcome.keep if k in waiting and k not in {w for w, _ in withdrawn}]
+    settled = set(kept) | {w for w, _ in withdrawn}
+    written.kept, written.withdrawn = kept, withdrawn
+    written.unreviewed = sorted(waiting - settled) if not unreviewed else []
+    written.warnings = add_warnings(config, outcome.warnings, report=report.stem)
     report.write_text(_report(outcome, written, lines, unreviewed, now))
     return written
 
@@ -749,6 +823,21 @@ def _report(outcome: Outcome, written: Written, lines: list, unreviewed: bool, n
     if outcome.stopped:
         parts += [f"Stopped early: {outcome.stopped}.", ""]
     parts += ["## Proposals", "", *(lines or ["None written."]), ""]
+    if written.kept:
+        parts += ["## Kept", "", *(f"- [[Profile/rules/{rid}]]" for rid in written.kept), ""]
+    if written.withdrawn:
+        parts += ["## Withdrawn", "", "Rejected for you, under Decided in the app, where you "
+                  "can bring any of them back.", ""]  # fmt: skip
+        parts += [f"- [[Profile/rules/{rid}]]: {why}" for rid, why in written.withdrawn] + [""]
+    if written.unreviewed:
+        parts += ["## Not reviewed", "", "Waiting proposals the final list left as they were.", ""]
+        parts += [f"- [[Profile/rules/{rid}]]" for rid in written.unreviewed] + [""]
+    if written.warnings:
+        parts += ["## Instructions to check", ""]
+        for w in written.warnings:
+            parts.append(f"- `{w['file']}`: {w['problem']}"
+                         + (f" Suggestion: {w['suggestion']}" if w["suggestion"] else ""))  # fmt: skip
+        parts.append("")
     if written.retire:
         parts += ["## Suggested retirements", ""]
         parts += [f"- [[Profile/rules/{rid}]]" for rid in written.retire] + [""]
@@ -810,7 +899,70 @@ def keys(work: Load) -> set:
     found = {f"lesson:{g.topic}" for g in work.uncovered}
     found |= {f"flag:{r.id}" for r in work.flagged}
     found |= {f"conflict:{f.rule}:{f.message[:60]}" for f in work.conflicts}
-    return found | {f"proposal:{r.id}" for r in work.proposals}
+    # The workshop's own proposals are its output, not new work for the next run.
+    mine = {r.id for r in work.proposals if r.extra.get("source") == "workshop"}
+    return found | {f"proposal:{r.id}" for r in work.proposals if r.id not in mine}
+
+
+# Warnings about instruction files, kept until the user dismisses them
+
+
+def warnings_path(config) -> Path:
+    return config.data / "workshop" / "warnings.json"
+
+
+def load_warnings(config) -> dict:
+    try:
+        found = json.loads(warnings_path(config).read_text())
+    except (OSError, ValueError):
+        return {"last": 0, "warnings": []}
+    return found if isinstance(found, dict) else {"last": 0, "warnings": []}
+
+
+def _save_warnings(config, data: dict) -> None:
+    path = warnings_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(data, indent=2))
+    temporary.replace(path)
+
+
+def add_warnings(config, entries, *, report: str) -> list[dict]:
+    """Record the run's warnings that name a file and a problem; ids are never reused."""
+    data = load_warnings(config)
+    added = []
+    for entry in _list(entries):
+        entry = entry if isinstance(entry, dict) else {}
+        file, problem = (
+            str(entry.get("file") or "").strip(),
+            str(entry.get("problem") or "").strip(),
+        )
+        if not file or not problem:
+            continue
+        data["last"] = int(data.get("last") or 0) + 1
+        warning = {"id": f"W{data['last']}", "file": file[:300], "problem": problem[:600],
+                   "suggestion": str(entry.get("suggestion") or "").strip()[:600],
+                   "evidence": [str(e) for e in _list(entry.get("evidence"))][:10],
+                   "report": report, "status": "open"}  # fmt: skip
+        data.setdefault("warnings", []).append(warning)
+        added.append(warning)
+    if added:
+        _save_warnings(config, data)
+    return added
+
+
+def open_warnings(config) -> list[dict]:
+    return [w for w in load_warnings(config).get("warnings", []) if w.get("status") == "open"]
+
+
+def dismiss_warning(config, warning_id: str) -> dict:
+    data = load_warnings(config)
+    for w in data.get("warnings", []):
+        if w.get("id") == warning_id and w.get("status") == "open":
+            w["status"] = "dismissed"
+            _save_warnings(config, data)
+            return w
+    raise ValueError(f"no open warning {warning_id}")
 
 
 def _state_path(config):
@@ -975,8 +1127,12 @@ def run(config, *, dry_run=False, readings=None, runner=None, now=None, clock=No
     else:
         ended = f"stopped early: {outcome.stopped}. " if outcome.stopped else ""
         tell("Rules workshop finished",
-             f"{ended}{len(written.proposals)} proposal(s) and {len(written.retire)} "
-             f"suggested retirement(s) wait in the app; report: {written.report.name}")  # fmt: skip
+             f"{ended}{len(written.proposals)} new proposal(s), {len(written.kept)} kept, "
+             f"{len(written.withdrawn)} withdrawn, {len(written.retire)} suggested "
+             f"retirement(s) and {len(written.warnings)} instruction warning(s) wait in the "
+             f"app; report: {written.report.name}")  # fmt: skip
     return {**summary, "proposals": written.proposals, "retire": written.retire,
             "skipped": written.skipped, "report": str(written.report),
+            "kept": written.kept, "withdrawn": [rid for rid, _ in written.withdrawn],
+            "warnings": [w["id"] for w in written.warnings],
             "stopped": outcome.stopped, "failed": failed}  # fmt: skip

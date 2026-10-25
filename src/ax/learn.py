@@ -1022,6 +1022,8 @@ def _bring_back(config, rule_id: str) -> None:
     for other in profile.load_rules(config):
         if other.superseded_by != rule_id:
             continue
+        if other.status == "rejected" and other.decided_by != f"accepting {rule_id}":
+            continue  # rejected for another reason, such as the workshop's own list
         if other.status == "retired":
             other.status = "active"
         elif other.status == "rejected":
@@ -1057,7 +1059,8 @@ def accept(config, rule_id: str, *, today: date | None = None, by: str = "you"):
     return rule
 
 
-def reject(config, rule_id: str, *, by: str = "you", superseded_by: str = "") -> None:
+def reject(config, rule_id: str, *, by: str = "you", superseded_by: str = "",
+           note: str = "") -> None:  # fmt: skip
     """Reject a proposal, or an accepted rule. The note stays, marked rejected, and the
     learner proposes it again only if its support doubles."""
     rule = _rule(config, rule_id)
@@ -1078,6 +1081,8 @@ def reject(config, rule_id: str, *, by: str = "you", superseded_by: str = "") ->
     _save_ledger(config, "rejected.json", rejected)
     rule.status, rule.decided, rule.decided_by = "rejected", _now(), by
     rule.superseded_by = superseded_by
+    if note:
+        rule.why = f"{rule.why}\n\n**Rejected by {by}:** {note}".strip()
     profile._write(rule, rule.path)
 
 

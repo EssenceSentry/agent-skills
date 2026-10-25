@@ -55,7 +55,7 @@ def now_state(config, *, usage_of=None, credits_of=None) -> dict:
         "errors": [],
     }
     found: dict[str, list] = {"job": [], "usage": [], "budget": [], "proposal": [], "review": [],
-                              "todo": []}  # fmt: skip
+                              "instruction": [], "todo": []}  # fmt: skip
 
     def gather_usage():
         state["usage"] = serve._usage_rows(config, usage_of or serve._cached_usage)
@@ -81,6 +81,11 @@ def now_state(config, *, usage_of=None, credits_of=None) -> dict:
                 found["review"].append(_rule_item(config, rule, "review", _flag(rule)))
         state["errors"].extend(f"rules: {p}" for p in problems)
 
+    def gather_instructions():
+        from ax import workshop
+
+        found["instruction"] = [_warning_item(config, w) for w in workshop.open_warnings(config)]
+
     def gather_todos():
         found["todo"] = [_todo_item(config, t) for t in todos.listing(config)]
 
@@ -96,6 +101,7 @@ def now_state(config, *, usage_of=None, credits_of=None) -> dict:
         ("credits", gather_credits),
         ("jobs", gather_jobs),
         ("rules", gather_rules),
+        ("instructions", gather_instructions),
         ("to-dos", gather_todos),
         ("budgets", gather_budgets),
         ("conversations", gather_conversations),
@@ -212,6 +218,18 @@ def _rule_item(config, rule, kind: str, detail: str) -> dict:
         "maturity": rule.maturity,
         "note": _relative(config, rule.path),
         "actions": ["accept", "reject"] if kind == "proposal" else ["keep", "retire", "guard"],
+    }
+
+
+def _warning_item(config, w: dict) -> dict:
+    report = config.vault / "Workshops" / f"{w['report']}.md"
+    return {
+        "kind": "instruction",
+        "id": w["id"],
+        "title": f"{w['file']}: {w['problem']}",
+        "detail": w.get("suggestion") or "",
+        "note": _relative(config, report) if report.exists() else None,
+        "actions": ["dismiss"],
     }
 
 
@@ -351,6 +369,12 @@ def _reject(config, payload, model):
     return f"rejected {rule_id}"
 
 
+def _dismiss_warning(config, payload, model):
+    from ax import workshop
+
+    return f"dismissed {workshop.dismiss_warning(config, _id(payload))['id']}"
+
+
 def _restore(config, payload, model):
     learn.restore(config, rule_id := _id(payload))
     return f"{rule_id} is back with the proposals; {_COMPILE} unload it if it was active"
@@ -394,6 +418,7 @@ ACTIONS = {
     "accept": _accept,
     "reject": _reject,
     "restore": _restore,
+    "instruction-dismiss": _dismiss_warning,
     "keep": _keep,
     "retire": _retire,
     "guard": _guard,  # the one action that calls a model (Haiku), as `ax learn guard` does
