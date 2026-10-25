@@ -333,3 +333,22 @@ def test_a_group_that_matches_a_fix_proposal_adds_its_evidence_below_it(archive)
     [note] = profile.load_rules(archive.config)
     assert note.why.startswith("Proposed by `ax learn fixes`") and "2 sessions" in note.why
     assert {"recurring error: timeout", "a", "b"} <= set(note.evidence)
+
+
+def test_a_group_matches_a_rule_through_any_of_its_topics():
+    group = learn.Group("indent-with-tabs", [
+        (candidate("a", "s1", "demo"), keep("indent-with-tabs", "Indent with tabs.")),
+        (candidate("b", "s2", "demo"), keep("tabs", "Use tabs."))])  # fmt: skip
+    merged = profile.Rule(id="whitespace", rule="Prefer spaces in YAML.", covers=["tabs"])
+    assert learn._matches(group, merged)
+
+
+def test_a_rejected_proposal_stays_rejected_under_a_new_topic(archive):
+    cs = [candidate("a", "s1", "demo"), candidate("b", "s2", "demo")]
+    learn.propose(archive.config, cs, {c["id"]: keep("tabs", "Use tabs.") for c in cs})
+    learn.reject(archive.config, "tabs")
+    more = [candidate("c", "s1", "demo"), candidate("d", "s2", "demo"),
+            candidate("e", "s3", "demo")]  # fmt: skip
+    labels = {c["id"]: keep("tabs", "Use tabs.") for c in cs}
+    labels |= {c["id"]: keep("tab-indent", "Use tabs.") for c in more}
+    assert learn.propose(archive.config, cs + more, labels) == []  # 3 sessions, not 4

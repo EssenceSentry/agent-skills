@@ -691,6 +691,11 @@ class Group:
         return {c["session"] for c, _ in self.members}
 
     @property
+    def topics(self) -> set:
+        """Every topic its members were labelled with; `topic` is the largest one."""
+        return {lab["topic"] for _, lab in self.members} | {self.topic}
+
+    @property
     def support(self) -> int:
         """Each session counts once, at the weight of its strongest candidate."""
         best: dict = {}
@@ -733,7 +738,7 @@ def groups(candidates, labels) -> list[Group]:
 
 
 def _matches(group: Group, rule) -> bool:
-    if group.topic == rule.id or group.topic in rule.covers:
+    if group.topics & {rule.id, *rule.covers}:
         return True
     return _overlap(group.words, _words(rule.rule)) >= 0.6
 
@@ -865,7 +870,8 @@ def propose(config, candidates, labels, *, max_pending: int = MAX_PENDING) -> Pr
         if rule:
             rid = pending.setdefault(rule.id, rule).id
         else:
-            folded = (k for k, v in rejected.items() if group.topic in v.get("covers", ()))
+            # A rejected proposal keeps its id under any of the topics it covered.
+            folded = (k for k, v in rejected.items() if group.topics & {k, *v.get("covers", ())})
             rid = next(folded, None) or _rule_id(group.topic, taken)
             taken.add(rid)
         targets.setdefault(rid, Group(group.topic)).members.extend(group.members)
