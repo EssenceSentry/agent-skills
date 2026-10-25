@@ -44,9 +44,12 @@ class Event:
     candidate: str | None = None
 
 
-def events(config, candidates, labels) -> dict:
+def events(config, candidates, labels, *, rules: list | None = None) -> dict:
     """Every active rule's evidence events, from labelled candidates and the guard log."""
-    rules = {r.id: r for r in profile.load_rules(config) if r.status == "active"}
+    rules = {
+        r.id: r for r in (profile.load_rules(config) if rules is None else rules)
+        if r.status == "active"
+    }  # fmt: skip
     by_session: dict = defaultdict(dict)  # rule id -> session -> strongest event
     for group in learn.groups(candidates, labels):
         for rule in rules.values():
@@ -145,12 +148,16 @@ def assess(rule, events: list, today: date) -> dict:
     }
 
 
-def refresh(config, candidates, labels, *, today: date | None = None) -> list:
-    """Write the lifecycle into each active rule's note whose fields changed."""
+def refresh(
+    config, candidates, labels, *, today: date | None = None, problems: list | None = None
+) -> list:
+    """Write the lifecycle into each active rule's note whose fields changed. With a
+    `problems` list, notes that can't be read are recorded there and skipped."""
     today = today or date.today()
-    found = events(config, candidates, labels)
+    rules = profile.load_rules(config, problems=problems)
+    found = events(config, candidates, labels, rules=rules)
     changed = []
-    for rule in profile.load_rules(config):
+    for rule in rules:
         if rule.status != "active":
             continue
         fields = assess(rule, found.get(rule.id, []), today)
@@ -166,14 +173,16 @@ def refresh(config, candidates, labels, *, today: date | None = None) -> list:
     return changed
 
 
-def after_sync(config) -> list:
-    """Rescan the archive and refresh the lifecycle; label first only when configured."""
+def after_sync(config) -> tuple[list, list]:
+    """Rescan the archive and refresh the lifecycle; label first only when configured.
+    Returns the rules updated and the notes that couldn't be read, as (path, error)."""
     candidates = learn.scan(config)
     learn.save_candidates(config, candidates)
     labels = (
         learn.label(config, candidates) if config.learn_label_on_sync else learn.load_labels(config)
     )
-    return refresh(config, candidates, labels)
+    problems: list = []
+    return refresh(config, candidates, labels, problems=problems), problems
 
 
 def _active(config, rule_id: str):

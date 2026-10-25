@@ -156,7 +156,7 @@ def test_sync_refreshes_the_lifecycle_under_the_sync_lock(env, monkeypatch):
     def check(config):
         with pytest.raises(sync_module.SyncBusy), sync_module.lock(config):
             pass
-        return []
+        return [], []
 
     monkeypatch.setattr(learn_life, "after_sync", check)
     result = CliRunner().invoke(app, ["sync"], env={"AX_CONFIG": str(env.config_path)})
@@ -225,3 +225,15 @@ def test_dates_are_compared_where_the_user_is(archive, monkeypatch):
     found = learn_life.events(archive.config, [late], {"a": keep("tabs", "Use tabs.")})["tabs"]
     assert sorted((e.kind, e.day) for e in found) == [("block", "2026-10-02"),
                                                       ("support", "2026-10-01")]  # fmt: skip
+
+
+def test_a_broken_rule_note_does_not_fail_sync(env):
+    profile.add(env.config, "tabs", rule="Use tabs.")
+    broken = profile.rules_dir(env.config) / "broken.md"
+    broken.write_text("---\nid: broken\nrule: Use spaces.\nlevel: Block\n---\n")
+    (env.config.data / "guard.jsonl").parent.mkdir(parents=True, exist_ok=True)
+    (env.config.data / "guard.jsonl").write_text('[1, 2]\n"text"\n')
+    result = CliRunner().invoke(app, ["sync"], env={"AX_CONFIG": str(env.config_path)})
+    assert result.exit_code == 0, result.output
+    assert "broken.md" in result.output
+    assert next(r for r in profile.load_rules(env.config, problems=[]) if r.id == "tabs").maturity

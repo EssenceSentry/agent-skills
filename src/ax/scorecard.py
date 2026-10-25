@@ -240,6 +240,8 @@ def _guard_log(config) -> list[dict]:
             entry = json.loads(line)
         except ValueError:
             continue
+        if not isinstance(entry, dict):
+            continue
         when = _parse(entry.get("ts"))
         if when:
             entries.append({**entry, "when": when})

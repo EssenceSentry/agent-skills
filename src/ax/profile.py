@@ -156,13 +156,22 @@ def _write(rule: Rule, path: Path) -> None:
     tmp.replace(path)
 
 
-def load_rules(config) -> list[Rule]:
+def load_rules(config, *, problems: list | None = None) -> list[Rule]:
+    """Every rule note. A note that can't be read raises, unless `problems` is given:
+    then it is left out and recorded there as (path, error), so one typo can't stop
+    something that runs unattended, such as `ax sync`."""
     folder = rules_dir(config)
-    return (
-        sorted((_read(p) for p in folder.glob("*.md")), key=lambda r: (r.scope, r.id))
-        if folder.is_dir()
-        else []
-    )
+    if not folder.is_dir():
+        return []
+    rules = []
+    for path in folder.glob("*.md"):
+        try:
+            rules.append(_read(path))
+        except (ValueError, TypeError, yaml.YAMLError) as exc:
+            if problems is None:
+                raise
+            problems.append((path, f"{type(exc).__name__}: {exc}"))
+    return sorted(rules, key=lambda r: (r.scope, r.id))
 
 
 def add(config, rule_id: str, *, replace: bool = False, **fields) -> Rule:

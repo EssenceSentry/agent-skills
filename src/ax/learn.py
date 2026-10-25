@@ -504,7 +504,9 @@ Items:
 
 def _existing_rules(config) -> str:
     rules = "\n".join(
-        f"- {r.id}: {r.rule}" for r in profile.load_rules(config) if r.status != "retired"
+        f"- {r.id}: {r.rule}"
+        for r in profile.load_rules(config, problems=[])
+        if r.status != "retired"
     )
     return rules or "(none yet)"
 

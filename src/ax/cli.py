@@ -524,14 +524,16 @@ def sync(quiet: bool = typer.Option(False, "--quiet", "-q", help="Print nothing 
         # Hooks fire from many sessions at once; the running sync will pick their files up.
         typer.echo(f"{busy}; skipping")
         raise typer.Exit(0) from None
+    updated, unreadable = [], []
     try:
         with sync_module.lock(config):  # syncs from many sessions must not write notes at once
-            updated = learn_life.after_sync(config)
+            updated, unreadable = learn_life.after_sync(config)
     except sync_module.SyncBusy:
-        updated = []  # the sync that holds the lock refreshes the rules
+        pass  # the sync that holds the lock refreshes the rules
     except Exception as exc:  # the archive is synced either way; report, don't hide it
         report.errors.append(f"learn: {type(exc).__name__}: {exc}")
-        updated = []
+    for path, problem in unreadable:  # the user's to fix; the other rules were refreshed
+        typer.echo(f"warning: rule note {path} skipped: {problem}")
     if not quiet or report.errors:
         typer.echo(
             f"discovered {report.discovered} · parsed {report.parsed} · wrote {report.written}"
