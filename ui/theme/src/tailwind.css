@@ -1,0 +1,181 @@
+/*
+ * Maps direction tokens to Tailwind utilities and defines the shared text and
+ * surface classes. Import after Tailwind; the direction itself comes from the
+ * Vite plugin, so this file is the same for every project.
+ */
+@import "./status.css";
+@import "./modes.css";
+
+/* Matches the same conditions as modes.css, for shadcn's dark: classes. */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
+
+@theme inline {
+  --font-sans: var(--ff-sans);
+  --font-heading: var(--ff-heading);
+  --font-mono: var(--ff-mono);
+  --font-figure: var(--ff-figure);
+
+  --color-page: var(--page);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-sunken: var(--sunken);
+  --color-raised: var(--raised);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-faint: var(--faint);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-ink: var(--primary-ink);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-good: var(--status-good);
+  --color-warning: var(--status-warning);
+  --color-serious: var(--status-serious);
+  --color-critical: var(--status-critical);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+  --color-series-4: var(--series-4);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    font-feature-settings: "ss01" on;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-page text-foreground;
+    background-image: var(--page-texture);
+    background-size: 18px 18px;
+    min-height: 100svh;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--ff-heading);
+    font-weight: var(--heading-weight);
+    letter-spacing: var(--heading-tracking);
+  }
+}
+
+@layer components {
+  /* Small caps-style label above a section title. */
+  .eyebrow {
+    font-family: var(--eyebrow-font);
+    font-size: var(--eyebrow-size);
+    font-weight: var(--eyebrow-weight);
+    letter-spacing: var(--eyebrow-tracking);
+    text-transform: var(--eyebrow-transform);
+    color: var(--eyebrow-color);
+    line-height: 1.2;
+  }
+  /* Figures: hero numbers and stat values. Proportional, never tabular. */
+  .figure {
+    font-family: var(--ff-figure);
+    font-weight: var(--figure-weight);
+    letter-spacing: var(--figure-tracking);
+    line-height: 1;
+  }
+  /* Aligned numbers in tables, axes and logs. */
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+  .label-mono {
+    font-family: var(--label-font);
+  }
+  .panel {
+    background: var(--panel-bg, var(--card));
+    color: var(--card-foreground);
+    border-radius: var(--panel-radius, calc(var(--radius) * 1.4));
+    border-top: var(--panel-rule, 0 solid transparent);
+    box-shadow:
+      0 0 0 1px var(--panel-ring),
+      var(--panel-shadow);
+  }
+  .eyebrow-index {
+    display: var(--index-display, none);
+  }
+  .glow {
+    box-shadow: var(--glow, none);
+  }
+  .well {
+    background: var(--sunken);
+    border-radius: var(--radius);
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+  .live-dot {
+    position: relative;
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--primary);
+  }
+  .live-dot::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border-radius: 999px;
+    background: var(--primary);
+    opacity: 0.25;
+    animation: live-pulse 1.8s ease-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live-dot::after {
+      animation: none;
+    }
+  }
+}
+
+@keyframes live-pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.45;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+/* Plot output inherits the direction's type and recedes into the panel. */
+figure.plot-figure svg {
+  overflow: visible;
+}
+figure.plot-figure [aria-label="tip"] text {
+  font-family: var(--ff-sans);
+}

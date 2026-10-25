@@ -1,0 +1,7 @@
+/* Status is fixed across directions and never themed. */
+:root {
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+}

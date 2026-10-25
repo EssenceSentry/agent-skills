@@ -1,0 +1,5 @@
+/* Bundled font files for editorial; artifact builds use Google Fonts instead. */
+@import "@fontsource-variable/newsreader/opsz.css";
+@import "@fontsource-variable/newsreader/opsz-italic.css";
+@import "@fontsource-variable/hanken-grotesk";
+@import "@fontsource-variable/jetbrains-mono";

@@ -1,0 +1,74 @@
+/*
+ * Instrument: precise, cool, hairline, dense.
+ *
+ * Every colour is written once as light-dark(light, dark); the mode rules in
+ * ../modes.css pick the side. Chart palettes passed the dataviz validator for
+ * adjacent pairs on every slot and all pairs on the first three, in both modes.
+ * Fonts load from ../fonts/instrument.css or from Google Fonts, never from here.
+ */
+:root,
+[data-direction="instrument"] {
+  --ff-sans: "Instrument Sans Variable", "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --ff-heading: "Instrument Sans Variable", "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --ff-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
+  --ff-figure: "Instrument Sans Variable", "Instrument Sans", ui-sans-serif, sans-serif;
+
+  --heading-weight: 600;
+  --heading-tracking: -0.02em;
+  --figure-weight: 560;
+  --figure-tracking: -0.035em;
+  --eyebrow-font: var(--ff-mono);
+  --eyebrow-size: 10.5px;
+  --eyebrow-weight: 500;
+  --eyebrow-tracking: 0.08em;
+  --eyebrow-transform: uppercase;
+  --eyebrow-color: var(--muted-foreground);
+  --label-font: var(--ff-mono);
+
+  --radius: 0.375rem;
+  --index-display: inline;
+  --panel-shadow: none;
+  --panel-ring: var(--border);
+  --page-texture: none;
+
+  --page: light-dark(#f2f3f5, #0a0c0f);
+  --background: light-dark(#f2f3f5, #0a0c0f);
+  --foreground: light-dark(#0e1116, #e9ecf1);
+  --card: light-dark(#ffffff, #111419);
+  --card-foreground: light-dark(#0e1116, #e9ecf1);
+  --popover: light-dark(#ffffff, #151920);
+  --popover-foreground: light-dark(#0e1116, #e9ecf1);
+  --sunken: light-dark(#f7f8fa, #0d0f13);
+  --raised: light-dark(#ffffff, #161a20);
+  --ink-2: light-dark(#3d4552, #b4bcc8);
+  --muted: light-dark(#f0f2f5, #1a1e25);
+  --muted-foreground: light-dark(#6b7380, #8590a0);
+  --faint: light-dark(#9aa1ac, #5d6673);
+  --border: light-dark(#e1e4e9, #20252d);
+  --border-strong: light-dark(#c9ced6, #2e343e);
+  --input: light-dark(#d9dde3, #2a3039);
+  --ring: light-dark(#3665e4, #6286f3);
+
+  --primary: light-dark(#3665e4, #507ef1);
+  --primary-foreground: #ffffff;
+  --primary-soft: light-dark(#edf1fd, #141d33);
+  --primary-ink: light-dark(#2a52c9, #84a3f7);
+  --secondary: light-dark(#eef0f3, #1a1e25);
+  --secondary-foreground: light-dark(#0e1116, #e9ecf1);
+  --accent: light-dark(#eef0f3, #1a1e25);
+  --accent-foreground: light-dark(#0e1116, #e9ecf1);
+  --destructive: #d03b3b;
+
+  --viz-grid: light-dark(#eceef2, #1a1e25);
+  --viz-axis: light-dark(#c9ced6, #2e343e);
+  --viz-text: light-dark(#6b7380, #8590a0);
+  --series-1: light-dark(#3665e4, #507ef1);
+  --series-2: light-dark(#e8721c, #e16c10);
+  --series-3: light-dark(#be409d, #cc4da9);
+  --series-4: light-dark(#d6a20a, #bb8d0c);
+  --series-5: light-dark(#8151db, #8c5ee8);
+  --series-6: light-dark(#db4241, #e24947);
+  --div-neg: light-dark(#3665e4, #507ef1);
+  --div-mid: light-dark(#e6e8ec, #2a2f37);
+  --div-pos: light-dark(#e8721c, #e16c10);
+}

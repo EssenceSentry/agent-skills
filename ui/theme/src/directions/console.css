@@ -1,0 +1,84 @@
+/*
+ * Console: dark-first, luminous, mono labels.
+ *
+ * Every colour is written once as light-dark(light, dark); the mode rules in
+ * ../modes.css pick the side. Chart palettes passed the dataviz validator for
+ * adjacent pairs on every slot and all pairs on the first three, in both modes.
+ * Fonts load from ../fonts/console.css or from Google Fonts, never from here.
+ */
+[data-direction="console"] {
+  --ff-sans: "Chivo Variable", "Chivo", ui-sans-serif, system-ui, sans-serif;
+  --ff-heading: "Chivo Variable", "Chivo", ui-sans-serif, system-ui, sans-serif;
+  --ff-mono: "Chivo Mono Variable", "Chivo Mono", ui-monospace, monospace;
+  --ff-figure: "Chivo Mono Variable", "Chivo Mono", ui-monospace, monospace;
+
+  --heading-weight: 620;
+  --heading-tracking: -0.025em;
+  --figure-weight: 500;
+  --figure-tracking: -0.04em;
+  --eyebrow-font: var(--ff-mono);
+  --eyebrow-size: 10.5px;
+  --eyebrow-weight: 500;
+  --eyebrow-tracking: 0.14em;
+  --eyebrow-transform: uppercase;
+  --eyebrow-color: var(--muted-foreground);
+  --label-font: var(--ff-mono);
+
+  --radius: 0.75rem;
+  --glow: 0 0 14px -2px color-mix(in oklch, var(--primary) 70%, transparent);
+  --panel-bg: linear-gradient(
+    180deg,
+    color-mix(in oklch, var(--card), var(--primary) 2.5%),
+    var(--card) 140px
+  );
+  --panel-shadow:
+    inset 0 1px 0 light-dark(transparent, rgb(255 255 255 / 0.035)),
+    0 1px 2px light-dark(rgb(20 18 40 / 0.05), transparent),
+    0 10px 28px -14px light-dark(rgb(40 30 90 / 0.12), rgb(0 0 0 / 0.6));
+  --panel-ring: var(--border);
+  --page-texture: radial-gradient(
+    circle at 1px 1px,
+    light-dark(rgb(70 60 140 / 0.07), rgb(160 150 255 / 0.06)) 1px,
+    transparent 0
+  );
+
+  --page: light-dark(#f3f3f7, #07080c);
+  --background: light-dark(#f3f3f7, #07080c);
+  --foreground: light-dark(#12121c, #e7e9f3);
+  --card: light-dark(#ffffff, #0e1017);
+  --card-foreground: light-dark(#12121c, #e7e9f3);
+  --popover: light-dark(#ffffff, #141722);
+  --popover-foreground: light-dark(#12121c, #e7e9f3);
+  --sunken: light-dark(#f7f7fb, #0a0b10);
+  --raised: light-dark(#ffffff, #141722);
+  --ink-2: light-dark(#43455a, #b3b8cc);
+  --muted: light-dark(#efeff5, #161925);
+  --muted-foreground: light-dark(#6e7088, #7e849c);
+  --faint: light-dark(#a0a2b6, #545a70);
+  --border: light-dark(#e3e3ec, #1b1f2c);
+  --border-strong: light-dark(#d0d0de, #2a2f42);
+  --input: light-dark(#dcdce6, #252a3b);
+  --ring: light-dark(#7552db, #9a84f5);
+
+  --primary: light-dark(#7552db, #8d73f0);
+  --primary-foreground: light-dark(#ffffff, #0d0b1a);
+  --primary-soft: light-dark(#f0ecfd, #1a1530);
+  --primary-ink: light-dark(#6141cf, #ad9bff);
+  --secondary: light-dark(#efeff5, #161925);
+  --secondary-foreground: light-dark(#12121c, #e7e9f3);
+  --accent: light-dark(#efeff5, #161925);
+  --accent-foreground: light-dark(#12121c, #e7e9f3);
+  --destructive: #d03b3b;
+
+  --viz-grid: light-dark(#ededf3, #151824);
+  --viz-axis: light-dark(#d0d0de, #2a2f42);
+  --viz-text: light-dark(#6e7088, #7e849c);
+  --series-1: light-dark(#7552db, #8d73f0);
+  --series-2: light-dark(#e48e26, #d37e01);
+  --series-3: light-dark(#ca358b, #bf3584);
+  --series-4: light-dark(#0b8bc0, #259ed6);
+  --series-5: light-dark(#cfaf1d, #ae931d);
+  --div-neg: light-dark(#7552db, #8d73f0);
+  --div-mid: light-dark(#e6e6ee, #262a38);
+  --div-pos: light-dark(#e48e26, #d37e01);
+}

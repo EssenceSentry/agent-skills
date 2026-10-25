@@ -1,0 +1,19 @@
+/*
+ * Light or dark follows the viewer's system setting unless the page sets
+ * data-theme="light" or data-theme="dark" on <html>; an explicit choice wins
+ * both ways. color-scheme picks the side of every light-dark() token and makes
+ * native controls and scrollbars match.
+ */
+:root {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}

@@ -1,0 +1,172 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@atelier/theme/tailwind.css";
+
+/* A vault note: Markdown typography in the theme's terms. */
+@layer components {
+  .note-prose {
+    font-size: 15px;
+    line-height: 1.65;
+    color: var(--foreground);
+    overflow-wrap: anywhere;
+  }
+  .note-prose > * + * {
+    margin-top: 0.9em;
+  }
+  .note-prose :where(h1, h2, h3, h4) {
+    line-height: 1.25;
+    margin-top: 1.6em;
+  }
+  .note-prose :where(h1) {
+    font-size: 1.5em;
+  }
+  .note-prose :where(h2) {
+    font-size: 1.25em;
+  }
+  .note-prose :where(h3) {
+    font-size: 1.08em;
+  }
+  .note-prose :where(h4, h5, h6) {
+    font-size: 1em;
+    font-weight: 600;
+  }
+  .note-prose > :first-child {
+    margin-top: 0;
+  }
+  .note-prose :where(ul, ol) {
+    padding-left: 1.4em;
+  }
+  .note-prose :where(ul) {
+    list-style: disc;
+  }
+  .note-prose :where(ol) {
+    list-style: decimal;
+  }
+  .note-prose :where(li + li, li > ul, li > ol) {
+    margin-top: 0.3em;
+  }
+  .note-prose :where(li:has(> input[type="checkbox"])) {
+    list-style: none;
+    margin-left: -1.3em;
+  }
+  .note-prose :where(a) {
+    color: var(--primary-ink);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklch, var(--primary) 40%, transparent);
+    text-underline-offset: 2px;
+  }
+  .note-prose :where(a:hover) {
+    text-decoration-color: var(--primary);
+  }
+  .note-prose .missing-link {
+    color: var(--muted-foreground);
+    text-decoration: underline dotted;
+    text-underline-offset: 2px;
+    cursor: help;
+  }
+  .note-prose :where(code) {
+    font-family: var(--ff-mono);
+    font-size: 0.86em;
+    background: var(--sunken);
+    border-radius: calc(var(--radius) * 0.5);
+    padding: 0.1em 0.35em;
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+  .note-prose :where(pre) {
+    background: var(--sunken);
+    border-radius: var(--radius);
+    box-shadow: inset 0 0 0 1px var(--border);
+    padding: 0.8em 1em;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .note-prose :where(pre code) {
+    background: none;
+    box-shadow: none;
+    padding: 0;
+    font-size: inherit;
+  }
+  .note-prose :where(blockquote) {
+    border-left: 3px solid var(--border-strong);
+    padding-left: 1em;
+    color: var(--ink-2);
+  }
+  .note-prose :where(hr) {
+    border: 0;
+    border-top: 1px solid var(--border);
+  }
+  .note-prose :where(table) {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+    font-size: 13.5px;
+  }
+  .note-prose :where(th, td) {
+    border-bottom: 1px solid var(--border);
+    padding: 0.4em 0.8em 0.4em 0;
+    text-align: left;
+    vertical-align: top;
+  }
+  .note-prose :where(th) {
+    font-weight: 600;
+    border-bottom-color: var(--border-strong);
+  }
+  .note-prose :where(img) {
+    max-width: 100%;
+    border-radius: var(--radius);
+  }
+  .note-prose .callout {
+    --callout: var(--primary);
+    border-left: 3px solid var(--callout);
+    background: color-mix(in oklch, var(--callout) 8%, transparent);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    padding: 0.7em 1em;
+  }
+  .note-prose .callout > * + * {
+    margin-top: 0.5em;
+  }
+  .note-prose .callout-title {
+    font-weight: 600;
+  }
+  .note-prose
+    .callout:where(
+      [data-callout="warning"],
+      [data-callout="caution"],
+      [data-callout="attention"],
+      [data-callout="question"],
+      [data-callout="help"],
+      [data-callout="faq"]
+    ) {
+    --callout: var(--status-warning);
+  }
+  .note-prose
+    .callout:where(
+      [data-callout="danger"],
+      [data-callout="error"],
+      [data-callout="bug"],
+      [data-callout="failure"],
+      [data-callout="fail"],
+      [data-callout="missing"]
+    ) {
+    --callout: var(--status-critical);
+  }
+  .note-prose
+    .callout:where([data-callout="success"], [data-callout="check"], [data-callout="done"]) {
+    --callout: var(--status-good);
+  }
+  .note-prose
+    .callout:where([data-callout="quote"], [data-callout="cite"], [data-callout="example"]) {
+    --callout: var(--border-strong);
+  }
+  /* Property values: one line of Markdown, no paragraph spacing. */
+  .note-prose.note-inline {
+    font-size: inherit;
+    line-height: 1.5;
+  }
+  .note-prose.note-inline > * + * {
+    margin-top: 0.3em;
+  }
+}

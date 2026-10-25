@@ -1,0 +1,73 @@
+/*
+ * Editorial: warm paper, serif display, generous.
+ *
+ * Every colour is written once as light-dark(light, dark); the mode rules in
+ * ../modes.css pick the side. Chart palettes passed the dataviz validator for
+ * adjacent pairs on every slot and all pairs on the first three, in both modes.
+ * Fonts load from ../fonts/editorial.css or from Google Fonts, never from here.
+ */
+[data-direction="editorial"] {
+  --ff-sans: "Hanken Grotesk Variable", "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --ff-heading: "Newsreader Variable", "Newsreader", Georgia, serif;
+  --ff-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
+  --ff-figure: "Hanken Grotesk Variable", "Hanken Grotesk", ui-sans-serif, sans-serif;
+
+  --heading-weight: 480;
+  --heading-tracking: -0.012em;
+  --figure-weight: 600;
+  --figure-tracking: -0.03em;
+  --eyebrow-font: var(--ff-sans);
+  --eyebrow-size: 11px;
+  --eyebrow-weight: 650;
+  --eyebrow-tracking: 0.14em;
+  --eyebrow-transform: uppercase;
+  --eyebrow-color: var(--primary-ink);
+  --label-font: var(--ff-sans);
+
+  --radius: 0.25rem;
+  --panel-radius: 0;
+  --panel-rule: 2px solid var(--foreground);
+  --panel-bg: transparent;
+  --panel-shadow: none;
+  --panel-ring: transparent;
+  --page-texture: none;
+
+  --page: light-dark(#f3efe6, #15120e);
+  --background: light-dark(#f3efe6, #15120e);
+  --foreground: light-dark(#1d1914, #f0eae0);
+  --card: light-dark(#faf8f3, #1d1914);
+  --card-foreground: light-dark(#1d1914, #f0eae0);
+  --popover: light-dark(#fdfcf9, #231e18);
+  --popover-foreground: light-dark(#1d1914, #f0eae0);
+  --sunken: light-dark(#efeadf, #120f0c);
+  --raised: light-dark(#fdfcf9, #231e18);
+  --ink-2: light-dark(#4f473d, #cbc1b2);
+  --muted: light-dark(#ece6da, #26211b);
+  --muted-foreground: light-dark(#7a7063, #9a8f80);
+  --faint: light-dark(#a69c8d, #6d6458);
+  --border: light-dark(#e2dacb, #302921);
+  --border-strong: light-dark(#cbc0ab, #463d32);
+  --input: light-dark(#d8cfbe, #3a3229);
+  --ring: light-dark(#b04a24, #d9764c);
+
+  --primary: light-dark(#b04a24, #d9764c);
+  --primary-foreground: light-dark(#ffffff, #1a0f09);
+  --primary-soft: light-dark(#f6e6dc, #2e1e15);
+  --primary-ink: light-dark(#9c3f1c, #e8936c);
+  --secondary: light-dark(#ece6da, #26211b);
+  --secondary-foreground: light-dark(#1d1914, #f0eae0);
+  --accent: light-dark(#ece6da, #26211b);
+  --accent-foreground: light-dark(#1d1914, #f0eae0);
+  --destructive: #d03b3b;
+
+  --viz-grid: light-dark(#e8e1d3, #29231c);
+  --viz-axis: light-dark(#cbc0ab, #463d32);
+  --viz-text: light-dark(#7a7063, #9a8f80);
+  --series-1: light-dark(#c1552c, #b44723);
+  --series-2: light-dark(#2863ab, #5290d3);
+  --series-3: light-dark(#d3a23b, #b4902e);
+  --series-4: light-dark(#8b4486, #9e5598);
+  --div-neg: light-dark(#2863ab, #5290d3);
+  --div-mid: light-dark(#e4ddd0, #3a3229);
+  --div-pos: light-dark(#c1552c, #b44723);
+}

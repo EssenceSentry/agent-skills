@@ -1,0 +1,29 @@
+{
+  "name": "@atelier/theme",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Three visual directions as tokens, a Tailwind layer, chart colours and a Vite plugin that picks one.",
+  "type": "module",
+  "exports": {
+    "./tailwind.css": "./src/tailwind.css",
+    "./status.css": "./src/status.css",
+    "./directions/*.css": "./src/directions/*.css",
+    "./vite": {
+      "types": "./src/vite.d.ts",
+      "default": "./src/vite.js"
+    },
+    "./viz": "./src/viz.ts"
+  },
+  "dependencies": {
+    "@fontsource-variable/chivo": "^5.3.0",
+    "@fontsource-variable/chivo-mono": "^5.3.0",
+    "@fontsource-variable/hanken-grotesk": "^5.3.0",
+    "@fontsource-variable/instrument-sans": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource-variable/newsreader": "^5.3.0"
+  },
+  "peerDependencies": {
+    "tailwindcss": "^4.3.0",
+    "vite": "^8.0.0"
+  }
+}

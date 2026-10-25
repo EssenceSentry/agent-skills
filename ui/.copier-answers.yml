@@ -1,0 +1,13 @@
+# Written by Copier; `copier update` reads it to apply template changes.
+_commit: v0.1.0
+_src_path: https://github.com/EssenceSentry/atelier.git
+artifact: false
+description: What waits for you, Claude and Codex usage, jobs, conversations and the
+    vault's notes, from ax.
+distribution_name: ax-app
+github_owner: EssenceSentry
+kind: monitor
+pages: false
+project_name: ax
+theme: instrument
+visibility: public
