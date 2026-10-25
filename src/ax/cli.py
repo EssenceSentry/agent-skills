@@ -482,6 +482,7 @@ def serve(
 ):
     """The ax app: what waits for you, usage, jobs, conversations and the vault's notes."""
     import secrets
+    import signal
     import threading
 
     from ax import app as app_module
@@ -546,11 +547,17 @@ def serve(
         import webbrowser
 
         webbrowser.open(url)
+
+    def interrupted(signum, frame):
+        raise KeyboardInterrupt  # so `kill` closes the tunnel as Ctrl-C does
+
+    previous = signal.signal(signal.SIGTERM, interrupted)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        server.shutdown()
+        pass  # the loop has already stopped: it ran in this thread
     finally:
+        signal.signal(signal.SIGTERM, previous)
         stop.set()
         if tunnel is not None:
             tunnel.close()

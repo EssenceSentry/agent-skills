@@ -393,6 +393,9 @@ def test_events_stream_the_now_state_and_each_change(served):
     request = urllib.request.Request(f"{base}/events", headers={"Cookie": f"{app.COOKIE}={token}"})
     with urllib.request.urlopen(request, timeout=5) as stream:
         assert stream.headers["Content-Type"].startswith("text/event-stream")
+        # A proxy such as Cloudflare's tunnel must neither compress nor hold back the stream.
+        assert "no-transform" in stream.headers["Cache-Control"]
+        assert stream.headers["X-Accel-Buffering"] == "no"
 
         def next_state():
             for raw in stream:
@@ -538,3 +541,17 @@ def test_ax_serve_refuses_an_unknown_share_or_a_missing_topic(env, cli_serve, mo
     monkeypatch.delenv("AX_NTFY_TOPIC")
     result, sent = cli_serve("--notify")
     assert result.exit_code == 2 and "topic" in result.output and not sent
+
+
+def test_a_terminated_ax_serve_closes_its_tunnel(env, cli_serve, monkeypatch):
+    import signal
+
+    def terminated(self):
+        signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)  # what `kill` would run
+
+    monkeypatch.setattr(serve.ThreadingHTTPServer, "serve_forever", terminated)
+    before = signal.getsignal(signal.SIGTERM)
+    result, _ = cli_serve("--share", "cloudflare")
+    assert result.exit_code == 0, result.output
+    assert FakeShare.made.closed
+    assert signal.getsignal(signal.SIGTERM) is before

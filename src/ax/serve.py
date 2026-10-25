@@ -265,7 +265,9 @@ def make_server(
             events, with a comment every so often so idle connections stay open."""
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Cache-Control", "no-store")
+            # Behind Cloudflare's tunnel a compressed or buffered stream never arrives.
+            self.send_header("Cache-Control", "no-store, no-transform")
+            self.send_header("X-Accel-Buffering", "no")
             self.end_headers()
             last, quiet_since = None, time.monotonic()
             try:
