@@ -88,7 +88,7 @@ export type Note = {
   modified: string
 }
 
-export type LiveStatus = "example" | "connecting" | "live" | "offline"
+export type LiveStatus = "example" | "connecting" | "live" | "offline" | "locked"
 
 /** True when `ax serve` hosts the page; otherwise it shows example data. */
 export const LIVE =
@@ -141,7 +141,8 @@ export function useNow(): {
         setState(now)
         setStatus("live")
       },
-      () => setStatus("offline")
+      // Through a tunnel, a page that lost its cookie needs the link again.
+      (error: Error) => setStatus(error.message.startsWith("401") ? "locked" : "offline")
     )
   }, [])
 

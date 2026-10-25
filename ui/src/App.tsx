@@ -18,6 +18,7 @@ const LIVE_BADGE: Record<
   connecting: { status: "queued", label: "Connecting" },
   offline: { status: "warning", label: "Offline" },
   example: { status: "paused", label: "Example data" },
+  locked: { status: "warning", label: "Locked" },
 }
 
 function NavLink({ href, active, children }: { href: string; active: boolean; children: string }) {
@@ -83,7 +84,11 @@ export default function App() {
         ) : (
           <main className="mx-auto max-w-[1360px] p-4 md:p-6">
             <div className="panel p-6 text-sm text-muted-foreground">
-              {status === "offline" ? "ax isn't answering; retrying…" : "Reading your ax…"}
+              {status === "locked"
+                ? "This shared link has expired or lost its access. Open the newest link ax sent you."
+                : status === "offline"
+                  ? "ax isn't answering; retrying…"
+                  : "Reading your ax…"}
             </div>
           </main>
         )}

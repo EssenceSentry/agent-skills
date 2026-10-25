@@ -125,13 +125,13 @@ def make_server(
 ) -> ThreadingHTTPServer:
     """The ax app (built pages, JSON, actions and a live stream) and the classic page.
 
-    Everything but the pages' scripts and styles needs the token `app.token` keeps: the
-    link carries it once, then a Strict, HttpOnly cookie. Actions also need JSON from
-    the app's own origin, and only localhost names are answered, so neither another
-    site nor one that rebinds its domain to 127.0.0.1 can read or act. A run shared
-    through a tunnel also answers the tunnel's host (`allow_url`) and takes
-    `share_token`, which dies with the run, so a shared link never carries the
-    lasting one.
+    On this Mac the app opens as it is, so an installed app works whatever storage its
+    browser gives it. Other sites still can't read it: only loopback host names are
+    answered (no DNS rebinding), browsers keep cross-origin responses from them, and
+    actions need JSON from the app's own origin. Through a tunnel (its host added with
+    `allow_url`, or any request a proxy forwarded) everything but the page's files
+    needs a token: `share_token`, which dies with the run, or the lasting one; the link
+    carries it once, then a Strict, HttpOnly cookie.
     """
     from ax import app
 
@@ -184,27 +184,36 @@ def make_server(
                     return how, value
             return "", ""
 
+        def _local(self) -> bool:
+            """A request from this Mac: a loopback host name, and no proxy in between."""
+            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
+            proxied = any(self.headers.get(h) for h in _PROXY_HEADERS)
+            return host in ("127.0.0.1", "localhost", "::1") and not proxied
+
         def _authorised(self, query: dict) -> str | None:
+            if self._local():
+                return "local"  # other sites can't read or act: see make_server
             how, value = self._given(query)
             known = any(hmac.compare_digest(value, t) for t in secrets_)
             return how if value and known else None
 
         def _static(self, path: str) -> bool:
-            if not (path.startswith("/assets/") or path == "/favicon.svg"):
+            """The page's scripts and styles, and what a browser fetches to install the app:
+            none of it holds data, so none of it needs the token."""
+            folder = next((f for f in _PUBLIC_FOLDERS if path.startswith(f"/{f}/")), None)
+            if folder is None and path not in _PUBLIC_FILES:
                 return False
             root = web.resolve()
             target = (root / path.lstrip("/")).resolve()
-            home = root / "assets" if path.startswith("/assets/") else root
+            home = root / folder if folder else root
             if ".." in path.split("/") or not target.is_relative_to(home) or not target.is_file():
                 self._text(404, "Not found.")
                 return True
-            kind = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+            kind = _TYPES.get(target.suffix) or mimetypes.guess_type(target.name)[0]
+            kind = kind or "application/octet-stream"
             if kind.startswith("text/") or kind.endswith("javascript"):
                 kind += "; charset=utf-8"
-            cache = (
-                "public, max-age=31536000, immutable" if path.startswith("/assets/") else "no-store"
-            )
-            self._send(200, target.read_bytes(), kind, {"Cache-Control": cache})
+            self._send(200, target.read_bytes(), kind, {"Cache-Control": _cache(path)})
             return True
 
         def do_GET(self):  # noqa: N802
@@ -332,6 +341,21 @@ def keep_shared(tunnel, on_new, *, stop: threading.Event, every: float = 5) -> N
         url = tunnel.tick()
         if url:
             on_new(url)
+
+
+_PROXY_HEADERS = ("Cf-Connecting-Ip", "Cf-Ray", "X-Forwarded-For", "X-Forwarded-Host",
+                  "Forwarded")  # fmt: skip
+_PUBLIC_FOLDERS = ("assets", "icons")
+_PUBLIC_FILES = {"/favicon.svg", "/manifest.webmanifest", "/sw.js"}
+_TYPES = {".webmanifest": "application/manifest+json", ".js": "text/javascript"}
+
+
+def _cache(path: str) -> str:
+    if path.startswith("/assets/"):
+        return "public, max-age=31536000, immutable"  # named by content hash
+    if path in ("/sw.js", "/manifest.webmanifest"):
+        return "no-cache"  # checked on every load, so a new build's worker is picked up
+    return "no-store"
 
 
 _CLASSIC = {

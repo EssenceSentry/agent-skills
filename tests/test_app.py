@@ -303,7 +303,12 @@ def served(vault, tmp_path):
                                     "<body><div id=root></div></body></html>")  # fmt: skip
     (web / "assets" / "index.js").write_text("console.log(1)")
     (web / "favicon.svg").write_text("<svg/>")
+    (web / "manifest.webmanifest").write_text('{"name": "ax"}')
+    (web / "sw.js").write_text("self.addEventListener('fetch', () => {})")
+    (web / "icons").mkdir()
+    (web / "icons" / "icon-192.png").write_bytes(b"\x89PNG\r\n\x1a\nicon")
     server = serve.make_server(vault.config, port=0, usage_of=fake_usage, web=web, poll=0.05)
+    server.allow_url(f"https://{TUNNEL}")
     port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield vault, f"http://127.0.0.1:{port}", app.token(vault.config)
@@ -325,37 +330,78 @@ def call(url, *, token=None, cookie=None, data=None, headers=None):
         return error.code, dict(error.headers), error.read()
 
 
-def test_the_page_needs_the_token_and_sets_a_strict_cookie(served):
+TUNNEL = "abc.trycloudflare.com"
+REMOTE = {"Host": TUNNEL, "X-Forwarded-Proto": "https", "Cf-Connecting-Ip": "203.0.113.5"}
+
+
+@pytest.fixture
+def classic(monkeypatch):
+    # The classic page's runs come from live processes; these tests are about access only.
+    real = serve.collect_state
+    monkeypatch.setattr(serve, "collect_state",
+                        lambda config, **kw: real(config, usage_of=fake_usage, runs_of=lambda c: []))  # fmt: skip
+
+
+def test_on_this_mac_the_app_opens_without_a_token(served, classic):
+    # An installed app may keep its own storage, without the cookie a link set; only
+    # loopback host names reach this, and other sites still can't read or act.
+    _, base, _ = served
+    status, headers, body = call(f"{base}/")
+    assert status == 200 and b'<meta name="ax-live" content="1">' in body
+    assert "Set-Cookie" not in headers
+    assert "default-src 'self'" in headers["Content-Security-Policy"]
+    for path in ("/api/now", "/api/notes", "/api/state", "/classic", "/scorecard"):
+        assert call(f"{base}{path}")[0] == 200, path
+
+
+def test_through_a_tunnel_everything_but_the_page_files_needs_the_token(served, classic):
     _, base, token = served
-    assert call(f"{base}/")[0] == 401
-    assert call(f"{base}/", token="wrong")[0] == 401
-    status, headers, body = call(f"{base}/", token=token)
+    assert call(f"{base}/", headers=REMOTE)[0] == 401
+    assert call(f"{base}/", token="wrong", headers=REMOTE)[0] == 401
+    status, headers, body = call(f"{base}/", token=token, headers=REMOTE)
     assert status == 200 and b'<meta name="ax-live" content="1">' in body
     cookie = headers["Set-Cookie"]
     assert cookie.startswith(f"{app.COOKIE}={token}") and "HttpOnly" in cookie
-    assert "SameSite=Strict" in cookie
-    assert "default-src 'self'" in headers["Content-Security-Policy"]
-    assert call(f"{base}/", cookie=token)[0] == 200
-
-
-def test_assets_are_public_and_the_data_is_not(served, monkeypatch):
-    _, base, token = served
-    # The classic page's runs come from live processes; this test is about access only.
-    real = serve.collect_state
-    monkeypatch.setattr(
-        serve, "collect_state", lambda config, **kw: real(config, usage_of=fake_usage, runs_of=list)
-    )
-    assert call(f"{base}/assets/index.js")[0] == 200
-    assert call(f"{base}/favicon.svg")[0] == 200
-    # The tunnel's health check: public, and it says nothing else.
-    assert call(f"{base}/healthz")[:3:2] == (200, b"ok")
-    assert call(f"{base}/assets/../index.html")[0] in (400, 404)
+    assert "SameSite=Strict" in cookie and "Secure" in cookie
     for path in ("/api/now", "/api/notes", "/api/state", "/classic", "/scorecard", "/events"):
-        assert call(f"{base}{path}")[0] == 401, path
-    status, _, body = call(f"{base}/api/now", cookie=token)
+        assert call(f"{base}{path}", headers=REMOTE)[0] == 401, path
+    status, _, body = call(f"{base}/api/now", cookie=token, headers=REMOTE)
     assert status == 200 and "waiting" in json.loads(body)
-    status, _, body = call(f"{base}/classic", cookie=token)
-    assert status == 200 and b"<html" in body
+    assert call(f"{base}/assets/index.js", headers=REMOTE)[0] == 200
+    assert call(f"{base}/healthz", headers=REMOTE)[:3:2] == (200, b"ok")
+    assert call(f"{base}/assets/../index.html")[0] in (400, 404)
+
+
+def test_a_loopback_name_that_came_through_a_proxy_still_needs_the_token(served):
+    _, base, _ = served
+    forwarded = {"Host": "127.0.0.1", "X-Forwarded-For": "203.0.113.5"}
+    assert call(f"{base}/api/now", headers=forwarded)[0] == 401
+
+
+def test_the_install_files_load_without_the_token(served):
+    # The browser fetches these itself when it installs the app, with no token to send.
+    _, base, _ = served
+    status, headers, body = call(f"{base}/manifest.webmanifest")
+    assert status == 200 and headers["Content-Type"].startswith("application/manifest+json")
+    status, headers, _ = call(f"{base}/sw.js")
+    assert status == 200 and headers["Content-Type"].startswith("text/javascript")
+    assert headers["Cache-Control"] == "no-cache"  # a new build's worker is picked up
+    assert call(f"{base}/icons/icon-192.png")[0] == 200
+    assert call(f"{base}/icons/../index.html")[0] in (400, 404)
+
+
+def test_the_shipped_app_can_be_installed():
+    if not UI.exists():
+        pytest.skip("no ui/ sources in this checkout")
+    page = (app.WEB / "index.html").read_text()
+    assert '<link rel="manifest" href="/manifest.webmanifest"' in page
+    manifest = json.loads((app.WEB / "manifest.webmanifest").read_text())
+    assert manifest["start_url"] == "/" and manifest["display"] == "standalone"
+    sizes = {i["sizes"] for i in manifest["icons"] if i["type"] == "image/png"}
+    assert {"192x192", "512x512"} <= sizes
+    for icon in manifest["icons"]:
+        assert (app.WEB / icon["src"].lstrip("/")).exists(), icon["src"]
+    assert "fetch" in (app.WEB / "sw.js").read_text()
 
 
 def test_other_host_names_are_refused(served):
@@ -363,21 +409,24 @@ def test_other_host_names_are_refused(served):
     assert call(f"{base}/api/now", cookie=token, headers={"Host": "evil.example"})[0] == 403
 
 
-def test_actions_need_the_token_json_and_the_apps_own_origin(served):
+def test_actions_need_json_from_the_app_s_own_origin_and_remotely_the_token(served):
     env, base, token = served
     data = json.dumps({"action": "todo-add", "text": "From the app"}).encode()
     json_type = {"Content-Type": "application/json"}
-    same = {**json_type, "Origin": base}
-    assert call(f"{base}/api/act", data=data, headers=same)[0] == 401
-    assert call(f"{base}/api/act", cookie=token, data=data,
+    assert call(f"{base}/api/act", data=data,
                 headers={**json_type, "Origin": "http://evil.example"})[0] == 403  # fmt: skip
-    assert call(f"{base}/api/act", cookie=token, data=data,
+    assert call(f"{base}/api/act", data=data,
                 headers={"Content-Type": "text/plain", "Origin": base})[0] == 415  # fmt: skip
-    status, _, body = call(f"{base}/api/act", cookie=token, data=data, headers=same)
+    status, _, body = call(f"{base}/api/act", data=data, headers={**json_type, "Origin": base})
     assert status == 200 and json.loads(body)["ok"] is True
-    assert [t.text for t in todos.listing(env.config)] == ["From the app"]
+    status, _, _ = call(f"{base}/api/act", data=data, headers=json_type)  # an agent's curl
+    assert status == 200
+    remote = {**REMOTE, **json_type, "Origin": f"https://{TUNNEL}"}
+    assert call(f"{base}/api/act", data=data, headers=remote)[0] == 401
+    assert call(f"{base}/api/act", cookie=token, data=data, headers=remote)[0] == 200
+    assert len(todos.listing(env.config)) == 3
     bad = json.dumps({"action": "accept", "id": "nope"}).encode()
-    status, _, body = call(f"{base}/api/act", cookie=token, data=bad, headers=same)
+    status, _, body = call(f"{base}/api/act", data=bad, headers={**json_type, "Origin": base})
     assert status == 400 and "no proposal" in json.loads(body)["error"]
 
 
