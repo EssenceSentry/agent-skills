@@ -115,31 +115,34 @@ class Share:
         self.checked = 0.0
 
     def start(self) -> str:
+        self.checked = self.clock()  # a failed start is tried again at the next check
         self.tunnel = self.make()
         self.url = self.tunnel.start(self.local_url)
         self.on_url(self.url)
-        self.checked = self.clock()
         return self.url
 
     def tick(self) -> str | None:
-        """Check the link when due; returns the new link if the tunnel was replaced."""
+        """Check the link when due; returns the new link when a tunnel that never started
+        comes up or a dead one is replaced."""
         now = self.clock()
         if now - self.checked < self.interval:
             return None
         self.checked = now
-        if self.health(self.url):
-            self.failures = 0
-            return None
-        self.failures += 1
-        if self.failures < self.failures_allowed:
-            return None
+        if self.url is not None:
+            if self.health(self.url):
+                self.failures = 0
+                return None
+            self.failures += 1
+            if self.failures < self.failures_allowed:
+                return None
         old = self.tunnel
         try:
             replacement = self.make()
             url = replacement.start(self.local_url)
         except RuntimeError:
             return None  # try again at the next check
-        old.close()
+        if old is not None:
+            old.close()
         self.tunnel, self.url, self.failures = replacement, url, 0
         self.on_url(url)
         return url

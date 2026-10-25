@@ -73,6 +73,30 @@ def test_the_service_keeps_ax_serve_running_from_login(env, tmp_path):
     assert plist["StandardOutPath"].endswith("serve.log")
 
 
+def test_the_service_can_share_through_cloudflare_and_send_each_link(env, tmp_path):
+    [change] = glue.plan_app_service(env.config, ax="/x/ax", launch_agents=tmp_path, port=8765,
+                                     share="cloudflare", notify=True)  # fmt: skip
+    plist = plistlib.loads(change.after.encode())
+    assert plist["ProgramArguments"] == ["/x/ax", "serve", "--port", "8765", "--share",
+                                         "cloudflare", "--notify"]  # fmt: skip
+
+
+def test_the_service_refuses_to_notify_without_a_topic(env, monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+
+    from ax.cli import app as cli
+
+    monkeypatch.setenv("AX_CONFIG", str(env.config_path))
+    monkeypatch.delenv("AX_NTFY_TOPIC", raising=False)
+    monkeypatch.setattr(glue, "launch_agents_dir", lambda: tmp_path)
+    result = CliRunner().invoke(cli, ["app", "service", "--share", "cloudflare", "--notify"])
+    assert result.exit_code == 2 and "topic" in result.output
+    monkeypatch.setenv("AX_NTFY_TOPIC", "my-topic")
+    result = CliRunner().invoke(cli, ["app", "service", "--share", "cloudflare", "--notify"])
+    assert result.exit_code == 0 and "--notify" in result.output  # a preview: nothing written
+    assert not (tmp_path / "com.ax.app.plist").exists()
+
+
 def test_the_commands_an_agent_runs(env, monkeypatch):
     monkeypatch.setenv("AX_CONFIG", str(env.config_path))
     monkeypatch.setattr(app_daemon, "start", lambda config, port: {

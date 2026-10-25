@@ -625,6 +625,35 @@ def test_ax_serve_shares_through_cloudflare_and_sends_the_link_with_ntfy(env, cl
     assert FakeShare.made.local_url.startswith("http://127.0.0.1:") and FakeShare.made.closed
 
 
+class LateShare(FakeShare):
+    def start(self):
+        raise RuntimeError("cloudflared could not reach Cloudflare")
+
+    def tick(self):
+        self.on_url("https://late.trycloudflare.com")
+        return "https://late.trycloudflare.com"
+
+
+def test_ax_serve_stays_up_on_this_mac_until_the_tunnel_starts(env, cli_serve, monkeypatch):
+    from ax import job_tunnel
+
+    announced = threading.Event()
+
+    def keep(tunnel, on_new, *, stop):
+        on_new(tunnel.tick())
+        announced.set()
+
+    monkeypatch.setattr(job_tunnel, "Share", LateShare)
+    monkeypatch.setattr(serve, "keep_shared", keep)
+    monkeypatch.setattr(serve.ThreadingHTTPServer, "serve_forever", lambda self: announced.wait(5))
+    result, sent = cli_serve("--share", "cloudflare", "--notify")
+    assert result.exit_code == 0, result.output
+    assert "could not reach Cloudflare" in result.output and "trying again" in result.output
+    [(_, title, _, options)] = sent  # nothing was sent before the link existed
+    assert title == "ax is open"
+    assert options["click"].startswith("https://late.trycloudflare.com/?token=")
+
+
 def test_ax_serve_notify_without_sharing_sends_the_local_link_and_says_so(env, cli_serve):
     result, sent = cli_serve("--notify")
     assert result.exit_code == 0, result.output

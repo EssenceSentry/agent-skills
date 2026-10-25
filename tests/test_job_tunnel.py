@@ -77,6 +77,32 @@ def test_a_dead_link_is_replaced_after_three_failed_checks():
     share.close()
 
 
+def test_a_share_that_could_not_start_keeps_trying_and_reports_its_link():
+    # At login the network may not be up yet: the app keeps serving on this Mac and
+    # the tunnel comes up at a later check.
+    attempts = []
+
+    def make():
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise RuntimeError("cloudflared could not reach Cloudflare")
+        return FakeTunnel("https://late.trycloudflare.com")
+
+    seen, now = [], [0.0]
+    share = job_tunnel.Share(
+        "http://127.0.0.1:1", on_url=seen.append, health=lambda url: True,
+        tunnel_factory=make, interval=30, clock=lambda: now[0],
+    )  # fmt: skip
+    with pytest.raises(RuntimeError):
+        share.start()
+    now[0] += 31
+    assert share.tick() == "https://late.trycloudflare.com"
+    assert seen == ["https://late.trycloudflare.com"] and len(attempts) == 2
+    now[0] += 31
+    assert share.tick() is None  # up and healthy: nothing new
+    share.close()
+
+
 def test_share_checks_the_health_page(monkeypatch):
     calls = []
     monkeypatch.setattr(job_tunnel, "_get_status", lambda url, timeout: calls.append(url) or 200)

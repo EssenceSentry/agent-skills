@@ -165,12 +165,23 @@ def plan_jobs_service(config: Config, *, ax: str, launch_agents: Path) -> list[C
     return [Change(path, before, plistlib.dumps(plist).decode())]
 
 
-def plan_app_service(config: Config, *, ax: str, launch_agents: Path, port: int) -> list[Change]:
-    """A launchd agent that keeps `ax serve` running from login, restarted whenever it stops."""
+def plan_app_service(
+    config: Config, *, ax: str, launch_agents: Path, port: int, share: str = "none",
+    notify: bool = False,
+) -> list[Change]:  # fmt: skip
+    """A launchd agent that keeps `ax serve` running from login, restarted whenever it stops;
+    with `share` and `notify`, it also keeps a Cloudflare link and sends each new one."""
     log = str(config.data / "app" / "serve.log")
     plist = {
         "Label": APP_LABEL,
-        "ProgramArguments": [ax, "serve", "--port", str(port)],
+        "ProgramArguments": [
+            ax,
+            "serve",
+            "--port",
+            str(port),
+            *(["--share", share] if share != "none" else []),
+            *(["--notify"] if notify else []),
+        ],  # fmt: skip
         "KeepAlive": True,
         "RunAtLoad": True,
         "EnvironmentVariables": {"PATH": _launchd_path()},

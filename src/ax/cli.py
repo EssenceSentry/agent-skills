@@ -507,11 +507,13 @@ def serve(
     base = f"http://127.0.0.1:{server.server_address[1]}"
     url = f"{base}/?token={app_module.token(config)}"
     typer.echo(f"ax at {url} (Ctrl-C to stop)\nThe classic page is at {base}/classic.")
-    link, tunnel, stop = url, None, threading.Event()
+    link, tunnel, stop, sent = url, None, threading.Event(), []
 
-    def announce(new_link: str, title: str) -> None:
+    def announce(new_link: str) -> None:
         if ntfy is None:
             return
+        title = "ax has a new link" if sent else "ax is open"
+        sent.append(new_link)
         error = job_notify.send(
             ntfy, title,
             "What waits for you, usage, jobs and notes. The link works while `ax serve` runs.",
@@ -525,16 +527,16 @@ def serve(
         tunnel = job_tunnel.Share(base, on_url=server.allow_url)
         try:
             link = f"{tunnel.start()}/?token={run_token}"
-        except RuntimeError as exc:
-            server.server_close()
-            typer.echo(str(exc), err=True)
-            raise typer.Exit(2) from None
-        typer.echo(f"shared at {link} (it stops working when this stops)")
+            typer.echo(f"shared at {link} (it stops working when this stops)")
+        except RuntimeError as exc:  # at login the network may not be up yet
+            link = None
+            typer.echo(f"no tunnel yet: {exc}. ax keeps serving on this Mac, trying again "
+                       "every 30 s, and sends the link when it is up.")  # fmt: skip
 
         def relinked(new: str) -> None:
             fresh = f"{new}/?token={run_token}"
-            typer.echo(f"the tunnel was replaced: {fresh}")
-            announce(fresh, "ax has a new link")
+            typer.echo(f"shared at {fresh}")
+            announce(fresh)
 
         threading.Thread(
             target=serve_module.keep_shared, args=(tunnel, relinked), kwargs={"stop": stop},
@@ -542,7 +544,8 @@ def serve(
         ).start()  # fmt: skip
     elif notify:
         typer.echo("the link opens only on this Mac; --share cloudflare reaches your phone")
-    announce(link, "ax is open")
+    if link:
+        announce(link)
     if open_browser:
         import webbrowser
 
@@ -971,9 +974,20 @@ def app_service(
     port: int = _APP_PORT,
     apply: bool = typer.Option(False, "--apply", help="Write and load it; otherwise preview."),
     remove: bool = typer.Option(False, "--remove", help="Unload and delete it."),
+    share: str = typer.Option("none", help="none, or cloudflare: keep a link for your phone."),
+    notify: bool = typer.Option(False, "--notify", help="Send each new link with ntfy."),
 ):
     """Keep `ax serve` running from login with launchd (com.ax.app), restarted if it stops."""
+    from ax import job_notify
+
     config = load()
+    if share not in ("none", "cloudflare"):
+        typer.echo(f"--share must be none or cloudflare, not {share!r}", err=True)
+        raise typer.Exit(2)
+    if notify and job_notify.settings(config) is None:  # or the service would fail at login
+        typer.echo("no ntfy topic: set `topic` under [notify] in ~/.config/ax/config.toml",
+                   err=True)  # fmt: skip
+        raise typer.Exit(2)
     path = glue.launch_agents_dir() / f"{glue.APP_LABEL}.plist"
     domain = f"gui/{os.getuid()}"
     if remove:
@@ -988,9 +1002,8 @@ def app_service(
         path.unlink(missing_ok=True)
         typer.echo(f"removed {glue.APP_LABEL}")
         return
-    changes = glue.plan_app_service(
-        config, ax=glue.ax_path(), launch_agents=glue.launch_agents_dir(), port=port
-    )
+    changes = glue.plan_app_service(config, ax=glue.ax_path(), launch_agents=glue.launch_agents_dir(),
+                                    port=port, share=share, notify=notify)  # fmt: skip
     _report(changes, apply)
     if apply:
         from ax import app_daemon
@@ -998,7 +1011,9 @@ def app_service(
         app_daemon.stop(config)  # launchd takes over from a server `ax app start` began
         subprocess.run(["launchctl", "bootout", domain, str(path)], capture_output=True)
         subprocess.run(["launchctl", "bootstrap", domain, str(path)], check=True)
-        typer.echo(f"loaded {glue.APP_LABEL}; it serves http://127.0.0.1:{port}/")
+        shared = " and a Cloudflare link" + (", sent by ntfy" if notify else "")
+        typer.echo(f"loaded {glue.APP_LABEL}; it serves http://127.0.0.1:{port}/"
+                   f"{shared if share == 'cloudflare' else ''}")  # fmt: skip
 
 
 @vault_app.command("init")
