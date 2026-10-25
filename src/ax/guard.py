@@ -31,9 +31,9 @@ def log_path(data: Path) -> Path:
     return Path(data) / "guard.jsonl"
 
 
-def _repo_name(cwd: str) -> str | None:
+def _repo_name(cwd) -> str | None:
     """The folder name of the git repository containing cwd, found without running git."""
-    path = Path(cwd or ".")
+    path = Path(cwd if isinstance(cwd, str) and cwd else ".")
     for folder in (path, *path.parents):
         if (folder / ".git").exists():
             return folder.name
@@ -109,6 +109,8 @@ def evaluate(rules: list[dict], command: str, cwd: str) -> dict | None:
     """
     repo, code = None, None
     for rule in rules:
+        if not isinstance(rule, dict) or not isinstance(rule.get("pattern"), str):
+            continue
         if rule.get("tool", "shell") != "shell":
             continue
         if rule.get("repo"):
@@ -120,8 +122,11 @@ def evaluate(rules: list[dict], command: str, cwd: str) -> dict | None:
             code = code_only(command) if code is None else code
             text = code
         # Line by line: `$` in a pattern means the end of a command line, not of the text.
-        if re.search(rule["pattern"], text, re.MULTILINE):
-            return rule
+        try:
+            if re.search(rule["pattern"], text, re.MULTILINE):
+                return rule
+        except re.error:
+            continue  # a broken pattern guards nothing; it must not stop every command
     return None
 
 
@@ -144,7 +149,10 @@ def _turn(transcript: Path) -> tuple[str, list[str]]:
             record = json.loads(line)
         except ValueError:
             continue
-        content = (record.get("message") or {}).get("content")
+        message = record.get("message") if isinstance(record, dict) else None
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
         if record.get("type") == "user":
             is_result = isinstance(content, list) and any(
                 isinstance(b, dict) and b.get("type") == "tool_result" for b in content
@@ -158,7 +166,9 @@ def _turn(transcript: Path) -> tuple[str, list[str]]:
                 if block.get("type") == "text":
                     text = block.get("text", "")
                 elif block.get("type") == "tool_use" and block.get("name") == "Bash":
-                    commands.append(str((block.get("input") or {}).get("command", "")))
+                    given = block.get("input")
+                    if isinstance(given, dict) and isinstance(given.get("command"), str):
+                        commands.append(given["command"])
     return text, commands
 
 
@@ -166,9 +176,12 @@ def stop_check(payload: dict) -> str | None:
     """Why Claude should keep working, or None to let it stop."""
     if payload.get("stop_hook_active"):
         return None  # it already continued once for this check
+    path = payload.get("transcript_path")
+    if not isinstance(path, str):
+        return None
     try:
-        text, commands = _turn(Path(payload["transcript_path"]))
-    except (KeyError, OSError, TypeError):
+        text, commands = _turn(Path(path))
+    except (OSError, ValueError):
         return None
     if not _TESTS_PASS.search(text) or _NOT_RUN.search(text):
         return None
@@ -198,12 +211,28 @@ def _default_data() -> Path:
         return Path("~/.local/share/ax").expanduser()
 
 
+def _flag(argv: list, name: str) -> str | None:
+    """The value after `name`, or None when the flag or its value is missing."""
+    if name not in argv:
+        return None
+    at = argv.index(name) + 1
+    return argv[at] if at < len(argv) else None
+
+
 def main(argv=None, *, stdin=None, stdout=None) -> int:
+    """Run the hook; it exits 0 whatever happens, so a guard bug never stops a session."""
+    try:
+        return _main(argv, stdin=stdin, stdout=stdout)
+    except Exception:  # last resort: an unforeseen input must not block the user's work
+        return 0
+
+
+def _main(argv=None, *, stdin=None, stdout=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
-    tool = argv[argv.index("--tool") + 1] if "--tool" in argv else "claude"
-    data = Path(argv[argv.index("--data") + 1]) if "--data" in argv else _default_data()
-    if "--event" in argv and argv[argv.index("--event") + 1] == "stop":
+    tool = _flag(argv, "--tool") or "claude"
+    data = Path(_flag(argv, "--data") or _default_data())
+    if _flag(argv, "--event") == "stop":
         try:
             payload = json.loads(stdin.read())
         except ValueError:
@@ -221,17 +250,20 @@ def main(argv=None, *, stdin=None, stdout=None) -> int:
         return 0
     if not isinstance(payload, dict) or payload.get("tool_name") != "Bash":
         return 0
-    command = (payload.get("tool_input") or {}).get("command")
-    if not isinstance(command, str):
+    given = payload.get("tool_input")
+    command = given.get("command") if isinstance(given, dict) else None
+    if not isinstance(command, str) or not isinstance(rules, list):
         return 0
-    cwd = payload.get("cwd") or os.getcwd()
+    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else os.getcwd()
     hit = evaluate(rules, command, cwd)
     if not hit:
         return 0
-    _log(data, {"tool": tool, "rule": hit["id"], "cwd": cwd,
+    rule_id = str(hit.get("id") or "unnamed")
+    _log(data, {"tool": tool, "rule": rule_id, "cwd": cwd,
                 "session": payload.get("session_id"), "command": command[:300]})  # fmt: skip
+    message = hit.get("message") or "This command breaks a rule in the user's profile."
     reason = (
-        f"{hit['message']} (blocked by the user's profile rule {hit['id']}; "
+        f"{message} (blocked by the user's profile rule {rule_id}; "
         "if it is wrong here, ask the user rather than working around it)"
     )
     stdout.write(json.dumps({

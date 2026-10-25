@@ -253,3 +253,65 @@ def test_hooks_install_adds_the_stop_check_for_claude(env):
     claude = {c.path.name: json.loads(c.after) for c in changes}["settings.json"]
     commands = [h["command"] for e in claude["hooks"]["Stop"] for h in e["hooks"]]
     assert "/bin/ax-guard --tool claude --event stop" in commands
+
+
+def run_raw(env, payload, rules_json, argv=None):
+    data = env.config.data
+    data.mkdir(parents=True, exist_ok=True)
+    guard.rules_path(data).write_text(rules_json)
+    out = io.StringIO()
+    code = guard.main(argv or ["--tool", "codex", "--data", str(data)],
+                      stdin=io.StringIO(json.dumps(payload)), stdout=out)  # fmt: skip
+    return code, out.getvalue()
+
+
+BASH = {"tool_name": "Bash", "tool_input": {"command": "git add -A"}, "cwd": "/tmp"}
+RULE = {"id": "stage", "pattern": "git add -A", "message": "Stage by path."}
+
+
+@pytest.mark.parametrize(
+    ("payload", "rules_json"),
+    [
+        ({"tool_name": "Bash", "tool_input": "git add -A"}, json.dumps([RULE])),
+        (BASH, json.dumps({"rules": [RULE]})),
+        (BASH, json.dumps(["stage", 3, None])),
+        (BASH, json.dumps([{"id": "bad", "pattern": "(unclosed", "message": "x"}])),
+        (BASH, json.dumps([{"id": "nopattern", "message": "x"}])),
+        ({**BASH, "cwd": 5}, json.dumps([{**RULE, "repo": "ds-models"}])),
+    ],
+)  # fmt: skip
+def test_odd_payloads_and_rules_never_crash_the_guard(env, payload, rules_json):
+    code, out = run_raw(env, payload, rules_json)
+    assert code == 0 and (out == "" or json.loads(out))
+
+
+def test_a_rule_missing_its_id_or_message_still_blocks_with_a_reason(env):
+    code, out = run_raw(env, BASH, json.dumps([{"pattern": "git add -A"}]))
+    reason = json.loads(out)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert code == 0 and "profile" in reason
+
+
+@pytest.mark.parametrize(
+    "argv", [["--tool"], ["--data"], ["--event"], ["--tool", "codex", "--event"]]
+)
+def test_a_flag_without_its_value_does_not_crash(env, argv):
+    assert guard.main(argv, stdin=io.StringIO("{}"), stdout=io.StringIO()) == 0
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        ["[]", '"x"', "3"],
+        [json.dumps({"type": "user", "message": "a string"})],
+        [json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Bash", "input": "pytest"}, {"type": "text", "text": "All tests pass."}]}})],
+    ],
+)  # fmt: skip
+def test_odd_transcripts_never_crash_the_stop_check(env, tmp_path, lines):
+    path = tmp_path / "odd.jsonl"
+    path.write_text("\n".join(lines) + "\n")
+    stop(env, str(path))  # no exception; a block is fine
+
+
+def test_a_non_string_transcript_path_is_ignored(env):
+    assert stop(env, 7) is None
