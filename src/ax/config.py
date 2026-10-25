@@ -36,6 +36,12 @@ class Config:
     profile_extra_dirs: tuple[Path, ...] = ()
     # `ax sync` labels up to 40 new learner candidates with Haiku (a model call) unless false.
     learn_label_on_sync: bool = True
+    # `ax find`: the repos Semble searches (empty: every git checkout under the repos root),
+    # more repos to add to those, qmd's config folder, and whether sync refreshes the index.
+    find_repos: tuple[Path, ...] = ()
+    find_extra_repos: tuple[Path, ...] = ()
+    find_qmd_dir: Path = Path("~/.config/qmd").expanduser()
+    find_refresh_on_sync: bool = True
 
     @property
     def db_path(self) -> Path:
@@ -57,6 +63,12 @@ def load(path: Path | None = None) -> Config:
     notify = raw.get("notify", {})
     prof = raw.get("profile", {})
     learning = raw.get("learn", {})
+    finding = raw.get("find", {})
+    qmd_dir = os.environ.get("QMD_CONFIG_DIR") or (
+        f"{os.environ['XDG_CONFIG_HOME']}/qmd"
+        if os.environ.get("XDG_CONFIG_HOME")
+        else "~/.config/qmd"
+    )
     desktop_plugins = Path(
         "~/Library/Application Support/Claude/local-agent-mode-sessions"
     ).expanduser()
@@ -91,4 +103,8 @@ def load(path: Path | None = None) -> Config:
             )
         ),
         learn_label_on_sync=bool(learning.get("label_on_sync", True)),
+        find_repos=tuple(Path(r).expanduser() for r in finding.get("repos", ())),
+        find_extra_repos=tuple(Path(r).expanduser() for r in finding.get("extra_repos", ())),
+        find_qmd_dir=Path(finding.get("qmd_config_dir", qmd_dir)).expanduser(),
+        find_refresh_on_sync=bool(finding.get("refresh_on_sync", True)),
     )

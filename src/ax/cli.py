@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 
 import typer
 
@@ -525,10 +526,17 @@ def sync(quiet: bool = typer.Option(False, "--quiet", "-q", help="Print nothing 
         # Hooks fire from many sessions at once; the running sync will pick their files up.
         typer.echo(f"{busy}; skipping")
         raise typer.Exit(0) from None
+    from ax import find
+
     updated, unreadable = [], []
     try:
         with sync_module.lock(config):  # syncs from many sessions must not write notes at once
             updated, unreadable = learn_life.after_sync(config)
+            if report.written and config.find_refresh_on_sync and find.ready(config):
+                try:
+                    find.refresh(config)  # new notes become findable
+                except find.FindError as exc:  # search is stale, not the archive
+                    typer.echo(f"warning: search index not refreshed: {exc}")
     except sync_module.SyncBusy:
         pass  # the sync that holds the lock refreshes the rules
     except Exception as exc:  # the archive is synced either way; report, don't hide it
@@ -598,6 +606,87 @@ def recall_cmd(
         text = recall.outline(config, row)
     recall.record(config, row)
     typer.echo(text)
+
+
+@app.command("find")
+def find_cmd(
+    query: str = typer.Argument(..., help="What to look for, in your own words or code terms."),
+    sources: str = typer.Option(
+        "conversations,memories,notes,code", "--in",
+        help="Any of conversations, memories, notes, code, subagents, comma-separated.",
+    ),
+    project: str = typer.Option(None, help="Only this project (git repo name)."),
+    provider: str = typer.Option(None, help="Only conversations in claude or codex."),
+    since: str = typer.Option(None, help="Only conversations since YYYY-MM-DD or 7d, 2w."),
+    limit: int = typer.Option(10, help="Most hits to show."),
+    fast: bool = typer.Option(False, "--fast", help="Keywords only for notes: no models."),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output for agents."),
+):  # fmt: skip
+    """Search past conversations, memories, vault notes and code in one go."""
+    from ax import find
+
+    config = load()
+    if not find.ready(config):
+        typer.echo("no search index yet; run `ax index setup`", err=True)
+        raise typer.Exit(2)
+    start = None
+    if since:
+        try:
+            start = search_module.parse_since(since).date().isoformat()
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--since") from None
+    try:
+        hits = find.find(
+            config, query, sources=[s.strip() for s in sources.split(",")], limit=limit,
+            project=project, provider=provider, since=start, fast=fast,
+        )  # fmt: skip
+    except find.FindError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(json.dumps(hits, indent=2, ensure_ascii=False) if as_json else find.text(hits))
+
+
+index_app = typer.Typer(no_args_is_help=True, help="The search index behind `ax find`.")
+app.add_typer(index_app, name="index")
+
+
+@index_app.command("setup")
+def index_setup():
+    """Register the qmd collections, then index and embed them and every repository."""
+    from ax import find
+
+    try:
+        find.setup(load(), say=typer.echo)
+    except find.FindError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+
+
+@index_app.command("refresh")
+def index_refresh():
+    """Index and embed conversations, memories and notes that changed."""
+    from ax import find
+
+    try:
+        find.refresh(load())
+    except find.FindError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    typer.echo("refreshed")
+
+
+@index_app.command("eval")
+def index_eval(
+    cases: Path = typer.Argument(..., help="YAML list of {query, expect, in} questions."),
+    k: int = typer.Option(5, help="Count a question as found within this many hits."),
+):
+    """How many questions with known answers `ax find` answers in its top k."""
+    from ax import find
+
+    report = find.evaluate(load(), find.load_cases(cases), k=k)
+    typer.echo(f"found {report['found']} of {report['total']} in the top {k}")
+    for miss in report["misses"]:
+        typer.echo(f"  missed: {miss['query']!r} (expected {miss['expect']})")
 
 
 @app.command()
