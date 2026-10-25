@@ -221,6 +221,8 @@ def _past(db, row) -> dict | None:
     first, last = _edge(db, row["key"], "ASC"), _edge(db, row["key"], "DESC")
     if not first or first[1] is None or last[1] is None or last[1] <= first[1]:
         return past
+    if last[0] <= first[0]:
+        return past  # all its progress landed at once: no rate to learn from
     rate = (last[1] - first[1]) / (last[0] - first[0]).total_seconds()
     left = max((row["total"] or last[1]) - last[1], 0.0)
     past["rate"] = rate

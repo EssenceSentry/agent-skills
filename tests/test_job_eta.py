@@ -91,6 +91,28 @@ def test_history_gives_an_estimate_before_any_progress(env):
     assert eta["similar_jobs"] == 3
 
 
+def test_a_past_job_whose_progress_all_landed_at_once_still_counts_by_length(env):
+    """A run that failed at once records all its progress in one refresh; its rate is
+    unknown, but it must not break the estimate of the next job of its family."""
+    jobs.new(env.config, "burst-1", total=8, unit="agents")
+    created = T0 - timedelta(hours=1)
+    with jobs.connect(env.config) as db:
+        db.execute("UPDATE jobs SET created = ?, kind = 'events' WHERE key = 'burst-1'",
+                   (jobs.now_iso(created),))  # fmt: skip
+        job = jobs._load(db, "burst-1")
+        for done in (2, 5, 8):  # one timestamp for all of them
+            jobs.apply(
+                db, job, jobs.Update(done=done), jobs.now_iso(created + timedelta(minutes=1))
+            )
+        jobs.apply(
+            db, job, jobs.Update(status="done"), jobs.now_iso(created + timedelta(minutes=1))
+        )
+        jobs._save(db, job)
+    job = jobs.new(env.config, "burst-2", total=8, unit="agents")
+    eta = job_eta.estimate(env.config, job, now=jobs.parse_iso(job.created))
+    assert eta is None or eta["basis"] == "history"
+
+
 def test_calibration_scores_recorded_predictions(env):
     jobs.new(env.config, "cal", total=100)
     with jobs.connect(env.config) as db:
