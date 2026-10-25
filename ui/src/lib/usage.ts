@@ -45,3 +45,18 @@ export function usagePace(
   if (perDay < EVEN_PER_DAY) return "tight"
   return perDay > EVEN_PER_DAY * SPARE_FACTOR ? "spare" : "even"
 }
+
+/** Only these windows turn yellow for allowance left unused; the others only when tight. */
+const SPARE_WARNS = new Set(["weekly"])
+
+/** The colour a window's bar takes: red nearly spent, yellow off pace or near the limit. */
+export function usageTone(
+  row: { window: string; used: number | null; resets_at: string | null },
+  now = Date.now()
+): "primary" | "warning" | "critical" {
+  const used = row.used ?? 0
+  if (used >= 95) return "critical"
+  const pace = usagePace(row, now)
+  if (pace === "tight" || (pace === "spare" && SPARE_WARNS.has(row.window))) return "warning"
+  return pace === null && used >= 80 ? "warning" : "primary"
+}

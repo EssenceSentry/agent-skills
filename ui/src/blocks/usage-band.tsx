@@ -2,7 +2,7 @@ import { Hourglass, TriangleAlert } from "lucide-react"
 
 import type { Credits, UsageRow } from "@/lib/ax"
 import { ago } from "@/lib/time"
-import { EVEN_PER_DAY, usageFoot, usagePace } from "@/lib/usage"
+import { EVEN_PER_DAY, usageFoot, usagePace, usageTone } from "@/lib/usage"
 import { cn } from "@/lib/utils"
 
 const PROVIDERS = [
@@ -28,16 +28,11 @@ const PACE_HINT = {
   spare: `Well over an even ${Math.round(EVEN_PER_DAY)}% a day left: room to use before it resets`,
 }
 
-function tone(row: UsageRow, pace: ReturnType<typeof usagePace>) {
-  if ((row.used ?? 0) >= 95) return "critical"
-  if (pace) return pace === "even" ? "primary" : "warning"
-  return (row.used ?? 0) >= 80 ? "warning" : "primary"
-}
-
 function Window({ row }: { row: UsageRow }) {
   const meta = WINDOWS[row.window] ?? { label: row.window.replace(/_/g, " "), hint: "", order: 9 }
-  const pace = usagePace(row)
-  const level = tone(row, pace)
+  const level = usageTone(row)
+  // Yellow means tight unless what is left is spare; the icon and hint say which.
+  const pace = level === "warning" ? usagePace(row) : null
   const off = pace === "tight" || pace === "spare"
   const foot = row.used === null ? (UNKNOWN[row.status] ?? row.status) : usageFoot(row)
   const PaceIcon = pace === "spare" ? Hourglass : TriangleAlert

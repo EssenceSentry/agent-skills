@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { usageFoot, usagePace } from "@/lib/usage"
+import { usageFoot, usagePace, usageTone } from "@/lib/usage"
 
 const NOW = Date.parse("2026-10-25T18:00:00Z")
 const inHours = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString()
@@ -48,5 +48,25 @@ describe("usagePace", () => {
   it("has no pace for a session window or an unknown reading", () => {
     expect(usagePace(row("session", 44, 2), NOW)).toBeNull()
     expect(usagePace({ window: "weekly", used: null, resets_at: null }, NOW)).toBeNull()
+  })
+})
+
+describe("usageTone", () => {
+  it("turns the main weekly window yellow when what is left per day is off an even pace", () => {
+    expect(usageTone(row("weekly", 54, 72), NOW)).toBe("primary") // even
+    expect(usageTone(row("weekly", 90, 96), NOW)).toBe("warning") // tight
+    expect(usageTone(row("weekly", 20, 48), NOW)).toBe("warning") // spare
+  })
+
+  it("never turns Fable or the 5-hour window yellow for low usage", () => {
+    expect(usageTone(row("weekly_fable", 0, 8), NOW)).toBe("primary") // spare
+    expect(usageTone(row("weekly_fable", 90, 96), NOW)).toBe("warning") // tight
+    expect(usageTone(row("session", 5, 1), NOW)).toBe("primary")
+    expect(usageTone(row("session", 85, 1), NOW)).toBe("warning")
+  })
+
+  it("turns any window red when nearly spent", () => {
+    expect(usageTone(row("session", 96, 1), NOW)).toBe("critical")
+    expect(usageTone(row("weekly_fable", 97, 30), NOW)).toBe("critical")
   })
 })
