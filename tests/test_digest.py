@@ -88,3 +88,17 @@ def test_installing_hooks_adds_the_start_hook_to_both_tools(env):
         groups = json.loads(change.after)["hooks"]["SessionStart"]
         commands = [h["command"] for g in groups for h in g["hooks"]]
         assert any(c.startswith("/bin/ax hooks start --tool") for c in commands)
+
+
+def test_open_todos_of_this_project_and_global_ones_are_in_the_digest(env):
+    from ax import todos
+
+    todos.add(env.config, "Write one ax skill", scope="project:demo", origin="ax:9fe6d7e6")
+    todos.add(env.config, "Turn on the job service", scope="global")
+    todos.add(env.config, "Someone else's", scope="project:other")
+    done = todos.add(env.config, "Already done", scope="project:demo")
+    todos.close(env.config, done.id, "done")
+    text = digest.build(env.config, cwd="/Users/me/Repos/demo", now=NOW)
+    assert "T1 (demo, from ax:9fe6d7e6): Write one ax skill" in text
+    assert "Turn on the job service" in text
+    assert "Someone else's" not in text and "Already done" not in text

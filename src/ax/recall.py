@@ -17,7 +17,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from ax import handles
+from ax import handles, todos
 from ax.store import Store
 
 TURNS = 60
@@ -144,6 +144,9 @@ def outline(config, row) -> str:
             changed += re.findall(r"`([^`]+)`", m["text"])
     if changed:
         lines += ["", "## Files it changed", *(f"- {f}" for f in dict.fromkeys(changed))]
+    raised = [t for t in todos.everything(config) if t.origin == handles.tag(row["session_id"])]
+    if raised:
+        lines += ["", "## To-dos raised here", *(f"- {todos.line(t)}" for t in raised)]
     return "\n".join(lines)
 
 

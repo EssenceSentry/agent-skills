@@ -3,17 +3,19 @@
 An agent searches past work only when it thinks to. The digest gives each new
 conversation a map instead: the user's own conversations of the last week (never
 workers or subagents), newest first with the current project's first, each with its
-handle, and the jobs still running with their descriptions. It reads the archive only,
+handle, the open to-dos of this project and the global ones, and the jobs still
+running with their descriptions. It reads the archive only,
 with no sync and no model, so a conversation starts about as fast as before.
 """
 
 from datetime import UTC, datetime, timedelta
 
-from ax import handles, jobs, learn
+from ax import handles, jobs, learn, todos
 from ax.sources.common import project_name
 
 DAYS = 7
 LIMIT = 30
+TODOS = 10
 TITLE = 70
 
 
@@ -71,7 +73,8 @@ def build(config, *, cwd=None, exclude=None, now=None, days=DAYS, limit=LIMIT) -
     here = project_name(cwd) if cwd else None
     rows.sort(key=lambda r: r["project"] != here)  # stable: newest first within each part
     running = [j for j in jobs.list_jobs(config, refresh_active=False) if not j.terminal]
-    if not rows and not running:
+    open_todos = [t for t in todos.listing(config, project=here) if here or t.scope == "global"]
+    if not rows and not running and not open_todos:
         return ""
     synced = _last_sync(config)
     lines = [
@@ -86,6 +89,11 @@ def build(config, *, cwd=None, exclude=None, now=None, days=DAYS, limit=LIMIT) -
                      f"{_short(r['title'])} · {handles.tag(r['session_id'])}")  # fmt: skip
     if len(rows) > limit:
         lines.append(f"- … and {len(rows) - limit} more (`ax find --since {days}d`)")
+    if open_todos:
+        lines += ["", "Open to-dos here and global (`ax todo list`; close with `ax todo done ID`):"]
+        lines += [f"- {todos.line(t)}" for t in open_todos[:TODOS]]
+        if len(open_todos) > TODOS:
+            lines.append(f"- … and {len(open_todos) - TODOS} more")
     if running:
         lines += ["", "Jobs still running (`ax job show KEY`):"]
         for j in running:

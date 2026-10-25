@@ -105,3 +105,13 @@ def test_recalling_from_outside_links_nothing_and_unknown_handles_fail(env, earl
         )
     missing = CliRunner().invoke(app, ["recall", "ax:0badcafe"], env=run)
     assert missing.exit_code == 2 and "no archived conversation" in missing.output
+
+
+def test_recall_lists_the_todos_raised_in_the_conversation(env, earlier):
+    from ax import todos
+
+    todos.add(env.config, "Add jitter to the retries", scope="project:demo", origin="ax:feedf00d")
+    todos.add(env.config, "Unrelated", scope="global", origin="ax:11111111")
+    text = recall.outline(env.config, earlier)
+    assert "To-dos raised here" in text and "Add jitter to the retries" in text
+    assert "Unrelated" not in text
