@@ -26,13 +26,19 @@ def reply(pattern=GOOD, violations=("git push --force origin main", "git push -f
 
 
 @pytest.fixture
-def pushes(archive):
+def recent(archive):
     with Store(archive.config.db_path) as store:
         session(store.db, "recent")
         messages(store.db, "recent", ("tool", "ran `git push origin main`"),
                  ("tool", "ran `git status`"),
                  ("tool", 'ran `echo "git push --force is banned"`'))  # fmt: skip
         store.commit()
+    return archive
+
+
+@pytest.fixture
+def pushes(recent):
+    archive = recent
     cs = [candidate("a", "s1", "demo", commands=["git status", "git push --force origin main"]),
           candidate("b", "s2", "other", commands=["git push -f origin feature"])]  # fmt: skip
     labels = {c: keep("no-force-push", "Never force-push.", kind="never-rule") for c in "ab"}
@@ -100,3 +106,23 @@ def test_only_never_rules_with_evidence_commands_are_asked_and_only_once(archive
     assert [r.rule for r in results] == ["no-force-push"] and len(model.prompts) == 1
     assert learn_guards.propose_guards(archive.config, cs + pushes, model=model, now=NOW) == []
     assert len(model.prompts) == 1
+
+
+def test_guarding_an_escalated_active_rule_enforces_the_pattern(recent):
+    config = recent.config
+    profile.add(config, "no-force-push", rule="Never force-push.", added="2026-09-01",
+                review="escalate: corrected again in 2 sessions since 2026-09-01")  # fmt: skip
+    cs = [candidate("a", "s1", "demo", ts="2026-10-10T10:00:00Z",
+                    commands=["git push --force origin main"]),
+          candidate("b", "s2", "other", ts="2026-10-12T10:00:00Z",
+                    commands=["git push -f origin feature"])]  # fmt: skip
+    labels = {c["id"]: keep("no-force-push", "Never force-push.") for c in cs}
+    result = learn_guards.guard_rule(
+        config, "no-force-push", cs, labels, model=answers(reply()), now=NOW
+    )
+    assert result.status == "guarded"
+    found = rule(recent)
+    assert found.status == "active" and found.level == "block" and not found.review
+    assert found.guard["pattern"] == GOOD
+    with pytest.raises(ValueError):
+        learn_guards.guard_rule(config, "missing", cs, labels, model=answers(reply()), now=NOW)

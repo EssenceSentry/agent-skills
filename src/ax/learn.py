@@ -440,7 +440,9 @@ _FIELDS = """- "id": the item's id
 - "topic": a kebab-case slug of two to four words naming the rule. If it restates one
   of the existing rules below, use that rule's id.
 - "scope": "global" if it applies to any project, "repo" if it is specific to this
-  codebase"""
+  codebase
+- "against": the id of an existing rule below that the message tells the agent to break
+  or set aside, or an empty string"""
 
 _PROMPT = """You label messages a user wrote to their coding agents (Claude Code and Codex).
 Each item is one message, with the end of the agent's previous turn as context. Decide
@@ -562,6 +564,7 @@ def _clean_label(raw: dict, *, episode: bool = False) -> dict:
         "rule": str(raw.get("rule") or "").strip(),
         "topic": topic,
         "scope": "repo" if raw.get("scope") == "repo" else "global",
+        "against": re.sub(r"[^a-z0-9]+", "-", str(raw.get("against") or "").lower()).strip("-"),
         # Only a label made from the episode says whether the user was frustrated.
         **({"frustrated": raw.get("frustrated") is True} if episode else {}),
     }

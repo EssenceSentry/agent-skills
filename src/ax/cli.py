@@ -514,18 +514,27 @@ MIN_RETENTION_DAYS = 365
 
 @app.command()
 def sync(quiet: bool = typer.Option(False, "--quiet", "-q", help="Print nothing unless it fails.")):
-    """Archive new and changed sessions into the vault."""
+    """Archive new and changed sessions into the vault, then refresh the rules' lifecycle."""
+    from ax import learn_life
+
+    config = load()
     try:
-        report = sync_module.sync(load())
+        report = sync_module.sync(config)
     except sync_module.SyncBusy as busy:
         # Hooks fire from many sessions at once; the running sync will pick their files up.
         typer.echo(f"{busy}; skipping")
         raise typer.Exit(0) from None
+    try:
+        updated = learn_life.after_sync(config)
+    except Exception as exc:  # the archive is synced either way; report, don't hide it
+        report.errors.append(f"learn: {type(exc).__name__}: {exc}")
+        updated = []
     if not quiet or report.errors:
         typer.echo(
             f"discovered {report.discovered} · parsed {report.parsed} · wrote {report.written}"
             f" · renamed {report.renamed} · removed {report.removed}"
             f" · excluded {report.excluded} · not rendered {report.not_rendered}"
+            f" · rules updated {len(updated)}"
         )
         for error in report.errors:
             typer.echo(f"error: {error}", err=True)
@@ -1349,6 +1358,74 @@ def learn_fixes_cmd(
     for rule in learn_fixes.propose_fixes(config, errors, model=learn.claude_model(model)):
         typer.echo(f"proposed {rule.id} ({rule.scope}): {rule.rule}")
     typer.echo(f"{len(errors)} recurring errors checked")
+
+
+@learn_app.command("review")
+def learn_review(as_json: bool = typer.Option(False, "--json", help="Machine-readable output.")):
+    """Each active rule's maturity and evidence, those that need a decision first."""
+    rules = [r for r in profile_module.load_rules(load()) if r.status == "active"]
+    rules.sort(key=lambda r: (not r.review, r.id))
+    if as_json:
+        typer.echo(json.dumps([r.to_dict() for r in rules], indent=2))
+        return
+    for r in rules:
+        counts = (
+            f"support {r.support or 0} · recurrences {r.recurrences or 0} · "
+            f"blocks {r.blocks or 0} · overrides {r.overrides or 0}"
+        )
+        typer.echo(f"{r.id:<32} {r.maturity or '-':<12} {r.confidence or 0:>5}  {counts}")
+        if r.review:
+            typer.echo(f"    {r.review}")
+    if not rules:
+        typer.echo("no active rules")
+
+
+@learn_app.command("keep")
+def learn_keep(rule_id: str = typer.Argument(...)):
+    """Keep a flagged rule; it counts as fresh evidence and clears the flag."""
+    from ax import learn_life
+
+    try:
+        learn_life.keep(load(), rule_id)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"kept {rule_id}")
+
+
+@learn_app.command("retire")
+def learn_retire(rule_id: str = typer.Argument(...)):
+    """Retire an active rule; `ax profile compile --apply` then drops it from both tools."""
+    from ax import learn_life
+
+    try:
+        learn_life.retire(load(), rule_id)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"retired {rule_id}; run `ax profile compile --apply` to unload it")
+
+
+@learn_app.command("guard")
+def learn_guard(
+    rule_id: str = typer.Argument(..., help="An active rule, usually one flagged to escalate."),
+    model: str = typer.Option("haiku", help="The Claude model that writes the pattern."),
+):
+    """Give an active rule a guard, tested on the archive, and enforce it if it passes."""
+    from ax import learn, learn_guards
+
+    config = load()
+    try:
+        result = learn_guards.guard_rule(
+            config, rule_id, learn.load_candidates(config), learn.load_labels(config),
+            model=learn.claude_model(model),
+        )  # fmt: skip
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    typer.echo("\n".join(learn_guards.report([result])))
+    if result.status == "guarded":
+        typer.echo("run `ax profile compile --apply` to load the guard")
 
 
 @learn_app.command("list")

@@ -46,6 +46,16 @@ class Rule:
     settings: dict = field(default_factory=dict)  # Claude settings.json keys it requires
     guard: dict | None = None  # a check the `ax hook guard` hook enforces
     retire_when: str = ""
+    # Kept current by `ax sync` (see learn_life); `reviewed` is the user's last keep.
+    maturity: str = ""
+    confidence: float | None = None
+    support: int | None = None
+    recurrences: int | None = None
+    blocks: int | None = None
+    overrides: int | None = None
+    last_evidence: str = ""
+    review: str = ""
+    reviewed: str = ""
     why: str = ""
     path: Path | None = None
 
@@ -116,6 +126,8 @@ def _read(path: Path) -> Rule:
         **{k: v for k, v in data.items() if k in known}, why=match.group(2).strip(), path=path
     )
     rule.added = str(rule.added or "")
+    rule.reviewed = str(rule.reviewed or "")
+    rule.last_evidence = str(rule.last_evidence or "")
     return validate(rule)
 
 
@@ -158,6 +170,7 @@ def add(config, rule_id: str, *, replace: bool = False, **fields) -> Rule:
             "settings",
             "guard",
             "retire_when",
+            "reviewed",
             "why",
         ):
             if not getattr(rule, name):

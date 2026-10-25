@@ -182,6 +182,40 @@ def propose_guards(config, candidates: list, *, model=None, now: datetime | None
     return results
 
 
+def guard_rule(config, rule_id: str, candidates, labels, *, model=None, now=None) -> Result:
+    """Try a guard for one active rule, from its evidence and the sessions that restate it.
+
+    The user asked for it by name, so a passing pattern is enforced at once and clears the
+    rule's review flag; `ax profile compile --apply` then loads it.
+    """
+    from ax import learn_life
+
+    rule = learn_life._active(config, rule_id)
+    by_id = {c["id"]: c for c in candidates}
+    restated = learn_life.events(config, candidates, labels).get(rule.id, [])
+    ids = dict.fromkeys([*rule.evidence, *(e.candidate for e in restated if e.candidate)])
+    evidence = [by_id[i] for i in ids if i in by_id]
+    if not any(c.get("commands") for c in evidence):
+        return Result(rule.id, "no-commands")
+    recent = recent_commands(
+        config, exclude={c["session"] for c in evidence}, now=now or datetime.now(UTC)
+    )
+    result = check(rule, evidence, recent, model=model or learn.claude_model())
+    if result.status == "guarded":
+        rule.review = ""
+        _apply(rule, result)
+    return result
+
+
+_WHY_NOT = {
+    "missed": "the pattern missed an evidence command",
+    "uncheckable": "the model found no command to check",
+    "invalid": "the pattern was not a valid regular expression",
+    "untested": "no recent commands to test it on",
+    "no-commands": "its evidence ran no commands",
+}
+
+
 def report(results: list) -> list[str]:
     lines = []
     for r in results:
@@ -191,5 +225,5 @@ def report(results: list) -> list[str]:
         elif r.status == "noisy":
             lines.append(f"{r.rule}: no guard; {r.pattern} also matched {json.dumps(r.hits)}")
         else:
-            lines.append(f"{r.rule}: no guard ({r.status})")
+            lines.append(f"{r.rule}: no guard ({_WHY_NOT.get(r.status, r.status)})")
     return lines
