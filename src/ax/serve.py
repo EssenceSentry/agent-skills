@@ -10,7 +10,6 @@ import hmac
 import html
 import json
 import mimetypes
-import subprocess
 import threading
 import time
 from datetime import UTC, datetime
@@ -123,7 +122,6 @@ def make_server(
     web: Path | None = None,
     poll: float = 3.0,
     share_token: str | None = None,
-    tailnet=None,
 ) -> ThreadingHTTPServer:
     """The ax app (built pages, JSON, actions and a live stream) and the classic page.
 
@@ -134,16 +132,10 @@ def make_server(
     `allow_url`, or any request a proxy forwarded) everything but the page's files
     needs a token: `share_token`, which dies with the run, or the lasting one; the link
     carries it once, then a Strict, HttpOnly cookie.
-
-    `tailnet` gives this Mac's name on your Tailscale network and your login (see
-    `tailnet_identity`), or None. Requests `tailscale serve` forwards from your own
-    devices then open the app as they do here: Tailscale replaces any identity a client
-    sends with the login it is signed in as.
     """
     from ax import app
 
     web = web or app.WEB
-    tailnet = tailnet or (lambda: None)
     secrets_ = [t for t in (app.token(config), share_token) if t]
 
     def now() -> dict:
@@ -176,10 +168,7 @@ def make_server(
             # Refuse other host names, so a page that rebinds its domain to 127.0.0.1
             # (DNS rebinding) cannot read the dashboard.
             host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
-            found = tailnet()
-            return host.lower() in self.server.hosts or bool(
-                found and host.lower() == found["host"]
-            )
+            return host.lower() in self.server.hosts
 
         def _https(self) -> bool:
             return self.headers.get("X-Forwarded-Proto") == "https"  # behind the tunnel
@@ -201,18 +190,9 @@ def make_server(
             proxied = any(self.headers.get(h) for h in _PROXY_HEADERS)
             return host in ("127.0.0.1", "localhost", "::1") and not proxied
 
-        def _yours(self) -> bool:
-            """Forwarded by `tailscale serve` from a device signed in as you."""
-            found = tailnet()
-            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].lower()
-            login = self.headers.get("Tailscale-User-Login") or ""
-            return bool(found and host == found["host"] and login == found["login"])
-
         def _authorised(self, query: dict) -> str | None:
             if self._local():
                 return "local"  # other sites can't read or act: see make_server
-            if self._yours():
-                return "tailnet"
             how, value = self._given(query)
             known = any(hmac.compare_digest(value, t) for t in secrets_)
             return how if value and known else None
@@ -353,54 +333,6 @@ def make_server(
         do_PUT = do_DELETE = do_PATCH = _refuse
 
     return _Server(("127.0.0.1", port), Handler)
-
-
-_TAILSCALE = (
-    "tailscale",
-    "/usr/local/bin/tailscale",
-    "/opt/homebrew/bin/tailscale",
-    "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-)  # launchd's PATH is short
-
-
-def tailnet_identity(run=subprocess.run) -> dict | None:
-    """This Mac's name on your tailnet and the login it is signed in with, while Tailscale
-    runs; None otherwise."""
-    for binary in _TAILSCALE:
-        try:
-            done = run([binary, "status", "--json"], capture_output=True, text=True, timeout=5)
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        try:
-            status = json.loads(done.stdout) if done.returncode == 0 else {}
-        except ValueError:
-            return None
-        me = status.get("Self") or {}
-        user = (status.get("User") or {}).get(str(me.get("UserID"))) or {}
-        host = str(me.get("DNSName") or "").rstrip(".").lower()
-        if status.get("BackendState") != "Running" or not host or not user.get("LoginName"):
-            return None
-        return {"host": host, "login": user["LoginName"]}
-    return None
-
-
-class Remembered:
-    """A lookup kept once it finds something. After a miss it is asked again only after
-    `retry` seconds, so Tailscale starting after the app is picked up without asking it
-    on every request."""
-
-    def __init__(self, fetch, *, retry: float = 60.0, clock=time.monotonic):
-        self.fetch, self.retry, self.clock = fetch, retry, clock
-        self.found, self.asked = None, None
-        self.lock = threading.Lock()
-
-    def __call__(self):
-        with self.lock:
-            due = self.asked is None or self.clock() - self.asked >= self.retry
-            if self.found is None and due:
-                self.asked = self.clock()
-                self.found = self.fetch()
-            return self.found
 
 
 def keep_shared(tunnel, on_new, *, stop: threading.Event, every: float = 5) -> None:

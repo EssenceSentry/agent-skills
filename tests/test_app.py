@@ -6,7 +6,6 @@ import urllib.error
 import urllib.request
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -342,8 +341,7 @@ def served(vault, tmp_path):
     (web / "sw.js").write_text("self.addEventListener('fetch', () => {})")
     (web / "icons").mkdir()
     (web / "icons" / "icon-192.png").write_bytes(b"\x89PNG\r\n\x1a\nicon")
-    server = serve.make_server(vault.config, port=0, usage_of=fake_usage, web=web, poll=0.05,
-                               tailnet=lambda: TAILNET_ID)  # fmt: skip
+    server = serve.make_server(vault.config, port=0, usage_of=fake_usage, web=web, poll=0.05)
     server.allow_url(f"https://{TUNNEL}")
     port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -368,12 +366,6 @@ def call(url, *, token=None, cookie=None, data=None, headers=None):
 
 TUNNEL = "abc.trycloudflare.com"
 REMOTE = {"Host": TUNNEL, "X-Forwarded-Proto": "https", "Cf-Connecting-Ip": "203.0.113.5"}
-TAILNET = "mac.tail1234.ts.net"
-TAILNET_ID = {"host": TAILNET, "login": "me@example.com"}
-# What `tailscale serve` adds, as seen live: it replaces any identity a client sends.
-THROUGH_TAILSCALE = {"Host": TAILNET, "X-Forwarded-Proto": "https",
-                     "X-Forwarded-For": "100.64.0.2", "X-Forwarded-Host": TAILNET,
-                     "Tailscale-User-Login": "me@example.com"}  # fmt: skip
 
 
 @pytest.fixture
@@ -444,90 +436,6 @@ def test_the_shipped_app_can_be_installed():
     for icon in manifest["icons"]:
         assert (app.WEB / icon["src"].lstrip("/")).exists(), icon["src"]
     assert "fetch" in (app.WEB / "sw.js").read_text()
-
-
-def test_through_tailscale_your_own_devices_open_the_app_without_a_token(served, classic):
-    _, base, _ = served
-    status, headers, body = call(f"{base}/", headers=THROUGH_TAILSCALE)
-    assert status == 200 and b'<meta name="ax-live" content="1">' in body
-    assert "Set-Cookie" not in headers
-    for path in ("/api/now", "/api/notes"):
-        assert call(f"{base}{path}", headers=THROUGH_TAILSCALE)[0] == 200, path
-    stream = urllib.request.Request(f"{base}/events", headers=THROUGH_TAILSCALE)
-    with urllib.request.urlopen(stream, timeout=5) as response:  # live: read only its start
-        assert response.status == 200 and response.readline().startswith(b"data: ")
-    port = {**THROUGH_TAILSCALE, "Host": f"{TAILNET}:8443"}
-    assert call(f"{base}/api/now", headers=port)[0] == 200
-
-
-def test_through_tailscale_actions_come_only_from_the_app_s_own_page(served):
-    _, base, _ = served
-    act = json.dumps({"action": "nothing-like-this"}).encode()
-    json_body = {**THROUGH_TAILSCALE, "Content-Type": "application/json"}
-    own = call(f"{base}/api/act", data=act, headers={**json_body, "Origin": f"https://{TAILNET}"})
-    assert own[0] == 400  # past the access checks, refused only as an unknown action
-    other = call(
-        f"{base}/api/act", data=act, headers={**json_body, "Origin": "https://evil.example"}
-    )
-    assert other[0] == 403
-
-
-@pytest.mark.parametrize(
-    "change",
-    [
-        {"Tailscale-User-Login": "someone-else@example.com"},  # another user of the tailnet
-        {"Tailscale-User-Login": ""},  # a tagged device, or Funnel from the internet
-        {"Host": "other-mac.tail1234.ts.net"},
-    ],
-)
-def test_through_tailscale_anyone_else_needs_the_token(served, change):
-    _, base, token = served
-    headers = {**THROUGH_TAILSCALE, **change}
-    assert call(f"{base}/api/now", headers=headers)[0] in (401, 403)
-    if "Host" not in change:
-        assert call(f"{base}/api/now", token=token, headers=headers)[0] == 200
-
-
-def test_with_tailscale_down_its_host_name_is_refused(served):
-    vault, _, _ = served
-    server = serve.make_server(vault.config, port=0, usage_of=fake_usage, tailnet=lambda: None)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
-        base = f"http://127.0.0.1:{server.server_address[1]}"
-        assert call(f"{base}/api/now", headers=THROUGH_TAILSCALE)[0] == 403
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-def test_the_tailnet_identity_comes_from_tailscale_status():
-    def status(state="Running"):
-        found = {"BackendState": state, "Self": {"DNSName": "Mac.tail1234.ts.net.", "UserID": 7},
-                 "User": {"7": {"LoginName": "me@example.com"}}}  # fmt: skip
-        return lambda argv, **kw: SimpleNamespace(returncode=0, stdout=json.dumps(found))
-
-    assert serve.tailnet_identity(run=status()) == TAILNET_ID | {"host": "mac.tail1234.ts.net"}
-    assert serve.tailnet_identity(run=status("Stopped")) is None
-
-    def missing(argv, **kw):
-        raise FileNotFoundError(argv[0])
-
-    assert serve.tailnet_identity(run=missing) is None
-
-
-def test_the_identity_is_asked_again_after_a_miss_and_kept_once_found():
-    answers, asked, now = [None, None, TAILNET_ID], [], [0.0]
-
-    def fetch():
-        asked.append(1)
-        return answers[len(asked) - 1]
-
-    found = serve.Remembered(fetch, retry=60, clock=lambda: now[0])
-    assert found() is None and found() is None and len(asked) == 1  # not again within a minute
-    now[0] = 61
-    assert found() is None and len(asked) == 2
-    now[0] = 122
-    assert found() == TAILNET_ID and found() == TAILNET_ID and len(asked) == 3
 
 
 def test_the_shipped_app_embeds_nothing_its_policy_blocks():
