@@ -57,7 +57,10 @@ Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
   - **Learner:** 1,489 candidates (1,210 phrase matches, 6 after interruptions, 273 Codex preference signals) labelled by Haiku. It rediscovered 8 of the 10 rules (missed: no-green-ui, ds-models-uv) and proposed 12, waiting for review in `ax learn list`.
   - **Trials:** claude-reflect (heuristic dry run, read-only) proposed nothing in ds-models or auto-classifier: it reads only Claude sessions, and most corrections are in Codex. cass-memory was not run: its license grants no rights to Anthropic or anyone acting for it, and its reflection needs API keys. SkillOpt-Sleep was not installed, as decided.
   - **Scorecard and lab:** `ax scorecard` and `/scorecard`. Baselines for the last six weeks: corrections 9–17% of messages; worker denials 150 in W41, 41 in W43; the pyright warning in 44 sessions. Also `ax lab` with five starter cases and one cut from a real session.
-  - **Not yet run live:** one delegated review (to confirm no permission denials), the first `ax lab run`, a real SageMaker or Seamless job, and `ax job service --apply`.
+  - **Live checks 2026-10-25:**
+    - **Delegated review:** one Opus worker reviewed `guard.py` and `job_wake.py` through `ax brief review`. It finished with zero permission denials in 9 turns for $0.64, and found ten defects to fix: an apostrophe inside double quotes hides a command from `where: command` guards; here-strings and quoted `<<EOF` start false heredocs; malformed input crashes the guard; `clean_env` drops credentials such as `CLAUDE_CODE_OAUTH_TOKEN`; and a session id can inject CLI flags into a wake.
+    - **First `ax lab run`:** Sonnet, one run per case, $1.18. Evals that grant Bash can't run on this Mac, because Docker Desktop keeps plugin links inside `~/.docker`; `--no-shell` runs the four cases that need no shell. With the plugin, agents-within-limits went from 0.00 to 1.00: without it, Sonnet launched agents at once. The other three scored 1.00 in both arms.
+  - **Not yet run live:** a real SageMaker or Seamless job, and `ax job service --apply`.
 - **Deferred:**
   - Rules matched per prompt (UserPromptSubmit): the ten rules fit in the always-loaded block, so retrieval waits until the profile grows.
   - The stop check for Codex, whose transcript has another format.
