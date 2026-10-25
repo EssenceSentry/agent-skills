@@ -226,8 +226,9 @@ def wake(
             return _queued(config, job, found, run, env)
         last = _last_line(found["log"], offset)
         raise WakeError(f"{agent} exited with {code}" + (f": {last}" if last else ""))
-    found |= {"pid": child.pid, "via": "resume",
-              "copy": agent == "claude" and bool(re.search(r"(?i)\bcopy\b", said))}  # fmt: skip
+    # Claude Code: "…is already running in the background, so this started a copy as 42dd3085."
+    copy = re.search(r"(?i)\bcopy as (\w+)", said) if agent == "claude" else None
+    found |= {"pid": child.pid, "via": "resume", "copy": copy.group(1) if copy else None}
     _record(config, job, found)
     return found
 

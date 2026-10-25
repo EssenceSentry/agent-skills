@@ -227,13 +227,15 @@ def test_a_refused_queue_is_a_wake_error(env):
 
 
 def test_a_claude_session_still_open_is_woken_as_a_copy_and_says_so(env):
-    said = "Session 3f2a is already running, so this started a copy: 9b7c\n"
+    # Claude Code 2.1's own words, seen in a live test.
+    said = ("note: session 23264217 is already running in the background, so this started a "
+            "copy as 42dd3085. `claude attach 23264217` opens the original.\n")  # fmt: skip
     spawn = Spawned(output=said)
     job = ended_job(env, "c", agent={"CLAUDE_CODE_SESSION_ID": "sess-1"})
     woke = job_wake.wake(env.config, job, spawn=spawn, which=on_path, settle=0)
-    assert woke["copy"] is True and woke["via"] == "resume"
+    assert woke["copy"] == "42dd3085" and woke["via"] == "resume"
     [event] = [e for e in jobs.events(env.config, "c") if e["type"] == "woke"]
-    assert event["data"]["copy"] is True
+    assert event["data"]["copy"] == "42dd3085"
 
 
 def test_the_packet_carries_the_failure_diagnosis(env):

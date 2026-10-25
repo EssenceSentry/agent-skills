@@ -202,7 +202,7 @@ def follow(
         if isinstance(found, dict) and found.get("copy"):
             alert(f"{key}: woke a copy",
                   f"{job.key} {job.status}; the conversation was busy, so a copy of it took "
-                  "the note: see `claude agents`.")  # fmt: skip
+                  f"the note: `claude attach {found['copy']}`.")  # fmt: skip
 
     def diagnose(job) -> None:
         if diagnoser is None or job.status not in ("failed", "ended"):

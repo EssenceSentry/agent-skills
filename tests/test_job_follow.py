@@ -243,8 +243,8 @@ def test_a_wake_that_fails_or_lands_in_a_copy_alerts_the_user(env):
     jobs.forget(env.config, "score")
     jobs.new(env.config, "score", env={"CLAUDE_CODE_SESSION_ID": "s-1"})
     follow_with(env, {1: [{"status": "done"}]}, alerter=alerts.append,
-                waker=lambda job: {"agent": "claude", "copy": True, "via": "resume"})  # fmt: skip
-    assert "copy" in alerts[1]["message"]
+                waker=lambda job: {"agent": "claude", "copy": "42dd3085", "via": "resume"})  # fmt: skip
+    assert "claude attach 42dd3085" in alerts[1]["message"]
 
 
 def test_a_failed_job_is_diagnosed_before_the_agent_is_woken(env):
