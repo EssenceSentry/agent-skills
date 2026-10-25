@@ -21,8 +21,9 @@ from ax import jobs
 
 AGENTS = ("claude", "codex")
 _SESSION = {"claude": "claude_session", "codex": "codex_thread"}
-# Variables that tie a process to the session that started it. A woken agent must
-# start clean: CLAUDE_CODE_SIMPLE, for one, would turn off hooks and CLAUDE.md.
+# Variables that tie a process to the session that started it: its session id, its
+# messaging socket and token, the desktop entrypoint and the SDK's settings for it. A
+# woken agent must start as a session of its own.
 _SESSION_PREFIXES = ("CLAUDE_CODE_", "CLAUDE_AGENT_SDK_", "CLAUDE_PREVIEW_")
 _SESSION_NAMES = {
     "CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CODEX_THREAD_ID", "CODEX_SANDBOX",
