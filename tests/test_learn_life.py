@@ -239,3 +239,16 @@ def test_a_broken_rule_note_does_not_fail_sync(env):
     assert result.exit_code == 0, result.output
     assert "broken.md" in result.output
     assert next(r for r in profile.load_rules(env.config, problems=[]) if r.id == "tabs").maturity
+
+
+def test_passing_a_rule_with_a_reason_counts_against_it(archive, restated):
+    log = archive.config.data / "guard.jsonl"
+    with log.open("a") as f:
+        for day in ("2026-10-23", "2026-10-24"):
+            f.write(json.dumps({"ts": f"{day}T10:00:00-0300", "kind": "pass",
+                                "rule": "unrelated-files", "intent": "mine to change"}) + "\n")  # fmt: skip
+        f.write(json.dumps({"ts": "2026-10-24T11:00:00-0300", "kind": "error",
+                            "rule": "unrelated-files"}) + "\n")  # fmt: skip
+    found = learn_life.events(archive.config, *restated)["unrelated-files"]
+    kinds = [(e.day, e.kind) for e in found if e.day >= "2026-10-23"]
+    assert kinds == [("2026-10-23", "override"), ("2026-10-24", "override")]

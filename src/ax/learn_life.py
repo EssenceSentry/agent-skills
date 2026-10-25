@@ -72,10 +72,14 @@ def events(config, candidates, labels, *, rules: list | None = None) -> dict:
             event = Event(day, "override", 1, c["note"], c["project"], c["id"])
             found.setdefault(against, []).append(event)
     for entry in scorecard._guard_log(config):
-        if entry.get("rule") in rules:
-            found.setdefault(entry["rule"], []).append(
-                Event(learn.local_day(entry["when"].isoformat()), "block")
-            )
+        kind = entry.get("kind") or "block"
+        if entry.get("rule") not in rules or kind == "error":
+            continue
+        # The main agent going past a rule with a reason argues against it, like an override.
+        found.setdefault(entry["rule"], []).append(
+            Event(learn.local_day(entry["when"].isoformat()),
+                  "override" if kind == "pass" else "block")
+        )  # fmt: skip
     return found
 
 

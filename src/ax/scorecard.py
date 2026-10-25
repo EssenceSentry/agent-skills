@@ -293,7 +293,7 @@ def build(config, *, weeks: int = 6, now: datetime | None = None) -> dict:
     week = {
         n: {"week": n, "sessions": Counter(), "user_messages": 0, "corrections": 0, "repeats": 0,
             "nudges": 0, "frustration": 0, "frustration_unchecked": 0, "guard_fires": 0,
-            "denials": 0,
+            "pauses": 0, "stops": 0, "passes": 0, "denials": 0,
             "cost": defaultdict(lambda: {"sessions": 0, "usd": None})}
         for n in names
     }  # fmt: skip
@@ -331,11 +331,22 @@ def build(config, *, weeks: int = 6, now: datetime | None = None) -> dict:
                 w["frustration_unchecked"] += 1
             elif confirmed:
                 w["frustration"] += 1
-    fires = Counter()
+    fires, passes = Counter(), Counter()
     for entry in _guard_log(config):
+        kind = entry.get("kind") or "block"  # entries from before pauses were blocks
+        if kind == "error":
+            continue
+        w = slot(entry["when"].isoformat())
+        if kind == "pass":  # the main agent went on, saying why
+            passes[entry.get("rule")] += 1
+            if w is not None:
+                w["passes"] += 1
+            continue
         fires[entry.get("rule")] += 1
-        if (w := slot(entry["when"].isoformat())) is not None:
+        if w is not None:
             w["guard_fires"] += 1
+            if kind in ("pause", "stop"):
+                w[f"{kind}s"] += 1
     costed = _rows(config, _COSTED, (since,))
     transcripts = _transcripts(config, costed)
     for s in costed:
@@ -360,7 +371,8 @@ def build(config, *, weeks: int = 6, now: datetime | None = None) -> dict:
     for rule in profile.load_rules(config):
         if rule.status == "active":
             rules.append({"id": rule.id, "level": rule.level, "added": rule.added,
-                          "guard_fires": fires.get(rule.id, 0), "maturity": rule.maturity,
+                          "guard_fires": fires.get(rule.id, 0), "passes": passes.get(rule.id, 0),
+                          "maturity": rule.maturity,
                           "recurrences": rule.recurrences or 0,
                           "review": rule.review})  # fmt: skip
     return {
@@ -391,7 +403,9 @@ def _frustration(week: dict, *, long: bool = False) -> str:
 
 def text(card: dict) -> str:
     """The scorecard for a terminal."""
-    lines = ["week      sessions  messages  corrections  repeats  nudges  frustr.  guard  denials"]
+    lines = [
+        "week      sessions  messages  corrections  repeats  nudges  frustr.  guard  passed  denials"
+    ]
     for w in card["weeks"]:
         sessions = sum(w["sessions"].values())
         rate = (
@@ -401,7 +415,8 @@ def text(card: dict) -> str:
         )
         lines.append(
             f"{w['week']:<9} {sessions:>8}  {w['user_messages']:>8}  {rate:>11}  {w['repeats']:>7}  "
-            f"{w['nudges']:>6}  {_frustration(w):>7}  {w['guard_fires']:>5}  {w['denials']:>7}"
+            f"{w['nudges']:>6}  {_frustration(w):>7}  {w['guard_fires']:>5}  {w['passes']:>6}  "
+            f"{w['denials']:>7}"
         )
     quiet = [r["id"] for r in card["rules"] if r["level"] == "block" and not r["guard_fires"]]
     if quiet:
@@ -437,8 +452,8 @@ def markdown(card: dict) -> str:
         "## Weeks",
         "",
         '| Week | Sessions | Messages | Corrections | "I said" / again | Nudges | Frustration '
-        "| Guard blocks | Worker denials |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Guard held | Guard passed with a reason | Worker denials |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for w in card["weeks"]:
         share = (
@@ -447,7 +462,7 @@ def markdown(card: dict) -> str:
         lines.append(
             f"| {w['week']} | {sum(w['sessions'].values())} | {w['user_messages']} | "
             f"{w['corrections']}{share} | {w['repeats']} | {w['nudges']} | "
-            f"{_frustration(w, long=True)} | {w['guard_fires']} | {w['denials']} |"
+            f"{_frustration(w, long=True)} | {w['guard_fires']} | {w['passes']} | {w['denials']} |"
         )
     lines += [
         "",
@@ -487,12 +502,12 @@ def render(card: dict) -> str:
     e = html.escape
     head = "".join(f"<th>{e(h)}</th>" for h in (
         "Week", "Sessions", "Messages", "Corrections", "“I said”/again", "Nudges",
-        "Frustration", "Guard blocks", "Worker denials"))  # fmt: skip
+        "Frustration", "Guard held", "Passed with a reason", "Worker denials"))  # fmt: skip
     rows = "".join(
         f"<tr><td>{e(w['week'])}</td><td>{sum(w['sessions'].values())}</td>"
         f"<td>{w['user_messages']}</td><td>{w['corrections']}</td><td>{w['repeats']}</td>"
         f"<td>{w['nudges']}</td><td>{e(_frustration(w, long=True))}</td>"
-        f"<td>{w['guard_fires']}</td><td>{w['denials']}</td></tr>"
+        f"<td>{w['guard_fires']}</td><td>{w['passes']}</td><td>{w['denials']}</td></tr>"
         for w in card["weeks"]
     )
     cost_rows = "".join(

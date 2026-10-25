@@ -229,3 +229,20 @@ def test_a_denied_read_still_counts_as_a_denial(tmp_path):
     path.write_text(json.dumps({"type": "assistant", "message": {"content": [use]}}) + "\n"
                     + json.dumps({"type": "user", "message": {"content": [result]}}) + "\n")  # fmt: skip
     assert scorecard._read_transcript(path)["denials"] == 1
+
+
+def test_pauses_stops_and_passes_are_counted_apart(env):
+    log = env.config.data / "guard.jsonl"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    entries = [
+        {"kind": "pause", "rule": "git-force-push", "caller": "main"},
+        {"kind": "pass", "rule": "git-force-push", "caller": "main", "intent": "rebased my branch"},
+        {"kind": "stop", "rule": "git-force-push", "caller": "subagent"},
+        {"kind": "error", "error": "RuntimeError: x"},
+        {"rule": "stage-explicit-paths"},  # from before pauses existed: a block
+    ]
+    log.write_text("".join(json.dumps({"ts": "2026-10-23T10:00:00-0300", **e}) + "\n"
+                           for e in entries))  # fmt: skip
+    this = scorecard.build(env.config, weeks=1, now=NOW)["weeks"][-1]
+    assert (this["guard_fires"], this["pauses"], this["passes"], this["stops"]) == (3, 1, 1, 1)
+    assert "passed" in scorecard.markdown(scorecard.build(env.config, weeks=1, now=NOW))
