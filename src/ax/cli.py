@@ -574,6 +574,32 @@ def here(as_json: bool = typer.Option(False, "--json", help="Machine-readable ou
         typer.echo(str(config.vault / row["note_path"]))
 
 
+@app.command("recall")
+def recall_cmd(
+    ref: str = typer.Argument(..., help="A handle (ax:9fe6d7e6), session id, id prefix or note."),
+    card: bool = typer.Option(False, "--card", help="Add the summary Haiku writes once."),
+    task: str = typer.Option(None, "--for", help="Bring back only what this task needs."),
+    model: str = typer.Option(None, help="The Claude model; haiku for a card, sonnet for --for."),
+):
+    """Bring an earlier conversation into this one, and link the two."""
+    from ax import handles, learn, recall
+
+    config = load()
+    try:
+        row = handles.resolve(config, ref)
+    except (handles.NotFound, handles.Ambiguous) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    if task:
+        text = recall.focus(config, row, task, model=learn.claude_model(model or "sonnet"))
+    elif card:
+        text = recall.card(config, row, model=learn.claude_model(model or "haiku"))
+    else:
+        text = recall.outline(config, row)
+    recall.record(config, row)
+    typer.echo(text)
+
+
 @app.command()
 def search(
     query: str = typer.Argument(..., help="Words that must all appear in a message."),
