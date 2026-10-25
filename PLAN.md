@@ -80,7 +80,6 @@ Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
   - **Agents:** `ax mcp` serves find, recall and here; it is not registered in either tool yet (`ax mcp install --apply`).
 - **Job wake-ups that reach the conversation, 2026-10-25:** a Codex job's wake failed because the app held the thread open ("already has an active writer") and nothing told the user. Wakes now go through `codex queue` to an open thread (tested live: a note reached the user's open thread within seconds), report a Claude copy by its id (tested live with a throwaway session), push an alert when no route reaches the conversation, and start a failed job's note with a Haiku diagnosis; a Haiku health check reads a running job's log every 30 minutes. The live `news-research-mine-20261025-r2` job got a description and a follower running this code.
 - **Recent-work digest and shared memories built 2026-10-25** (components 12 and 13): the start hook is installed in both tools. A fresh Claude conversation saw the digest's handles and Codex's memory summary without running a tool; Codex skips the hook until the user trusts it with `/hooks`. Sync copied 57 Claude memories into Codex's ad-hoc notes.
-- **Ideas raised, not planned:** one `ax` skill that teaches every command (today session-recall, jobs and delegation each cover a part); an `ax todo` list, global or per project and conversation, for follow-ups an agent proposes, shown in the start digest.
 - **Deferred:**
   - Rules matched per prompt (UserPromptSubmit): the ten rules fit in the always-loaded block, so retrieval waits until the profile grows.
   - The stop check for Codex, whose transcript has another format.
@@ -470,6 +469,25 @@ Share what each tool remembers through channels each already supports, never by 
 - **Claude to Codex:** `ax sync` writes each new or changed Claude memory (`~/.claude/projects/*/memory/*.md`) as a note in Codex's ad-hoc memory extension (`~/.codex/memories/extensions/ad_hoc/notes/`), redacted, saying which project it came from. Codex treats those notes as authoritative and merges them the next time it consolidates its memories. A changed memory edits its note; a deleted one rewrites its note to say so, since Codex's instructions forbid deleting notes.
 - **Codex to Claude:** Claude's start hook adds Codex's `memory_summary.md` (about 8 KB: profile and preferences) after the digest. Codex's full `MEMORY.md` (500 KB) stays reachable through `ax find`.
 - **Left out:** writing into Codex's `MEMORY.md` (Codex regenerates it) and a two-way file mirror. Working rules stay in `ax profile`, already compiled into both tools.
+
+### 14. One ax skill that teaches every command (agreed 2026-10-25)
+
+Three skills each teach a slice of ax (session-recall: find, recall, here, search; jobs: `ax job`; delegation: `ax brief`), and the rest of the 22 commands are documented only in the README, which agents don't read. One `ax` skill becomes the map; the focused skills keep their workflows.
+
+- **What it holds:** for each command group, one or two lines on what it is for and when an agent should reach for it, grouped by need: finding past work (find, recall, here, search, index), long work (job), delegating (brief), working rules (profile, learn, the guard and stop check), measuring (scorecard, lab, usage, runs), research campaigns (exp), plumbing the user runs (sync, hooks, schedule, skills, mcp, vault, doctor, serve), and to-dos (todo, below). Each group points to its focused skill or `ax <group> --help` for detail rather than repeating them. Under about 150 lines.
+- **What an agent may do alone:** read-only and reversible commands (find, recall, here, job show and wait, todo add when asked). It asks first for anything that spends (label, lab run, `recall --for`, briefs that launch workers), changes the user's rules or tools (learn accept or reject, profile compile --apply, hooks or mcp install --apply) or publishes (vault push).
+- **How it stays true:** a test fails when a top-level command is missing from the skill, so a new command can't ship untaught. Description triggers: the user mentions ax, asks what ax can do, or the task touches past conversations, rules, jobs, usage, the vault or to-dos.
+- **Where it lives:** `skills/ax/SKILL.md`, linked into both tools with `ax skills link ax --apply`, beside the focused skills.
+
+### 15. A to-do list in ax, global or per project and conversation (agreed 2026-10-25)
+
+Follow-ups get proposed and then lost between conversations ("an umbrella skill would help", "turn on the job service"). `ax todo` keeps them where every conversation sees them.
+
+- **Storage:** one note per to-do in the vault's `Todos/` folder, so the user reads and edits them in Obsidian: frontmatter `id` (T1, T2, …), `status` (open, done, dropped), `scope` (global or `project:<repo>`), `from` (the handle of the conversation it was raised in), `created`, `closed`, `closed_in` (the handle that closed it); the text and any detail as the body.
+- **Commands:** `ax todo add "text" [--global | --project P] [--detail "…"]` (the project defaults to the current repo, and `from` to the current conversation's handle, both from the environment); `ax todo list [--project P] [--all]`; `ax todo done ID`; `ax todo drop ID`. All take `--json`.
+- **Where it shows:** the start digest lists the open to-dos of this project and the global ones (at most 10) with their ids and where they came from; `ax recall` of a conversation lists the to-dos raised in it; a `Todos.base` view (Open by scope, Done) and a "To do" section on Home show them in Obsidian. A conversation's handle in `from` links back to it.
+- **Who adds:** the user, or an agent when the user asks to save something for later or declines a proposed next step with "not now" and wants it kept. Agents never add to-dos on their own initiative, so the list stays the user's.
+- **Left out for now:** due dates, priorities and an MCP tool (agents in both tools have a shell).
 
 ## Schedule
 
