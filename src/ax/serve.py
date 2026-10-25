@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
-from ax import exp, job_eta, job_follow, jobs, runs, scorecard, usage
+from ax import exp, find, job_eta, job_follow, jobs, runs, scorecard, usage
 from ax.config import Config
 from ax.config import load as load_config
 from ax.store import Store
@@ -243,6 +243,8 @@ def make_server(
                 "/api/note": lambda: app.note(config, (query.get("path") or [""])[0]),
             }
             try:
+                if parts.path == "/api/find":
+                    return self._json(200, app.search(config, (query.get("q") or [""])[0]))
                 if parts.path == "/api/file":
                     body, kind = app.file(config, (query.get("path") or [""])[0])
                     return self._send(200, body, kind, _APP_HEADERS)
@@ -250,6 +252,10 @@ def make_server(
                     return self._json(200, reads[parts.path]())
             except app.NotFound as exc:
                 return self._json(404, {"error": str(exc)})
+            except ValueError as exc:
+                return self._json(400, {"error": str(exc)})
+            except find.FindError as exc:  # the index isn't set up, or qmd failed
+                return self._json(503, {"error": str(exc)})
             return self._text(404, "Not found.")
 
         def _page(self, how: str):

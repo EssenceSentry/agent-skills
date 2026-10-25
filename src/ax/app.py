@@ -26,6 +26,7 @@ NEAR_LIMIT = 80  # percent of a usage window that puts it on the waiting list
 RUNS_OUT_SOON = timedelta(days=1)  # or a forecast that runs out this soon
 CONVERSATIONS = 15
 BUDGET_ENTRIES = 8  # each budget's latest ledger lines on the Now screen
+SEARCH_HITS = 30  # results the app's search shows
 _IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}  # not SVG: it can carry script
 _COMPILE = "run `ax profile compile --apply` to"
 
@@ -222,6 +223,23 @@ def _todo_item(config, todo) -> dict:
         "note": _relative(config, todo.path),
         "actions": ["done", "drop"],
     }
+
+
+# Search
+
+
+def search(config, query: str, *, find_=None) -> dict:
+    """`ax find` over conversations, memories, notes, docs and code. Hits in the vault say
+    which note the reader opens; the others carry their path and snippet only."""
+    from ax import find
+
+    query = " ".join((query or "").split())
+    if not query:
+        raise ValueError("say what to look for")
+    hits = (find_ or find.find)(config, query, limit=SEARCH_HITS)
+    for hit in hits:
+        hit["note"] = _relative(config, Path(hit["path"])) if hit.get("path") else None
+    return {"query": query, "hits": hits}
 
 
 def _budgets(config) -> list[dict]:

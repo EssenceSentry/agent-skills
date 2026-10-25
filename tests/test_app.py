@@ -185,6 +185,57 @@ def test_an_accepted_workshop_proposal_is_not_taken_for_a_retirement(env):
     assert ("review", "from-the-workshop") not in waiting(state)
 
 
+# Search
+
+
+def fake_find(found):
+    asked = []
+
+    def find_(config, query, **kw):
+        asked.append((query, kw))
+        return [dict(h) for h in found]
+
+    find_.asked = asked
+    return find_
+
+
+def test_search_runs_ax_find_and_marks_what_the_reader_can_open(env):
+    note = env.vault / "Sessions" / "2026" / "a note.md"
+    hits = [
+        {"source": "conversation", "path": str(note), "title": "Budgets", "snippet": "reserve"},
+        {"source": "code", "path": "/repos/agent-skills/src/ax/budget.py", "title": "budget.py",
+         "snippet": "def reserve", "project": "agent-skills"},
+    ]  # fmt: skip
+    find_ = fake_find(hits)
+    found = app.search(env.config, "  reserve then settle ", find_=find_)
+    assert found["query"] == "reserve then settle"
+    assert [h["note"] for h in found["hits"]] == ["Sessions/2026/a note.md", None]
+    [(query, kw)] = find_.asked
+    assert query == "reserve then settle" and kw["limit"] == app.SEARCH_HITS
+    with pytest.raises(ValueError, match="what to look for"):
+        app.search(env.config, "   ", find_=find_)
+
+
+def test_the_find_endpoint_answers_and_says_why_when_it_cannot(served, monkeypatch):
+    from ax import find
+
+    vault, base, _ = served
+    monkeypatch.setattr(find, "find", fake_find([
+        {"source": "note", "path": str(vault.config.vault / "Home.md"), "title": "Home",
+         "snippet": "start here"}]))  # fmt: skip
+    status, _, body = call(f"{base}/api/find?q=start%20here")
+    assert status == 200 and json.loads(body)["hits"][0]["note"] == "Home.md"
+    assert call(f"{base}/api/find?q=")[0] == 400
+
+    def down(config, query, **kw):
+        raise find.FindError("the search index isn't set up: run `ax index setup`")
+
+    monkeypatch.setattr(find, "find", down)
+    status, _, body = call(f"{base}/api/find?q=anything")
+    assert status == 503 and "ax index setup" in json.loads(body)["error"]
+    assert call(f"{base}/api/find?q=x", headers=REMOTE)[0] == 401  # the tunnel needs the token
+
+
 # Actions
 
 
