@@ -18,6 +18,8 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+import yaml
+
 from ax import learn, profile
 
 TOOLS = ("claude", "codex")
@@ -570,3 +572,136 @@ class ProcessRunner:
         cost = record.get("total_cost_usd_estimate")
         status = self._DONE.get(record.get("status"), record.get("status") or "failed")
         return status, text, cost if isinstance(cost, int | float) else None
+
+
+# Writing what the team proposed
+
+MAX_PROPOSALS = 12
+KINDS = ("new", "merge", "rewrite", "retire")
+_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+_SCOPE = re.compile(r"global|repo:[A-Za-z0-9._-]+")
+
+
+@dataclass
+class Written:
+    proposals: list = field(default_factory=list)
+    retire: list = field(default_factory=list)
+    skipped: list = field(default_factory=list)  # (id, reason)
+    report: object = None
+
+
+def _problem(entry: dict, rules: dict) -> str | None:
+    kind, rid = entry.get("kind"), entry.get("id")
+    if kind not in KINDS:
+        return f"kind must be one of {', '.join(KINDS)}, not {kind!r}"
+    if not isinstance(rid, str) or len(rid) > 64 or not _ID.fullmatch(rid):
+        return f"id must be kebab-case, not {rid!r}"
+    if kind == "retire":
+        rule = rules.get(rid)
+        return None if rule and rule.status == "active" else f"no active rule {rid} to retire"
+    text = entry.get("rule")
+    if not isinstance(text, str) or not text.strip() or len(text) > 300 or "\n" in text.strip():
+        return "rule must be one sentence of at most 300 characters"
+    if not _SCOPE.fullmatch(str(entry.get("scope") or "global")):
+        return f"scope must be global or repo:NAME, not {entry.get('scope')!r}"
+    if (entry.get("level") or "advice") not in ("advice", "check", "block"):
+        return f"level must be advice, check or block, not {entry.get('level')!r}"
+    return None
+
+
+def _free_id(rid: str, taken: set) -> str:
+    if rid not in taken:
+        return rid
+    n = 2
+    while f"{rid}-{n}" in taken:
+        n += 1
+    return f"{rid}-{n}"
+
+
+def write(config, outcome: Outcome, work: Load, *, now: datetime) -> Written:
+    """Write valid proposals as rule notes (`proposed`, from the workshop), put suggested
+    retirements on the rules themselves, and record the run in a report note."""
+    rules = {r.id: r for r in profile.load_rules(config, problems=[])}
+    entries, unreviewed = outcome.proposals, False
+    if not entries and outcome.drafts:
+        entries, unreviewed = outcome.drafts, True  # no synthesis ran: the drafts as they are
+    tools = sorted({r.agent.tool for r in outcome.results}) or ["claude"]
+    folder = config.vault / "Workshops"
+    folder.mkdir(parents=True, exist_ok=True)
+    report = folder / f"{now.astimezone():%Y-%m-%d %H%M} {'+'.join(tools)}.md"
+    written = Written(report=report)
+    day = now.astimezone().strftime("%Y-%m-%d")
+    lines: list[str] = []
+    for entry in entries:
+        entry = entry if isinstance(entry, dict) else {}
+        problem = _problem(entry, rules)
+        if problem:
+            written.skipped.append((str(entry.get("id")), problem))
+            continue
+        why = str(entry.get("why") or "").strip()[:1500]
+        if entry["kind"] == "retire":
+            rule = rules[entry["id"]]
+            rule.extra["workshop"] = {"suggest": "retire", "why": why, "report": report.stem}
+            profile._write(rule, rule.path)
+            written.retire.append(rule.id)
+            continue
+        if len(written.proposals) >= MAX_PROPOSALS:
+            written.skipped.append((entry["id"], f"over the limit of {MAX_PROPOSALS} proposals"))
+            continue
+        replaces = [r for r in entry.get("replaces") or [] if isinstance(r, str) and r in rules]
+        rid = _free_id(entry["id"], set(rules) | set(written.proposals))
+        said = f" Replaces {', '.join(replaces)}; accepting it retires them." if replaces else ""
+        try:
+            rule = profile.add(
+                config, rid, rule=entry["rule"].strip(), scope=entry.get("scope") or "global",
+                level=entry.get("level") or "advice", status="proposed",
+                evidence=[str(e) for e in entry.get("evidence") or []][:20],
+                why=f"Proposed by the rules workshop on {day} ([[Workshops/{report.stem}]])."
+                f"{said}\n\n{why}",
+                extra={"source": "workshop", "workshop": report.stem, "replaces": replaces},
+            )  # fmt: skip
+        except ValueError as exc:
+            written.skipped.append((rid, str(exc)))
+            continue
+        written.proposals.append(rule.id)
+        rules[rule.id] = rule
+        merged = f"; replaces {', '.join(replaces)}" if replaces else ""
+        lines.append(f"- [[Profile/rules/{rule.id}]]: {rule.rule} ({entry['kind']}{merged})")
+    report.write_text(_report(outcome, written, lines, unreviewed, now))
+    return written
+
+
+def _report(outcome: Outcome, written: Written, lines: list, unreviewed: bool, now) -> str:
+    meta = {
+        "date": now.astimezone().isoformat(timespec="minutes"),
+        "tools": sorted({r.agent.tool for r in outcome.results}),
+        "agents": len(outcome.results),
+        "proposals": written.proposals,
+        "retire": written.retire,
+        "stopped": outcome.stopped,
+    }
+    parts = ["---", yaml.safe_dump(meta, sort_keys=False).strip(), "---", "",
+             f"# Rules workshop, {now.astimezone():%d %B %Y}", ""]  # fmt: skip
+    if outcome.summary:
+        parts += [outcome.summary, ""]
+    if unreviewed:
+        parts += ["No synthesis ran, so these are the designers' unreviewed drafts.", ""]
+    if outcome.stopped:
+        parts += [f"Stopped early: {outcome.stopped}.", ""]
+    parts += ["## Proposals", "", *(lines or ["None written."]), ""]
+    if written.retire:
+        parts += ["## Suggested retirements", ""]
+        parts += [f"- [[Profile/rules/{rid}]]" for rid in written.retire] + [""]
+    if written.skipped:
+        parts += ["## Skipped", "", *(f"- `{rid}`: {why}" for rid, why in written.skipped), ""]
+    parts += ["## Agents", "", "| Agent | Tool | Status | Cost | Note |", "|---|---|---|---|---|"]
+    for r in outcome.results:
+        cost = f"${r.cost:.2f}" if isinstance(r.cost, int | float) else "-"
+        parts.append(f"| {r.agent.key} | {r.agent.tool} | {r.status} | {cost} | {r.error or ''} |")
+    parts += ["", "## Allowance", ""]
+    for tool, before in sorted(outcome.used_before.items()):
+        after = outcome.used_after.get(tool, before)
+        share = outcome.share.get(tool)
+        measured = f" (about {share:.1f}% per agent)" if share else ""
+        parts.append(f"- {tool}: {before:.0f}% → {after:.0f}%{measured}")
+    return "\n".join(parts) + "\n"

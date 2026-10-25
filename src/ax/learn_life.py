@@ -199,6 +199,7 @@ def keep(config, rule_id: str, *, today: date | None = None):
     """Keep a rule the lifecycle flagged: it counts as fresh evidence and clears the flag."""
     rule = _active(config, rule_id)
     rule.reviewed, rule.review = (today or date.today()).isoformat(), ""
+    rule.extra.pop("workshop", None)  # keeping it answers the workshop's suggestion too
     profile._write(rule, rule.path)
     return rule
 

@@ -69,8 +69,8 @@ def now_state(config, *, usage_of=None, credits_of=None) -> dict:
         for rule in profile.load_rules(config, problems=problems):
             if rule.status == "proposed":
                 found["proposal"].append(_rule_item(config, rule, "proposal", rule.why))
-            elif rule.status == "active" and rule.review:
-                found["review"].append(_rule_item(config, rule, "review", rule.review))
+            elif rule.status == "active" and (rule.review or rule.extra.get("workshop")):
+                found["review"].append(_rule_item(config, rule, "review", _flag(rule)))
         state["errors"].extend(f"rules: {p}" for p in problems)
 
     def gather_todos():
@@ -112,6 +112,13 @@ def _credits_row(c) -> dict:
         "observed_at": c.observed_at.isoformat(),
         "status": c.status,
     }
+
+
+def _flag(rule) -> str:
+    suggestion = rule.extra.get("workshop") or {}
+    if rule.review or suggestion.get("suggest") != "retire":
+        return rule.review
+    return f"The rules workshop suggests retiring it: {suggestion.get('why') or 'see its report'}"
 
 
 def _near_limit(row: dict) -> bool:

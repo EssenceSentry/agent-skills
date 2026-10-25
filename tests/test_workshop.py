@@ -432,3 +432,131 @@ def test_stopping_an_agent_asks_its_runner_to_stop(scripts):
     runner.stop(handle)
     wait_for(runner, handle)
     assert runner.result(handle)[0] == "stopped"
+
+
+# Writing what the team proposed
+
+
+def proposal(**fields):
+    return {"kind": "new", "id": "tests-before-claims", "rule": "Run the tests before saying they pass.",
+            "scope": "global", "level": "advice", "replaces": [], "evidence": ["c1"],
+            "why": "Corrected twice.", **fields}  # fmt: skip
+
+
+def outcome_of(*proposals, drafts=(), summary="Two rules."):
+    found = workshop.Outcome(proposals=list(proposals), drafts=list(drafts), summary=summary)
+    found.results = [
+        workshop.AgentResult(
+            workshop.Agent("claude-synthesis", "synthesis", "claude", 3), "completed", cost=2.5
+        )
+    ]
+    found.used_before, found.used_after = {"claude": 40.0}, {"claude": 52.0}
+    return found
+
+
+def test_valid_proposals_become_rule_notes_and_a_report(work):
+    env, found = work
+    written = workshop.write(env.config, outcome_of(
+        proposal(),
+        proposal(kind="merge", id="clean-changes", rule="Change only what the task needs.",
+                 replaces=["unrelated-files", "say-less"]),
+    ), found, now=NOW)  # fmt: skip
+    rules = {r.id: r for r in profile.load_rules(env.config)}
+    new = rules["tests-before-claims"]
+    assert new.status == "proposed" and new.extra["source"] == "workshop"
+    assert new.extra["workshop"] == written.report.stem
+    assert rules["clean-changes"].extra["replaces"] == ["unrelated-files", "say-less"]
+    assert "Replaces unrelated-files, say-less" in rules["clean-changes"].why
+    assert written.proposals == ["tests-before-claims", "clean-changes"]
+    report = written.report.read_text()
+    assert written.report.parent == env.vault / "Workshops"
+    assert "Two rules." in report and "[[Profile/rules/clean-changes]]" in report
+    assert "claude-synthesis" in report and "40% → 52%" in report
+
+
+@pytest.mark.parametrize(
+    ("bad", "why"),
+    [
+        (proposal(id="Not An Id"), "id"),
+        (proposal(rule=""), "rule"),
+        (proposal(rule="x" * 400), "rule"),
+        (proposal(scope="planet:earth"), "scope"),
+        (proposal(kind="vibe"), "kind"),
+        (proposal(kind="retire", id="nope"), "no active rule"),
+    ],
+)
+def test_malformed_proposals_are_skipped_with_a_reason(work, bad, why):
+    env, found = work
+    written = workshop.write(env.config, outcome_of(bad), found, now=NOW)
+    assert written.proposals == [] and why in written.skipped[0][1]
+    assert why in written.report.read_text()
+
+
+def test_an_id_that_is_taken_gets_a_fresh_one_and_existing_notes_stay(work):
+    env, found = work
+    written = workshop.write(env.config, outcome_of(
+        proposal(kind="rewrite", id="bootstrap", rule="Refresh with scripts/bootstrap_dev.py.",
+                 replaces=["bootstrap"]),
+    ), found, now=NOW)  # fmt: skip
+    assert written.proposals == ["bootstrap-2"]
+    rules = {r.id: r for r in profile.load_rules(env.config)}
+    assert (
+        rules["bootstrap"].status == "active"
+        and rules["bootstrap"].rule == "Use the bootstrap script."
+    )
+
+
+def test_a_retirement_is_put_to_the_user_on_the_rule_itself(work):
+    env, found = work
+    written = workshop.write(env.config, outcome_of(
+        proposal(kind="retire", id="explicit-paths", rule="", why="Covered by clean-changes."),
+    ), found, now=NOW)  # fmt: skip
+    assert written.retire == ["explicit-paths"]
+    rule = next(r for r in profile.load_rules(env.config) if r.id == "explicit-paths")
+    assert rule.status == "active" and rule.extra["workshop"]["suggest"] == "retire"
+
+
+def test_unreviewed_drafts_are_written_when_no_synthesis_ran(work):
+    env, found = work
+    stopped = outcome_of(drafts=[{**proposal(), "key": "d1"}], summary="")
+    stopped.stopped = "claude reached its 3% floor"
+    written = workshop.write(env.config, stopped, found, now=NOW)
+    assert written.proposals == ["tests-before-claims"]
+    assert "unreviewed" in written.report.read_text()
+
+
+def test_at_most_twelve_proposals_are_written(work):
+    env, found = work
+    many = [proposal(id=f"rule-{n}", rule=f"Rule number {n} says something.") for n in range(15)]
+    written = workshop.write(env.config, outcome_of(*many), found, now=NOW)
+    assert len(written.proposals) == 12 and len(written.skipped) == 3
+
+
+def test_accepting_a_workshop_proposal_retires_or_drops_what_it_replaces(work):
+    from ax import learn
+
+    env, found = work
+    workshop.write(env.config, outcome_of(
+        proposal(kind="merge", id="clean-changes", rule="Change only what the task needs.",
+                 replaces=["unrelated-files", "say-less"]),
+    ), found, now=NOW)  # fmt: skip
+    learn.accept(env.config, "clean-changes")
+    rules = {r.id: r for r in profile.load_rules(env.config)}
+    assert rules["clean-changes"].status == "active"
+    assert rules["unrelated-files"].status == "retired"
+    assert "say-less" not in rules  # a proposal it replaced is dropped
+
+
+def test_the_app_puts_a_suggested_retirement_up_for_review_and_keep_clears_it(work):
+    from ax import app, learn_life
+
+    env, found = work
+    workshop.write(env.config, outcome_of(
+        proposal(kind="retire", id="explicit-paths", rule="", why="Covered by clean-changes."),
+    ), found, now=NOW)  # fmt: skip
+    state = app.now_state(env.config, usage_of=lambda c: [])
+    review = next(w for w in state["waiting"] if w["id"] == "explicit-paths")
+    assert review["kind"] == "review" and "workshop suggests retiring" in review["detail"]
+    learn_life.keep(env.config, "explicit-paths")
+    rule = next(r for r in profile.load_rules(env.config) if r.id == "explicit-paths")
+    assert "workshop" not in rule.extra

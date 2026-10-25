@@ -1005,6 +1005,16 @@ def accept(config, rule_id: str, *, today: date | None = None):
     rule = _proposed(config, rule_id)
     rule.status, rule.added = "active", (today or date.today()).isoformat()
     profile._write(rule, rule.path)
+    # A merge or rewrite from the rules workshop takes the place of the rules it names.
+    others = {r.id: r for r in profile.load_rules(config)}
+    for old in rule.extra.get("replaces") or []:
+        if old == rule.id or old not in others:
+            continue
+        if others[old].status == "active":
+            others[old].status, others[old].review = "retired", ""
+            profile._write(others[old], others[old].path)
+        elif others[old].status == "proposed":
+            reject(config, old)
     return rule
 
 
