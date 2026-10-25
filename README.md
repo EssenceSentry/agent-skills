@@ -42,7 +42,7 @@ take effect at once; after a change to the dependencies, run the same command wi
 | `ax hooks install` | Hooks in Claude Code and Codex that sync when a session ends |
 | `ax schedule install` | A launchd job that syncs every 30 minutes |
 | `ax skills link NAME…` | Link this repository's skills into both tools |
-| `ax job` (`new`, `watch`, `run`, `ls`, `show`, `wait`, `follow`, `unfollow`, `wake`, `poll`, `service`, `eta-report`, `forget`) | Long jobs any agent can register and wait on; see below |
+| `ax job` (`new`, `watch`, `run`, `describe`, `ls`, `show`, `wait`, `follow`, `unfollow`, `wake`, `poll`, `service`, `eta-report`, `forget`) | Long jobs any agent can register and wait on; see below |
 | `ax profile` (`seed`, `list`, `add`, `compile`, `check`) | One set of working rules, compiled into both tools, their guard and their workers |
 | `ax brief KIND` | A brief for a delegated worker that carries those rules, and its launch plan |
 | `ax learn` (`scan`, `label`, `propose`, `fixes`, `tidy`, `guards`, `list`, `accept`, `reject`, `review`, `keep`, `retire`, `guard`, `recall`) | Rule proposals from your own corrections, for your approval, and each rule's lifecycle |
@@ -70,7 +70,8 @@ job's own environment.
   - 124: timed out;
   - 69: no such job.
 - **Estimate:** `ax job show` and `ls` give the median time left and an 80% interval. The estimate comes from the job's own progress, plus finished runs of the same family (kind, unit, key without its numbers). `ax job eta-report` checks stored estimates against real finishes.
-- **Wake:** `--wake auto|claude|codex` on `new`, `watch`, `run` or `follow` resumes the session that registered the job once it ends, with a short note on how it ended. Codex resumes through `codex exec resume`, Claude Code through `claude --bg --resume`, and `ax job wake KEY --dry-run` shows the command. For a Claude session that is still open, run `ax job wait KEY` as a background command instead; its exit wakes that session.
+- **Wake:** `--wake auto|claude|codex` on `new`, `watch`, `run` or `follow` brings a short note on how the job ended into the conversation that registered it, with the description the agent gave (`--label`, or `ax job describe KEY --label` afterwards). A Codex thread open in the app gets it through `codex queue`, since the app holds the thread's only writer lock and refuses `codex exec resume`; a closed thread is resumed. Claude Code resumes through `claude --bg --resume`, which runs the note in a copy when the session is still running; the copy's id is reported. `ax job wake KEY --dry-run` shows the route. For a Claude session that is still open, `ax job wait KEY` as a background command is better: its exit wakes that session.
+- **Checks and alerts:** with `--wake`, Haiku reads the end of a failed job's log and the note starts with its diagnosis, and every 30 minutes (`--check-every`, 0 for none) it reads a running job's log and wakes the agent once per problem it sees. When a note can't reach the conversation, or lands in a Claude copy, the ntfy topic gets a push whatever `--notify` says.
 - **Background:** `ax job service --apply` loads a launchd agent (`com.ax.jobs`) that runs `ax job poll --background` every minute. It refreshes jobs nobody follows, leaves followed jobs to their followers, and restarts a follower that died from the options in its `follower.json`, at most three times per job, without repeating messages or wake-ups already sent. It checks AWS sources only for jobs registered with `--profile`, since launchd can't see credentials exported in an agent's shell. `--remove` unloads it.
 - **Follow:** `ax job follow KEY --share none|lan|cloudflare --notify --detach`, or `--share` and `--notify` on `new`, `watch` and `run`.
   - It serves a token-protected, read-only page for the job, optionally through a Cloudflare quick tunnel.
@@ -159,6 +160,8 @@ hit is labelled conversation, memory, note or code; conversation hits carry
 their handle, and `--project`, `--provider` and `--since` filter them. `--fast`
 uses keywords only. `ax index setup` builds the indexes once (qmd downloads
 about 2 GB of local models); sync refreshes them whenever it writes notes.
+`ax index serve` keeps qmd's models loaded in a daemon, so a search takes about
+five seconds instead of fifteen to thirty (`--stop` stops it).
 `ax index eval questions.yml` reports how many questions with known answers
 (`{query, expect}`, where `expect` is a handle or part of a path) come back in
 the top five. Agents get the same through the session-recall skill or `ax mcp`.

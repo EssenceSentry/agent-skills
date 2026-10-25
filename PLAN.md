@@ -74,6 +74,11 @@ Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
   - **Guards:** patterns are tested on whole commands from the transcripts, including those Codex runs inside its `exec` code: 58,767 commands in 30 days, against 21,421 archived first lines. Evidence commands come from the agent's turn before the correction.
   - **Smaller:** matching through every topic in a group, fixes sharing the 20-proposal queue, markers that ignore code, SQL and acronyms, tidy ignoring non-string ids, labels merged with a concurrent run. Sync now labels up to 40 new candidates per run by default (`[learn] label_on_sync = false` turns it off).
   - **After the fixes:** 19 proposals wait (6 new ones from whole episodes) and 45 more queue, after tidy merged `test-after-refactor` into `reliable-autonomous-work` and flagged `pro-fire-and-forget` against `implement-directly`. Recall is 9 of 11 active rules (missed: `ds-models-uv`, `no-green-ui`).
+- **Conversations you can build on, and one search, built 2026-10-25** (component 11):
+  - **Handles and links:** `ax here` and `ax recall` (outline, card, focused import) work on the real archive; the rebuild found 1,084 mention links and 290 notes now carry `builds_on`.
+  - **Search:** qmd 2.8.3 indexes 2,517 notes and memories (32,000+ chunks, about 25 minutes to embed) and Semble 0.7.0 the 17 repos. The first real search took 34 s and returned CSS for a question about a decision; with qmd and Semble in parallel, the daemon (`ax index serve`), 20 reranked candidates and code weighted down for questions that name no code, it takes about 5 s. The five starter questions in `~/.config/ax/find-questions.yml` are all found in the top 5, with or without reranking; the user's own 20–30 questions are still to be written.
+  - **Agents:** `ax mcp` serves find, recall and here; it is not registered in either tool yet (`ax mcp install --apply`).
+- **Job wake-ups that reach the conversation, 2026-10-25:** a Codex job's wake failed because the app held the thread open ("already has an active writer") and nothing told the user. Wakes now go through `codex queue` to an open thread (tested live: a note reached the user's open thread within seconds), report a Claude copy by its id (tested live with a throwaway session), push an alert when no route reaches the conversation, and start a failed job's note with a Haiku diagnosis; a Haiku health check reads a running job's log every 30 minutes. The live `news-research-mine-20261025-r2` job got a description and a follower running this code.
 - **Deferred:**
   - Rules matched per prompt (UserPromptSubmit): the ten rules fit in the always-loaded block, so retrieval waits until the profile grows.
   - The stop check for Codex, whose transcript has another format.
@@ -438,7 +443,7 @@ Our own design, inspired by claude-reflect (MIT; its code was read) and cass-mem
 
 **Later, when the profile outgrows its always-loaded block:** task-scoped retrieval through a prompt hook; in-session capture with a "learning captured" note; skill candidates at six or more sessions.
 
-### 11. Conversations you can build on, and one search (agreed 2026-10-25)
+### 11. Conversations you can build on, and one search (agreed and built 2026-10-25)
 
 Builds on the morning's research session (`9fe6d7e6`): qmd for conversations and docs, Semble for code, PageIndex-style outlines later, LightRAG set aside. ax's session notes are already the dialogue-only, redacted markdown that research named as the first step.
 
