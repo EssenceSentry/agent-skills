@@ -394,6 +394,37 @@ Done when:
 - tests show `ax job watch sagemaker` and `ax job watch seamless` reporting status and progress from recorded AWS responses, and one real job confirms it;
 - no source needs ax installed in the job's environment.
 
+### 10. Learner, next version (agreed 2026-10-25)
+
+Our own design, inspired by claude-reflect (MIT; its code was read) and cass-memory (its published README only; its license excludes Anthropic, so no code was read or run). Neither is reused.
+
+- **Taken from claude-reflect:** an explicit "remember" fast path; praise kept as an approach to repeat, with a forward-pivot filter; guardrail phrasings; structural filters for questions and task requests; tool-rejection reasons; recurring errors turned into fixes; a pass that merges duplicates and flags contradictions.
+- **Taken from cass-memory:** rules live on after acceptance. Evidence counts for and against, the against side weighted 4×; confidence halves every 90 days without new evidence; maturity goes from active to established to proven; a rule that keeps failing becomes a warning or a guard; task-scoped retrieval, later.
+- **Left out:** agents grading their own rules; rules adopted without the user; a session diary (the results ledger was dropped); per-project queues; Claude-only reading.
+- **What the history holds:** 95% of the user's 9,462 messages are in Codex. 93 use "remember", "from now on", "going forward" or "always"; about 480 open with praise; about 20 Claude tool rejections carry a reason.
+- **Frustration moments:** about 14 clear ones, all in Codex and mostly in auto-classifier (August–October), most after a long autonomous run went wrong. The current learner scanned 4 and turned 1 into a rule, because frustration rarely states a rule: the lesson is in the turns before it.
+
+**Phase 1, about a day:**
+
+- **New signals:** explicit "remember" messages, where one session is enough; praise, kept with what the agent had just done; tool-rejection reasons.
+- **Frustration moments:**
+  - **Detect** them with cheap markers (disappointment and frustration words, exasperated phrasing, capitals, `!!` or `?!`), then have Haiku confirm with the session context, so polite but firm messages count too.
+  - **Analyze** the episode before each one (the turns since the run or request started) and extract the lesson as a proposal.
+  - **Weigh** one as strong evidence, worth several ordinary corrections.
+  - **Count** them per week in the scorecard.
+- **Tidy pass:** merge near-duplicate proposals and flag contradictions before review (today: `no-backward-compatibility` and `no-multilabel-compat`).
+- **Guard proposals:** a checkable "never" rule comes with a generated pattern, tested against the archive. It must catch the commands from its evidence and stay quiet on recent harmless ones.
+- **Fix proposals** from the scorecard's recurring errors.
+
+**Phase 2, about a day:** the rule lifecycle.
+
+- `ax sync` updates each rule's support, recurrences, guard blocks and overrides.
+- Confidence decays with a 90-day half-life, and recurrences count 4×.
+- Two recurrences escalate a rule to a guard or a rewrite; stale rules are put up for retirement; overrides propose a narrower scope.
+- Maturity shows in Obsidian's Rules view and in the scorecard.
+
+**Later, when the profile outgrows its always-loaded block:** task-scoped retrieval through a prompt hook; in-session capture with a "learning captured" note; skill candidates at six or more sessions.
+
 ## Schedule
 
 ### Saturday, afternoon and evening
