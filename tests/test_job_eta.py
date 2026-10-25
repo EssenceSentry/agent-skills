@@ -176,3 +176,13 @@ def test_eta_report_scores_finished_jobs(env):
     data = json.loads(result.output)
     assert data["jobs"] == 1 and data["predictions"] >= 1
     assert "coverage" in cli(env, "eta-report").output
+
+
+def test_a_job_that_outlasts_its_history_gets_no_estimate(env):
+    for n, minutes in enumerate((8, 10, 12)):
+        finished_job(env, f"build-{n}", total=100, minutes=minutes)
+    job = jobs.new(env.config, "build-9", total=100, unit="rows")
+    start = jobs.parse_iso(job.created)
+    early = job_eta.estimate(env.config, job, now=start + timedelta(minutes=2))
+    assert early["basis"] == "history" and early["remaining"]["p50"] > 60
+    assert job_eta.estimate(env.config, job, now=start + timedelta(minutes=45)) is None

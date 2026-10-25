@@ -35,6 +35,8 @@ DISPERSION_PRIOR = 2.0
 # The spread of log durations assumed across similar jobs, and its weight in pseudo-jobs.
 HISTORY_SPREAD, HISTORY_WEIGHT = 0.35, 2.0
 HISTORY_JOBS = 20
+# Past this share of similar runs' durations, the job has outlasted its history.
+OUTLASTED = 0.95
 _NORMAL = NormalDist()
 
 
@@ -272,7 +274,9 @@ def _from_history(job, history: list[dict], now: datetime) -> dict | None:
     centre, spread = _log_spread([max(s, 1.0) for s in spans])
     dist = NormalDist(centre, spread)
     elapsed = max((now - jobs.parse_iso(job.created)).total_seconds(), 0.0)
-    floor = min(dist.cdf(math.log(elapsed)), 0.999) if elapsed > 0 else 0.0
+    floor = dist.cdf(math.log(elapsed)) if elapsed > 0 else 0.0
+    if floor > OUTLASTED:
+        return None  # it has run longer than its family ever did; history can't say more
     remaining = {
         name: max(math.exp(dist.inv_cdf(floor + p * (1 - floor))) - elapsed, 0.0)
         for name, p in QUANTILES
