@@ -80,7 +80,7 @@ export const exampleNow: NowState = {
       kind: "usage",
       id: "claude-weekly",
       title: "Claude weekly: 83% used",
-      detail: "9% a day left for 1.9 days",
+      detail: "13% a day left for 1.3 days",
       resets_at: at(1830),
       actions: [],
     },
