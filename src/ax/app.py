@@ -26,6 +26,7 @@ NEAR_LIMIT = 80  # percent of a usage window that puts it on the waiting list
 RUNS_OUT_SOON = timedelta(days=1)  # or a forecast that runs out this soon
 CONVERSATIONS = 15
 BUDGET_ENTRIES = 8  # each budget's latest ledger lines on the Now screen
+DECIDED = 40  # the latest decisions on rules the Now screen lists
 SEARCH_HITS = 30  # results the app's search shows
 _IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}  # not SVG: it can carry script
 _COMPILE = "run `ax profile compile --apply` to"
@@ -49,6 +50,7 @@ def now_state(config, *, usage_of=None, credits_of=None) -> dict:
         "waiting": [],
         "jobs": [],
         "budgets": [],
+        "decided": [],
         "conversations": [],
         "errors": [],
     }
@@ -70,7 +72,9 @@ def now_state(config, *, usage_of=None, credits_of=None) -> dict:
 
     def gather_rules():
         problems: list = []
-        for rule in profile.load_rules(config, problems=problems):
+        rules = profile.load_rules(config, problems=problems)
+        state["decided"] = _decided(config, rules)
+        for rule in rules:
             if rule.status == "proposed":
                 found["proposal"].append(_rule_item(config, rule, "proposal", rule.why))
             elif rule.status == "active" and (rule.review or _retire_suggestion(rule)):
@@ -211,6 +215,27 @@ def _rule_item(config, rule, kind: str, detail: str) -> dict:
     }
 
 
+def _decided(config, rules) -> list[dict]:
+    """Rules you accepted or rejected (or that were rejected for you), newest first, each
+    with the actions that change your mind."""
+    found = [r for r in rules if r.decided and r.status in ("active", "rejected")]
+    found.sort(key=lambda r: r.decided, reverse=True)
+    return [
+        {
+            "id": r.id,
+            "title": r.rule,
+            "status": "accepted" if r.status == "active" else "rejected",
+            "decided": r.decided,
+            "decided_by": r.decided_by,
+            "superseded_by": r.superseded_by or None,
+            "scope": r.scope,
+            "note": _relative(config, r.path),
+            "actions": ["reject", "restore"] if r.status == "active" else ["accept", "restore"],
+        }
+        for r in found[:DECIDED]
+    ]
+
+
 def _todo_item(config, todo) -> dict:
     return {
         "kind": "todo",
@@ -326,6 +351,11 @@ def _reject(config, payload, model):
     return f"rejected {rule_id}"
 
 
+def _restore(config, payload, model):
+    learn.restore(config, rule_id := _id(payload))
+    return f"{rule_id} is back with the proposals; {_COMPILE} unload it if it was active"
+
+
 def _keep(config, payload, model):
     return f"kept {learn_life.keep(config, _id(payload)).id}"
 
@@ -363,6 +393,7 @@ def _closer(status: str):
 ACTIONS = {
     "accept": _accept,
     "reject": _reject,
+    "restore": _restore,
     "keep": _keep,
     "retire": _retire,
     "guard": _guard,  # the one action that calls a model (Haiku), as `ax learn guard` does

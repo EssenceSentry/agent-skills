@@ -29,7 +29,15 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { type ActionName, act, type Budget, type Job, type NowState, type Waiting } from "@/lib/ax"
+import {
+  type ActionName,
+  act,
+  type Budget,
+  type Decided,
+  type Job,
+  type NowState,
+  type Waiting,
+} from "@/lib/ax"
 import { amount, budgetBar, budgetSummary, budgetTone } from "@/lib/budget"
 import { readHref } from "@/lib/routes"
 import { ago, until } from "@/lib/time"
@@ -51,6 +59,8 @@ type ActionSpec = {
   question: string
   explain: () => string
   model?: string
+  /** Runs at once, without asking: its result says how to undo it. */
+  immediate?: boolean
 }
 
 const COMPILE = "It reaches Claude and Codex after you run `ax profile compile --apply`."
@@ -62,13 +72,23 @@ const ACTIONS: Record<ActionName, ActionSpec> = {
     variant: "default",
     question: "Accept this rule?",
     explain: () => `It becomes an active rule. ${COMPILE}`,
+    immediate: true,
   },
   reject: {
     label: "Reject",
     api: "reject",
     variant: "outline",
-    question: "Reject this proposal?",
-    explain: () => "Its note is removed. It comes back only if its evidence doubles.",
+    question: "Reject this rule?",
+    explain: () => "Its note stays, marked rejected, under Decided.",
+    immediate: true,
+  },
+  restore: {
+    label: "Back to proposals",
+    api: "restore",
+    variant: "outline",
+    question: "Send it back to the proposals?",
+    explain: () => "It waits for your decision again.",
+    immediate: true,
   },
   keep: {
     label: "Keep",
@@ -110,7 +130,74 @@ const ACTIONS: Record<ActionName, ActionSpec> = {
   },
 }
 
-type Notice = { tone: "ok" | "error"; text: string }
+/** What an action said; `undo` names the rule an accept or reject can be taken back on. */
+type Notice = { tone: "ok" | "error"; text: string; undo?: string }
+
+function NoticeBar({
+  notice,
+  onUndo,
+  onDismiss,
+}: {
+  notice: Notice
+  onUndo: (id: string) => void
+  onDismiss: () => void
+}) {
+  return (
+    <div
+      role="status"
+      className={cn(
+        "flex items-start gap-2.5 border-b px-5 py-3 text-[13px]",
+        notice.tone === "ok" ? "bg-primary-soft/60" : "bg-critical/[0.07]"
+      )}
+    >
+      {notice.tone === "ok" ? (
+        <Check className="mt-0.5 size-4 shrink-0 text-primary" />
+      ) : (
+        <TriangleAlert className="mt-0.5 size-4 shrink-0 text-critical" />
+      )}
+      <span className="min-w-0 flex-1 break-words whitespace-pre-line">{notice.text}</span>
+      {notice.undo && (
+        <button
+          type="button"
+          className="shrink-0 font-medium text-primary-ink hover:underline"
+          onClick={() => notice.undo && onUndo(notice.undo)}
+        >
+          Undo
+        </button>
+      )}
+      <button
+        type="button"
+        aria-label="Dismiss"
+        className="text-muted-foreground hover:text-foreground"
+        onClick={onDismiss}
+      >
+        <X className="size-4" />
+      </button>
+    </div>
+  )
+}
+
+/** Runs an action and keeps what it said, with an undo for accept and reject. */
+function useAct(refresh: () => void) {
+  const [notice, setNotice] = useState<Notice | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+
+  async function run(id: string, action: ActionName) {
+    setBusy(`${action}:${id}`)
+    try {
+      const said = await act(ACTIONS[action].api, { id })
+      const undo = action === "accept" || action === "reject" ? id : undefined
+      setNotice({ tone: "ok", text: said, undo })
+      refresh()
+    } catch (error) {
+      setNotice({ tone: "error", text: (error as Error).message })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return { notice, setNotice, busy, run }
+}
 
 function scopeLabel(scope?: string) {
   if (!scope) return null
@@ -294,7 +381,7 @@ function AddTodo({
 function WaitingPanel({ state, refresh }: { state: NowState; refresh: () => void }) {
   const [pending, setPending] = useState<{ item: Waiting; action: ActionName } | null>(null)
   const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState<Notice | null>(null)
+  const { notice, setNotice, run } = useAct(refresh)
   const [adding, setAdding] = useState(false)
   const projects = useMemo(
     () =>
@@ -356,28 +443,11 @@ function WaitingPanel({ state, refresh }: { state: NowState; refresh: () => void
         />
       )}
       {notice && (
-        <div
-          role="status"
-          className={cn(
-            "flex items-start gap-2.5 border-b px-5 py-3 text-[13px]",
-            notice.tone === "ok" ? "bg-primary-soft/60" : "bg-critical/[0.07]"
-          )}
-        >
-          {notice.tone === "ok" ? (
-            <Check className="mt-0.5 size-4 shrink-0 text-primary" />
-          ) : (
-            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-critical" />
-          )}
-          <span className="min-w-0 flex-1 break-words whitespace-pre-line">{notice.text}</span>
-          <button
-            type="button"
-            aria-label="Dismiss"
-            className="text-muted-foreground hover:text-foreground"
-            onClick={() => setNotice(null)}
-          >
-            <X className="size-4" />
-          </button>
-        </div>
+        <NoticeBar
+          notice={notice}
+          onUndo={(id) => run(id, "restore")}
+          onDismiss={() => setNotice(null)}
+        />
       )}
       {count === 0 ? (
         <div className="flex items-center gap-2.5 px-5 py-8 text-sm text-muted-foreground">
@@ -401,7 +471,11 @@ function WaitingPanel({ state, refresh }: { state: NowState; refresh: () => void
                   <WaitingRow
                     key={`${item.kind}:${item.id}`}
                     item={item}
-                    onAction={(i, action) => setPending({ item: i, action })}
+                    onAction={(i, action) =>
+                      ACTIONS[action].immediate
+                        ? run(i.id, action)
+                        : setPending({ item: i, action })
+                    }
                   />
                 ))}
               </ul>
@@ -430,6 +504,132 @@ function WaitingPanel({ state, refresh }: { state: NowState; refresh: () => void
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </section>
+  )
+}
+
+function decidedBy(d: Decided): string {
+  if (d.decided_by === "you") return "by you"
+  if (d.decided_by.startsWith("accepting ")) return `when you accepted ${d.decided_by.slice(10)}`
+  return `by ${d.decided_by}`
+}
+
+const SHOWN_DECIDED = 8
+
+/** Rules you accepted or rejected, and the ones rejected for you, with a way back. */
+function DecidedPanel({ decided, refresh }: { decided: Decided[]; refresh: () => void }) {
+  const [tab, setTab] = useState<"all" | "accepted" | "rejected">("all")
+  const [all, setAll] = useState(false)
+  const { notice, setNotice, busy, run } = useAct(refresh)
+  const shown = decided.filter((d) => tab === "all" || d.status === tab)
+  const count = (status: string) => decided.filter((d) => d.status === status).length
+  const tabs = [
+    ["all", `All ${decided.length}`],
+    ["accepted", `Accepted ${count("accepted")}`],
+    ["rejected", `Rejected ${count("rejected")}`],
+  ] as const
+  return (
+    <section className="panel overflow-hidden">
+      <div className="flex flex-wrap items-end justify-between gap-3 border-b px-5 py-4">
+        <div className="space-y-1">
+          <div className="eyebrow">Decided</div>
+          <h2 className="text-[17px] leading-tight">Rules you accepted or rejected</h2>
+        </div>
+        <fieldset className="flex gap-1">
+          <legend className="sr-only">Which decisions</legend>
+          {tabs.map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={tab === key}
+              onClick={() => setTab(key)}
+              className={cn(
+                "rounded-full px-2.5 py-0.5 text-[12.5px]",
+                tab === key
+                  ? "bg-primary-soft font-medium text-primary-ink"
+                  : "text-ink-2 hover:bg-muted"
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </fieldset>
+      </div>
+      {notice && (
+        <NoticeBar
+          notice={notice}
+          onUndo={(id) => run(id, "restore")}
+          onDismiss={() => setNotice(null)}
+        />
+      )}
+      <ul className="divide-y">
+        {(all ? shown : shown.slice(0, SHOWN_DECIDED)).map((d) => (
+          <li key={d.id} className="flex flex-col gap-2.5 px-5 py-3.5 sm:flex-row sm:items-start">
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span
+                  className={cn(
+                    "label-mono rounded-full px-2 text-[10.5px]",
+                    d.status === "accepted"
+                      ? "bg-primary-soft text-primary-ink"
+                      : "bg-muted text-ink-2"
+                  )}
+                >
+                  {d.status === "accepted" ? "Accepted" : "Rejected"}
+                </span>
+                <span className="label-mono truncate text-[11px] text-muted-foreground">
+                  {d.id}
+                </span>
+              </div>
+              <div className="text-[14px] leading-snug">{d.title}</div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span>
+                  {decidedBy(d)} {ago(d.decided)}
+                </span>
+                {d.superseded_by && (
+                  <span>
+                    replaced by <span className="label-mono">{d.superseded_by}</span>
+                  </span>
+                )}
+                {d.note && (
+                  <a
+                    href={readHref(d.note)}
+                    className="inline-flex items-center gap-1 hover:text-foreground"
+                  >
+                    <FileText className="size-3.5" /> Note
+                  </a>
+                )}
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-1.5">
+              {d.actions.map((name) => (
+                <Button
+                  key={name}
+                  size="sm"
+                  variant={name === "restore" ? "ghost" : "outline"}
+                  disabled={busy !== null}
+                  onClick={() => run(d.id, name)}
+                >
+                  {busy === `${name}:${d.id}` && <Loader2 className="animate-spin" />}
+                  {ACTIONS[name].label}
+                </Button>
+              ))}
+            </div>
+          </li>
+        ))}
+        {!shown.length && (
+          <li className="px-5 py-4 text-[13px] text-muted-foreground">Nothing here yet.</li>
+        )}
+      </ul>
+      {shown.length > SHOWN_DECIDED && (
+        <button
+          type="button"
+          onClick={() => setAll((a) => !a)}
+          className="w-full border-t px-5 py-2.5 text-left text-[13px] text-muted-foreground hover:bg-muted"
+        >
+          {all ? "Show fewer" : `Show all ${shown.length}`}
+        </button>
+      )}
     </section>
   )
 }
@@ -599,8 +799,11 @@ export function NowScreen({ state, refresh }: { state: NowState; refresh: () => 
           </div>
         </section>
       )}
-      <div className="col-span-12 lg:col-span-7">
+      <div className="col-span-12 flex flex-col gap-4 md:gap-5 lg:col-span-7">
         <WaitingPanel state={state} refresh={refresh} />
+        {(state.decided ?? []).length > 0 && (
+          <DecidedPanel decided={state.decided} refresh={refresh} />
+        )}
       </div>
       <div className="col-span-12 flex flex-col gap-4 md:gap-5 lg:col-span-5">
         <section className="panel space-y-4 p-5">

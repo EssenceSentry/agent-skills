@@ -249,6 +249,42 @@ export const exampleNow: NowState = {
       ],
     },
   ],
+  decided: [
+    {
+      id: "ground-in-current-code",
+      title:
+        "Before planning a change or diagnosing a bug, read the current code and its history instead of relying on memory.",
+      status: "accepted",
+      decided: at(-25),
+      decided_by: "you",
+      superseded_by: null,
+      scope: "global",
+      note: "Profile/rules/ground-in-current-code.md",
+      actions: ["reject", "restore"],
+    },
+    {
+      id: "code-review-current-state",
+      title: "Review the code as it is now, not as it was.",
+      status: "rejected",
+      decided: at(-25),
+      decided_by: "accepting ground-in-current-code",
+      superseded_by: "ground-in-current-code",
+      scope: "global",
+      note: "Profile/rules/code-review-current-state.md",
+      actions: ["accept", "restore"],
+    },
+    {
+      id: "macos-gnu-timeout",
+      title: "Never call timeout on macOS.",
+      status: "rejected",
+      decided: at(-80),
+      decided_by: "you",
+      superseded_by: null,
+      scope: "global",
+      note: "Profile/rules/macos-gnu-timeout.md",
+      actions: ["accept", "restore"],
+    },
+  ],
   jobs: [
     {
       key: "embed-thumbnails",

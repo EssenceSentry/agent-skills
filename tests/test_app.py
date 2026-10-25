@@ -175,6 +175,26 @@ def test_a_budget_over_its_limit_waits_for_the_user_with_the_reason_given(env):
     assert "the last batch matters" in item["detail"] and item["actions"] == []
 
 
+def test_decided_rules_are_listed_newest_first_and_can_be_reversed(env, monkeypatch):
+    times = iter(["2026-10-25T18:00-03:00", "2026-10-25T19:00-03:00"])
+    monkeypatch.setattr(learn, "_now", lambda: next(times))
+    for rid in ("tabs", "spaces"):
+        profile.add(env.config, rid, rule=f"Use {rid}.", status="proposed")
+    profile.add(env.config, "by-hand", rule="Written by hand.")  # never decided here
+    learn.accept(env.config, "tabs")
+    learn.reject(env.config, "spaces")
+    state = app.now_state(env.config, usage_of=fake_usage)
+    assert [(d["id"], d["status"]) for d in state["decided"]] == [("spaces", "rejected"),
+                                                                    ("tabs", "accepted")]  # fmt: skip
+    rejected, accepted = state["decided"]
+    assert rejected["actions"] == ["accept", "restore"] and rejected["decided_by"] == "you"
+    assert accepted["actions"] == ["reject", "restore"] and accepted["note"].endswith("tabs.md")
+    assert not [w for w in state["waiting"] if w["id"] in ("tabs", "spaces")]
+    said = app.act(env.config, "restore", {"id": "spaces"})
+    assert "back with the proposals" in said
+    assert ("proposal", "spaces") in waiting(app.now_state(env.config, usage_of=fake_usage))
+
+
 def test_an_accepted_workshop_proposal_is_not_taken_for_a_retirement(env):
     # A workshop proposal names its report under `workshop`; accepted, it keeps that
     # name, which is not the {"suggest": "retire"} the workshop puts on active rules.

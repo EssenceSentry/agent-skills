@@ -23,7 +23,15 @@ export type Credits = {
   status: string
 }
 
-export type ActionName = "accept" | "reject" | "keep" | "retire" | "guard" | "done" | "drop"
+export type ActionName =
+  | "accept"
+  | "reject"
+  | "restore"
+  | "keep"
+  | "retire"
+  | "guard"
+  | "done"
+  | "drop"
 
 export type Waiting = {
   kind: "job" | "usage" | "budget" | "proposal" | "review" | "todo"
@@ -85,6 +93,19 @@ export type Budget = {
   entries: BudgetEntry[]
 }
 
+/** A rule you accepted or rejected, or that was rejected for you. */
+export type Decided = {
+  id: string
+  title: string
+  status: "accepted" | "rejected"
+  decided: string
+  decided_by: string
+  superseded_by: string | null
+  scope: string
+  note: string | null
+  actions: ActionName[]
+}
+
 export type Conversation = {
   handle: string
   title: string
@@ -102,6 +123,7 @@ export type NowState = {
   waiting: Waiting[]
   jobs: Job[]
   budgets: Budget[]
+  decided: Decided[]
   conversations: Conversation[]
   errors: string[]
 }
