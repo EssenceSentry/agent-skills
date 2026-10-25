@@ -160,3 +160,13 @@ def test_sync_refreshes_the_index_when_it_wrote_notes(env, tmp_path, monkeypatch
     assert len(refreshed) == 1
     assert CliRunner().invoke(app, ["sync"], env=run).exit_code == 0
     assert len(refreshed) == 1  # nothing written, nothing to refresh
+
+
+def test_setup_embeds_everything_and_indexes_each_repository(indexed, monkeypatch):
+    runner = Runner()
+    monkeypatch.setattr(find, "_run", runner)
+    find.setup(indexed.config, say=lambda text: None)
+    qmd = [c[3:] for c in runner.calls if c[0] == "qmd"]
+    assert qmd == [["update"], ["embed", "--timeout", "0"]]
+    assert [c[3] for c in runner.calls if c[0] == "semble"] == [
+        str(indexed.repos / "demo"), str(indexed.repos / "other")]  # fmt: skip

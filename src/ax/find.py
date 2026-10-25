@@ -226,16 +226,23 @@ def text(hits: list[dict]) -> str:
     return "\n".join(lines) or "no matches"
 
 
-def refresh(config) -> None:
-    """Re-index changed notes and memories and embed what's new; repos need nothing."""
+def refresh(config, *, complete: bool = False) -> None:
+    """Re-index changed notes and memories and embed what's new; repos need nothing.
+
+    qmd stops embedding after 30 minutes and finishes on the next run; `complete`
+    lifts that cap, for a first index of the whole archive.
+    """
     _qmd(config, "update", timeout=1800)
-    _qmd(config, "embed", timeout=3600)
+    if complete:
+        _qmd(config, "embed", "--timeout", "0", timeout=6 * 3600)
+    else:
+        _qmd(config, "embed", timeout=3600)
 
 
 def setup(config, *, say=print) -> None:
     """Write qmd's collections, index and embed them, and index every repository."""
     say(f"wrote {write_qmd_config(config)}")
-    refresh(config)
+    refresh(config, complete=True)
     say("indexed and embedded the conversations, memories and notes")
     for path in repos(config):
         _run(["semble", "search", "setup", str(path), "-k", "1"], timeout=1800)
