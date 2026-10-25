@@ -128,7 +128,7 @@ export const areas: Area[] = [
     id: "app",
     area: "This app",
     title: "What waits for you, on this Mac or your phone",
-    body: "Proposals, flagged rules and jobs and to-dos to act on, each action confirmed first; jobs running now; recent conversations by handle; and every note in the vault. launchd keeps it served at 127.0.0.1:8765 and it installs as an app from the browser. Your phone opens it at this Mac's Tailscale address, or ax serve --share cloudflare --notify sends a one-off link.",
+    body: "Proposals, flagged rules and jobs and to-dos to act on, each action confirmed first; jobs running now; recent conversations by handle; and every note in the vault. launchd keeps it served at 127.0.0.1:8765, where it installs as an app from the browser, and keeps a Cloudflare link for your phone, sending each new one by ntfy.",
     commands: ["ax app", "ax serve"],
   },
   {

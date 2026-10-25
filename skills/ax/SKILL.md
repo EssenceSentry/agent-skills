@@ -116,9 +116,9 @@ command has `--help`; most take `--json` for agents.
   --notify` reaches their phone.
 - `ax app` (`start`, `stop`, `status`, `open`, `service`): the app served in the
   background at http://127.0.0.1:8765/, where the user can install it. Start it when
-  the user wants the app; `service --apply` keeps it running from login. With
-  Tailscale, `tailscale serve --bg 8765` gives it a fixed https address that the
-  user's own devices open without a token.
+  the user wants the app; `service --apply` keeps it running from login, and with
+  `--share cloudflare --notify` it also keeps a Cloudflare link for the user's phone
+  and sends each new link by ntfy.
 
 ## What you may run alone, and what needs the user
 
