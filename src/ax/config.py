@@ -34,8 +34,8 @@ class Config:
     profile_repos: dict = field(default_factory=dict)
     # Extra folders whose SKILL.md files `ax profile check` reads, e.g. the desktop app's plugins.
     profile_extra_dirs: tuple[Path, ...] = ()
-    # `ax sync` labels new learner candidates with Haiku (a model call) when true.
-    learn_label_on_sync: bool = False
+    # `ax sync` labels up to 40 new learner candidates with Haiku (a model call) unless false.
+    learn_label_on_sync: bool = True
 
     @property
     def db_path(self) -> Path:
@@ -90,5 +90,5 @@ def load(path: Path | None = None) -> Config:
                 "extra_dirs", [str(desktop_plugins)] if desktop_plugins.is_dir() else []
             )
         ),
-        learn_label_on_sync=bool(learning.get("label_on_sync", False)),
+        learn_label_on_sync=bool(learning.get("label_on_sync", True)),
     )

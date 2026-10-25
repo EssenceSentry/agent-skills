@@ -27,6 +27,7 @@ ESCALATE = 2
 NEW_DAYS = 30
 PROVEN_DAYS = 90
 PROVEN_CONFIDENCE = 2.0
+SYNC_LABELS = 40  # most candidates one sync labels; a backlog clears over later syncs
 # Signals of a correction; praise or a Codex memory restating a rule after adoption is
 # the rule working, so it counts as support.
 CORRECTIVE = ("frustration", "explicit", "rejection", "interrupted", "phrase")
@@ -174,13 +175,15 @@ def refresh(
 
 
 def after_sync(config) -> tuple[list, list]:
-    """Rescan the archive and refresh the lifecycle; label first only when configured.
+    """Rescan the archive, label up to SYNC_LABELS new candidates (unless turned off) and
+    refresh the lifecycle.
     Returns the rules updated and the notes that couldn't be read, as (path, error)."""
     candidates = learn.scan(config)
     learn.save_candidates(config, candidates)
-    labels = (
-        learn.label(config, candidates) if config.learn_label_on_sync else learn.load_labels(config)
-    )
+    labels = learn.load_labels(config)
+    if config.learn_label_on_sync:
+        todo = learn.unlabelled(candidates, labels)[:SYNC_LABELS]
+        labels = learn.label(config, todo) if todo else labels
     problems: list = []
     return refresh(config, candidates, labels, problems=problems), problems
 

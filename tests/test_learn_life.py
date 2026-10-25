@@ -132,6 +132,7 @@ def test_labels_name_the_rule_a_message_overrides(archive):
 
 
 def test_sync_refreshes_the_lifecycle_without_calling_a_model(env, monkeypatch):
+    env.config_path.write_text(env.config_path.read_text() + "\n[learn]\nlabel_on_sync = false\n")
     profile.add(env.config, "unrelated-files", rule="Leave unrelated files alone.")
     monkeypatch.setattr(learn, "label", lambda *a, **k: pytest.fail("labelled on sync"))
     result = CliRunner().invoke(app, ["sync"], env={"AX_CONFIG": str(env.config_path)})
@@ -141,13 +142,14 @@ def test_sync_refreshes_the_lifecycle_without_calling_a_model(env, monkeypatch):
     assert (env.config.data / "learn" / "candidates.jsonl").exists()
 
 
-def test_sync_labels_new_candidates_when_configured(env, monkeypatch):
-    env.config_path.write_text(env.config_path.read_text() + "\n[learn]\nlabel_on_sync = true\n")
+def test_sync_labels_a_bounded_batch_of_new_candidates_by_default(env, monkeypatch):
+    many = [candidate(str(i), f"s{i}", "demo") for i in range(learn_life.SYNC_LABELS + 10)]
+    monkeypatch.setattr(learn, "scan", lambda config: many)
     asked = []
     monkeypatch.setattr(learn, "label", lambda config, found, **k: asked.append(found) or {})
     result = CliRunner().invoke(app, ["sync"], env={"AX_CONFIG": str(env.config_path)})
     assert result.exit_code == 0, result.output
-    assert len(asked) == 1
+    assert [len(a) for a in asked] == [learn_life.SYNC_LABELS]
 
 
 def test_sync_refreshes_the_lifecycle_under_the_sync_lock(env, monkeypatch):

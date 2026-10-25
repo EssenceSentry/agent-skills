@@ -87,3 +87,22 @@ def archive(env):
         "compatibility shims\n\nReusable knowledge:\n- not a preference\n"
     )
     return env
+
+
+@pytest.fixture(autouse=True)
+def no_model_calls(monkeypatch):
+    """Tests never reach a real model: one that needs a model passes its own fake."""
+    from ax import learn
+
+    asked = []
+
+    def refuse(*args, **kwargs):
+        def ask(prompt):
+            asked.append(prompt)
+            raise RuntimeError("tests never call a real model")
+
+        return ask
+
+    monkeypatch.setattr(learn, "claude_model", refuse)
+    yield
+    assert not asked, "a test reached the real model"
