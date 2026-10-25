@@ -2,7 +2,24 @@
 // while `ax serve` restarts; its data always comes live from the server, never a cache.
 const CACHE = "ax-shell"
 
-self.addEventListener("install", () => self.skipWaiting())
+// The first visit happens before this worker is in control, so it keeps the page and
+// its assets as soon as it installs; later visits refresh them.
+async function keepShell() {
+  const cache = await caches.open(CACHE)
+  const response = await fetch("/", { cache: "no-store" })
+  if (!response.ok) return
+  const page = await response.clone().text()
+  await cache.put("/", response)
+  await cache.addAll([...new Set(page.match(/\/assets\/[^"']+/g) || [])])
+}
+
+self.addEventListener("install", (event) =>
+  event.waitUntil(
+    keepShell()
+      .catch(() => undefined)
+      .then(() => self.skipWaiting())
+  )
+)
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()))
 
 self.addEventListener("fetch", (event) => {
