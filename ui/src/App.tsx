@@ -65,21 +65,27 @@ export default function App() {
                 className="hidden text-[11px] text-muted-foreground md:inline"
                 title="When ax last archived your conversations"
               >
-                synced {ago(state.last_sync)}
+                synced {ago(state?.last_sync)}
               </span>
-              <StatusBadge
-                status={badge.status}
-                label={badge.label}
-                className="hidden sm:inline-flex"
-              />
+              <StatusBadge status={badge.status} label={badge.label} />
             </>
           }
         />
-        <UsageBand rows={state.usage} credits={state.credits ?? []} />
-        {route.screen === "now" ? (
-          <NowScreen state={state} refresh={refresh} />
+        {state ? (
+          <>
+            <UsageBand rows={state.usage} credits={state.credits ?? []} />
+            {route.screen === "now" ? (
+              <NowScreen state={state} refresh={refresh} />
+            ) : (
+              <ReaderScreen route={route} />
+            )}
+          </>
         ) : (
-          <ReaderScreen route={route} />
+          <main className="mx-auto max-w-[1360px] p-4 md:p-6">
+            <div className="panel p-6 text-sm text-muted-foreground">
+              {status === "offline" ? "ax isn't answering; retrying…" : "Reading your ax…"}
+            </div>
+          </main>
         )}
       </div>
     </TooltipProvider>

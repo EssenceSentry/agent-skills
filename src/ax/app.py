@@ -129,15 +129,28 @@ def _near_limit(row: dict) -> bool:
 
 def _usage_item(row: dict) -> dict:
     name = f"{row['provider'].capitalize()} {row['window'].replace('_', ' ')}"
-    detail = "may run out before it resets" if row["lasts"] is False else "near its limit"
     return {
         "kind": "usage",
         "id": f"{row['provider']}-{row['window']}",
         "title": f"{name}: {row['used']:.0f}% used",
-        "detail": detail,
+        "detail": _left(row),
         "resets_at": row["resets_at"],
         "actions": [],
     }
+
+
+def _left(row: dict) -> str:
+    """What the window leaves: per day until it resets, or in all when that is under a day.
+    Counted from the reading, as the app's usage band counts from now."""
+    left = max(0.0, 100 - row["used"])
+    if not (row["resets_at"] and row["observed_at"]):
+        return f"{left:.0f}% left"
+    span = datetime.fromisoformat(row["resets_at"]) - datetime.fromisoformat(row["observed_at"])
+    days = span.total_seconds() / 86400
+    if days < 1:
+        return f"{left:.0f}% left before it resets"
+    span_text = f"{days:.1f}".removesuffix(".0")
+    return f"{left / days:.0f}% a day left for {span_text} {'day' if span_text == '1' else 'days'}"
 
 
 def _job_item(job: dict) -> dict:

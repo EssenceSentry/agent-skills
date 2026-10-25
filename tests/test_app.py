@@ -62,6 +62,7 @@ def test_now_lists_what_waits_for_the_user_with_its_actions(queue):
     assert found[("job", "score-1")]["detail"] == "failed"
     assert found[("job", "embed-1")]["detail"] == "no progress in 40 min"
     assert found[("usage", "claude-weekly")]["title"] == "Claude weekly: 86% used"
+    assert found[("usage", "claude-weekly")]["detail"] == "7% a day left for 2 days"
     assert ("usage", "codex-session") not in found
     assert state["errors"] == []
 

@@ -1,7 +1,8 @@
-import { TriangleAlert } from "lucide-react"
+import { Hourglass, TriangleAlert } from "lucide-react"
 
 import type { Credits, UsageRow } from "@/lib/ax"
-import { ago, clock, until } from "@/lib/time"
+import { ago } from "@/lib/time"
+import { EVEN_PER_DAY, usageFoot, usagePace } from "@/lib/usage"
 import { cn } from "@/lib/utils"
 
 const PROVIDERS = [
@@ -22,28 +23,37 @@ const UNKNOWN: Record<string, string> = {
   reset_passed: "reset since last read",
 }
 
-function tone(row: UsageRow): "primary" | "warning" | "critical" {
+const PACE_HINT = {
+  tight: `Less than an even ${Math.round(EVEN_PER_DAY)}% a day left: go easy`,
+  spare: `Well over an even ${Math.round(EVEN_PER_DAY)}% a day left: room to use before it resets`,
+}
+
+function tone(row: UsageRow, pace: ReturnType<typeof usagePace>) {
   if ((row.used ?? 0) >= 95) return "critical"
-  return (row.used ?? 0) >= 80 || row.lasts === false ? "warning" : "primary"
+  if (pace) return pace === "even" ? "primary" : "warning"
+  return (row.used ?? 0) >= 80 ? "warning" : "primary"
 }
 
 function Window({ row }: { row: UsageRow }) {
   const meta = WINDOWS[row.window] ?? { label: row.window.replace(/_/g, " "), hint: "", order: 9 }
-  const level = tone(row)
-  const risky = row.used !== null && row.lasts === false
-  const foot =
-    row.used === null
-      ? (UNKNOWN[row.status] ?? row.status)
-      : risky
-        ? `may run out ${row.runs_out_at ? `~${clock(row.runs_out_at)}` : "before reset"}`
-        : row.resets_at
-          ? `resets ${until(row.resets_at)}`
-          : ""
+  const pace = usagePace(row)
+  const level = tone(row, pace)
+  const off = pace === "tight" || pace === "spare"
+  const foot = row.used === null ? (UNKNOWN[row.status] ?? row.status) : usageFoot(row)
+  const PaceIcon = pace === "spare" ? Hourglass : TriangleAlert
   return (
-    <div className="min-w-0" title={meta.hint}>
+    <div className="min-w-0" title={off ? PACE_HINT[pace] : meta.hint}>
       <div className="flex items-center justify-between gap-1.5">
         <span className="truncate text-[11.5px] text-muted-foreground">{meta.label}</span>
-        {risky && <TriangleAlert className="size-3.5 shrink-0 text-warning" aria-hidden />}
+        {level !== "primary" && (
+          <PaceIcon
+            className={cn(
+              "size-3.5 shrink-0",
+              level === "critical" ? "text-critical" : "text-warning"
+            )}
+            aria-label={off ? PACE_HINT[pace] : "near the limit"}
+          />
+        )}
       </div>
       <div className="mt-0.5 flex items-baseline gap-0.5">
         <span className={cn("figure text-[22px]", row.used === null && "text-faint")}>
@@ -72,7 +82,7 @@ function Window({ row }: { row: UsageRow }) {
       <div
         className={cn(
           "mt-1 line-clamp-2 text-[11px] leading-snug",
-          risky ? "text-foreground" : "text-muted-foreground"
+          level === "primary" ? "text-muted-foreground" : "text-foreground"
         )}
       >
         {foot}

@@ -121,33 +121,52 @@ export const loadNote = (path: string): Promise<Note> =>
   LIVE ? getJson(`/api/note?path=${encodeURIComponent(path)}`) : Promise.resolve(exampleNote(path))
 
 /**
- * The Now state: pushed by `ax serve` on `/events` when it changes, and fetched again on
- * demand after an action so its result shows at once.
+ * The Now state: fetched at once, pushed by `ax serve` on `/events` when it changes, and
+ * fetched again after an action so its result shows at once. A proxy can hold the stream
+ * back (Cloudflare's tunnel has), so while it is quiet the state is read every 15 s.
+ * Live, it is null until the first reading: the example data never stands in for yours.
  */
-export function useNow(): { state: NowState; status: LiveStatus; refresh: () => void } {
-  const [state, setState] = useState<NowState>(exampleNow)
+export function useNow(): {
+  state: NowState | null
+  status: LiveStatus
+  refresh: () => void
+} {
+  const [state, setState] = useState<NowState | null>(LIVE ? null : exampleNow)
   const [status, setStatus] = useState<LiveStatus>(LIVE ? "connecting" : "example")
+
+  const refresh = useCallback(() => {
+    if (!LIVE) return
+    getJson<NowState>("/api/now").then(
+      (now) => {
+        setState(now)
+        setStatus("live")
+      },
+      () => setStatus("offline")
+    )
+  }, [])
 
   useEffect(() => {
     if (!LIVE) return
+    let pushed = 0
+    refresh()
     const events = new EventSource("/events")
-    events.onopen = () => setStatus("live")
-    // EventSource reconnects by itself; the status shows the gap meanwhile.
-    events.onerror = () => setStatus("offline")
     events.onmessage = (message: MessageEvent<string>) => {
       try {
         setState(JSON.parse(message.data) as NowState)
         setStatus("live")
+        pushed = Date.now()
       } catch {
         setStatus("offline")
       }
     }
-    return () => events.close()
-  }, [])
-
-  const refresh = useCallback(() => {
-    if (LIVE) getJson<NowState>("/api/now").then(setState, () => setStatus("offline"))
-  }, [])
+    const poll = setInterval(() => {
+      if (Date.now() - pushed > 20_000) refresh()
+    }, 15_000)
+    return () => {
+      events.close()
+      clearInterval(poll)
+    }
+  }, [refresh])
 
   return { state, status, refresh }
 }
