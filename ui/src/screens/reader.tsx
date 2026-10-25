@@ -1,8 +1,7 @@
-import { ChevronLeft, ChevronRight, FileText, Folder, Search } from "lucide-react"
-import { useMemo, useState } from "react"
+import { ChevronLeft, ChevronRight, FileText, Folder } from "lucide-react"
 
 import { Markdown } from "@/blocks/markdown"
-import { Input } from "@/components/ui/input"
+import { SearchBox } from "@/blocks/search-box"
 import { type Folder as FolderData, loadFolder, loadNote, type Note, useLoad } from "@/lib/ax"
 import { folderHref, type Route, readHref } from "@/lib/routes"
 import { ago } from "@/lib/time"
@@ -51,30 +50,13 @@ function FolderPanel({
   error?: string
   current?: string
 }) {
-  const [filter, setFilter] = useState("")
-  const needle = filter.trim().toLowerCase()
-  const folders = useMemo(
-    () => (folder?.folders ?? []).filter((f) => f.name.toLowerCase().includes(needle)),
-    [folder, needle]
-  )
-  const notes = useMemo(
-    () => (folder?.notes ?? []).filter((n) => n.title.toLowerCase().includes(needle)),
-    [folder, needle]
-  )
+  const folders = folder?.folders ?? []
+  const notes = folder?.notes ?? []
   return (
     <div className="panel flex min-w-0 flex-col overflow-hidden">
       <div className="space-y-3 border-b p-4">
         <Crumbs dir={dir} />
-        <div className="relative">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-faint" />
-          <Input
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter this folder"
-            aria-label="Filter this folder"
-            className="pl-8"
-          />
-        </div>
+        <SearchBox />
       </div>
       {error && <p className="p-4 text-sm text-muted-foreground">{error}</p>}
       {!error && !folder && <p className="p-4 text-sm text-muted-foreground">Loading…</p>}
@@ -121,13 +103,11 @@ function FolderPanel({
           ))}
           {notes.length > SHOWN && (
             <li className="px-4 py-2 text-xs text-muted-foreground">
-              {notes.length - SHOWN} more; filter to find them.
+              {notes.length - SHOWN} more; search to find them.
             </li>
           )}
           {!folders.length && !notes.length && (
-            <li className="px-4 py-3 text-[13px] text-muted-foreground">
-              {needle ? "Nothing matches." : "This folder is empty."}
-            </li>
+            <li className="px-4 py-3 text-[13px] text-muted-foreground">This folder is empty.</li>
           )}
         </ul>
       )}
@@ -160,7 +140,11 @@ function NoteView({ note }: { note: Note }) {
   )
 }
 
-export function ReaderScreen({ route }: { route: Exclude<Route, { screen: "now" | "help" }> }) {
+export function ReaderScreen({
+  route,
+}: {
+  route: Exclude<Route, { screen: "now" | "help" | "search" }>
+}) {
   const reading = route.screen === "read" ? route.path : null
   const dir = route.screen === "notes" ? route.dir : parentOf(route.path)
   const folder = useLoad(dir, loadFolder)

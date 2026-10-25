@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 
-import { exampleFolder, exampleNote, exampleNow } from "@/lib/example"
+import { exampleFind, exampleFolder, exampleNote, exampleNow } from "@/lib/example"
+import type { Hit } from "@/lib/search"
 
 export type UsageRow = {
   provider: string
@@ -151,6 +152,12 @@ export const loadFolder = (dir: string): Promise<Folder> =>
 
 export const loadNote = (path: string): Promise<Note> =>
   LIVE ? getJson(`/api/note?path=${encodeURIComponent(path)}`) : Promise.resolve(exampleNote(path))
+
+export type Found = { query: string; hits: Hit[] }
+
+/** `ax find` through the server: a few seconds, as on the command line. */
+export const loadFind = (query: string): Promise<Found> =>
+  LIVE ? getJson(`/api/find?q=${encodeURIComponent(query)}`) : Promise.resolve(exampleFind(query))
 
 /**
  * The Now state: fetched at once, pushed by `ax serve` on `/events` when it changes, and

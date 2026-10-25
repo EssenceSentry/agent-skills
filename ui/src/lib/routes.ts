@@ -5,6 +5,7 @@ export type Route =
   | { screen: "help" }
   | { screen: "notes"; dir: string }
   | { screen: "read"; path: string }
+  | { screen: "search"; query: string }
 
 function decode(part: string): string {
   try {
@@ -35,11 +36,18 @@ export function parseRoute(hash: string): Route {
   }
   if (h.startsWith("/read/")) return { screen: "read", path: decode(h.slice("/read/".length)) }
   if (h === "/help") return { screen: "help" }
+  if (h === "/search" || h.startsWith("/search?")) {
+    return {
+      screen: "search",
+      query: new URLSearchParams(h.slice("/search".length)).get("q") ?? "",
+    }
+  }
   return { screen: "now" }
 }
 
 export const readHref = (path: string) => `#/read/${encodePath(path)}`
 export const folderHref = (dir: string) => (dir ? `#/notes/${encodePath(dir)}` : "#/notes")
+export const searchHref = (query: string) => `#/search?q=${encodeURIComponent(query)}`
 
 export function useRoute(): Route {
   const [route, setRoute] = useState(() => parseRoute(window.location.hash))

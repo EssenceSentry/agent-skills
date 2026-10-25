@@ -61,7 +61,7 @@ export const areas: Area[] = [
     id: "find",
     area: "Find",
     title: "One search over everything you've worked on",
-    body: "ax find asks qmd and Semble at once: past conversations, both tools' memories, vault notes, every repository's docs and its code, by meaning as well as words. A small daemon keeps the models loaded.",
+    body: "ax find asks qmd and Semble at once: past conversations, both tools' memories, vault notes, every repository's docs and its code, by meaning as well as words. A small daemon keeps the models loaded. The search box in this app's Notes runs it when you press Enter.",
     commands: ["ax find", "ax index"],
     proof: "The first search took 34 s; it now takes about 5 s.",
   },

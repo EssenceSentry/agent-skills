@@ -1,6 +1,6 @@
 // Example state, shown when no ax is behind the page (`npm run dev`, `npm run check`).
 // The status in the bar says "Example data" whenever these are on screen.
-import type { Folder, Note, NowState } from "@/lib/ax"
+import type { Folder, Found, Note, NowState } from "@/lib/ax"
 
 const MINUTE = 60_000
 const at = (minutes: number) => new Date(Date.now() + minutes * MINUTE).toISOString()
@@ -445,4 +445,56 @@ export function exampleNote(path: string): Note {
       modified: at(-60),
     }
   )
+}
+
+export function exampleFind(query: string): Found {
+  return {
+    query,
+    hits: [
+      {
+        source: "conversation",
+        path: `/vault/${SESSION}`,
+        note: SESSION,
+        title: "Build the ax app",
+        handle: "ax:48402546",
+        provider: "claude",
+        project: "agent-skills",
+        date: "2026-10-25",
+        snippet:
+          "Reserve holds an amount before an expensive call and settle replaces it with the real cost, so parallel workers can't overshoot together.",
+      },
+      {
+        source: "note",
+        path: `/vault/${RULE}`,
+        note: RULE,
+        title: "run-tests-before-claims",
+        snippet: "Run the tests before saying they pass, and say which ones ran.",
+      },
+      {
+        source: "memory",
+        path: "/Users/me/.claude/projects/demo/memory/budgets.md",
+        note: null,
+        title: "budgets",
+        snippet: "Annotation spend is capped per research run; ask before raising the cap.",
+      },
+      {
+        source: "doc",
+        path: "/Users/me/Repos/agent-skills/PLAN.md",
+        note: null,
+        title: "PLAN.md",
+        project: "agent-skills",
+        snippet: "Budgets agents register, add to and ask about, with reserve then settle.",
+      },
+      {
+        source: "code",
+        path: "/Users/me/Repos/agent-skills/src/ax/budget.py",
+        note: null,
+        title: "agent-skills/src/ax/budget.py:212-230",
+        project: "agent-skills",
+        line: 212,
+        snippet:
+          'def reserve(data, name, amount, *, note=None):\n    """Hold an amount before spending it; returns the ticket."""',
+      },
+    ],
+  }
 }

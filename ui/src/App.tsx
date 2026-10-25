@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils"
 import { HelpScreen } from "@/screens/help"
 import { NowScreen } from "@/screens/now"
 import { ReaderScreen } from "@/screens/reader"
+import { SearchScreen } from "@/screens/search"
 
 const LIVE_BADGE: Record<
   LiveStatus,
@@ -41,8 +42,13 @@ function NavLink({ href, active, children }: { href: string; active: boolean; ch
   )
 }
 
-const crumb = (route: Route) =>
-  route.screen === "now" ? "Now" : route.screen === "help" ? "Help" : "Notes"
+const CRUMBS: Record<Route["screen"], string> = {
+  now: "Now",
+  help: "Help",
+  notes: "Notes",
+  read: "Notes",
+  search: "Search",
+}
 
 export default function App() {
   const route = useRoute()
@@ -55,17 +61,14 @@ export default function App() {
         <AppBar
           product="ax"
           icon={<AppIcon />}
-          crumbs={[crumb(route)]}
+          crumbs={[CRUMBS[route.screen]]}
           right={
             <>
               <nav className="flex items-center gap-1" aria-label="Screens">
                 <NavLink href="#/" active={route.screen === "now"}>
                   Now
                 </NavLink>
-                <NavLink
-                  href="#/notes"
-                  active={route.screen === "notes" || route.screen === "read"}
-                >
+                <NavLink href="#/notes" active={["notes", "read", "search"].includes(route.screen)}>
                   Notes
                 </NavLink>
                 <a
@@ -99,6 +102,8 @@ export default function App() {
         ) : state ? (
           route.screen === "now" ? (
             <NowScreen state={state} refresh={refresh} />
+          ) : route.screen === "search" ? (
+            <SearchScreen query={route.query} />
           ) : (
             <ReaderScreen route={route} />
           )

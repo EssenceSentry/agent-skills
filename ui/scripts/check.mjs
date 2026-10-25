@@ -19,7 +19,7 @@ if (!url) throw new Error("vite preview did not report a local address")
 
 const browser = await chromium.launch()
 const problems = []
-// The Now screen and a note in the reader, from the example data.
+// The Now screen, a note in the reader, Help and a search, from the example data.
 const routes = [
   { name: "now", hash: "" },
   {
@@ -27,6 +27,7 @@ const routes = [
     hash: "#/read/Sessions/2026/10/2026-10-25%20Build%20the%20ax%20app%2048402546.md",
   },
   { name: "help", hash: "#/help" },
+  { name: "search", hash: "#/search?q=reserve%20then%20settle" },
 ]
 for (const colorScheme of ["light", "dark"]) {
   for (const viewport of viewports)

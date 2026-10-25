@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { folderHref, parseRoute, readHref } from "@/lib/routes"
+import { folderHref, parseRoute, readHref, searchHref } from "@/lib/routes"
 
 describe("routes", () => {
   it("reads every screen from the hash", () => {
@@ -23,6 +23,15 @@ describe("routes", () => {
     expect(readHref("Todos/T1 Approve #1?.md")).toBe("#/read/Todos/T1%20Approve%20%231%3F.md")
     expect(folderHref("")).toBe("#/notes")
     expect(folderHref("Profile/rules")).toBe("#/notes/Profile/rules")
+  })
+
+  it("keeps a search in the hash, so back and links work", () => {
+    expect(parseRoute("#/search?q=reserve%20then%20settle")).toEqual({
+      screen: "search",
+      query: "reserve then settle",
+    })
+    expect(parseRoute("#/search")).toEqual({ screen: "search", query: "" })
+    expect(searchHref("budget & ntfy?")).toBe("#/search?q=budget%20%26%20ntfy%3F")
   })
 
   it("survives a malformed escape", () => {
