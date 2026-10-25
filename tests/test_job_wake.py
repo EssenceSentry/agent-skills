@@ -149,3 +149,38 @@ def test_cli_wake_dry_run_prints_the_command(env):
     )
     assert result.exit_code == 0, result.output
     assert "exec resume --skip-git-repo-check th-1 <note>" in result.output
+
+
+def test_credentials_and_settings_survive_while_session_ties_are_dropped(env):
+    from ax.job_wake import clean_env
+
+    parent = {
+        "CLAUDE_CODE_OAUTH_TOKEN": "t", "CLAUDE_CODE_SKIP_BEDROCK_AUTH": "1",
+        "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "9", "CLAUDE_CODE_CLIENT_CERT": "/c.pem",
+        "CLAUDE_CODE_SESSION_ID": "s", "CLAUDE_CODE_MESSAGING_TOKEN": "m",
+        "CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/s.sock", "CLAUDE_CODE_ENTRYPOINT": "claude-desktop",
+        "CLAUDE_CODE_HOST_SESSION_ID": "h", "CLAUDE_CODE_EXECPATH": "/x", "CLAUDECODE": "1",
+        "CLAUDE_AGENT_SDK_VERSION": "1", "CODEX_THREAD_ID": "t", "AX_JOB_FILE": "/j",
+    }  # fmt: skip
+    assert set(clean_env(parent)) == {
+        "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_SKIP_BEDROCK_AUTH",
+        "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_CLIENT_CERT",
+    }  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "session", ["--dangerously-bypass-approvals-and-sandbox", "-x", "a b", "", "x" * 200]
+)
+def test_a_session_id_that_could_be_a_flag_is_refused(env, session):
+    job = ended_job(env, agent={"CODEX_THREAD_ID": session} if session else {})
+    with pytest.raises(job_wake.WakeError):
+        job_wake.wake(env.config, job, "codex", spawn=Spawned(), which=on_path)
+
+
+def test_a_failed_wake_reports_only_its_own_output(env):
+    job = ended_job(env, agent={"CODEX_THREAD_ID": "01a17008-c339-7de3-93b5-5863a8c2445d"})
+    log = jobs.events_path(env.config, "score").parent / "wake.log"
+    log.write_text("an old error from the last wake\n")
+    with pytest.raises(job_wake.WakeError) as raised:
+        job_wake.wake(env.config, job, spawn=Spawned(code=1, output=""), which=on_path)
+    assert "old error" not in str(raised.value) and "exited with 1" in str(raised.value)
