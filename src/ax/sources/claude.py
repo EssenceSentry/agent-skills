@@ -74,12 +74,16 @@ def parse(path: Path) -> Session:
     usage: dict[str, dict] = {}
     models: Counter = Counter()
     stamps = []
+    cwds: list[str] = []
     for rec in iter_records(path, session.unknown):
         rtype = rec.get("type")
         ts = parse_ts(rec.get("timestamp"))
         if ts:
             stamps.append(ts)
-        session.cwd = session.cwd or as_text(rec.get("cwd"))
+        cwd = as_text(rec.get("cwd"))
+        if cwd and cwd not in cwds:
+            cwds.append(cwd)
+        session.cwd = session.cwd or cwd  # tool lines show paths relative to it as they're read
         session.entrypoint = session.entrypoint or as_text(rec.get("entrypoint"))
         session.branch = as_text(rec.get("gitBranch")) or session.branch
         session.version = as_text(rec.get("version")) or session.version
@@ -123,8 +127,24 @@ def parse(path: Path) -> Session:
     session.tokens_out = sum(_count(u, "output_tokens") for u in usage.values())
     if stamps:
         session.started, session.ended = min(stamps), max(stamps)
+    session.cwd = _home_folder(path, cwds)
     session.project = project_name(session.cwd)
     return session
+
+
+def _encoded(cwd: str) -> str:
+    """How Claude Code names a project's transcript folder after its working directory."""
+    return re.sub(r"[^A-Za-z0-9]", "-", cwd)
+
+
+def _home_folder(path: Path, cwds: list[str]) -> str | None:
+    """The working directory a conversation belongs to: the one its transcript is filed
+    under, which changes when the user moves the conversation to another folder; else
+    the first one it ran in."""
+    parts = path.parts
+    folder = parts[parts.index("subagents") - 2] if "subagents" in parts else path.parent.name
+    matching = [c for c in cwds if _encoded(c) == folder]
+    return matching[-1] if matching else (cwds[0] if cwds else None)
 
 
 def _count(usage: dict, key: str) -> int:

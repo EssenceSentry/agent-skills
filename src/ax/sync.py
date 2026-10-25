@@ -30,7 +30,7 @@ from ax.sources import claude, codex
 from ax.store import Store
 
 # Bump when parsing or rendering changes, so the next sync rebuilds every note.
-PARSER_VERSION = "6"
+PARSER_VERSION = "7"
 
 
 class SyncBusy(RuntimeError):
@@ -114,7 +114,13 @@ def _sync(config: Config, progress) -> Report:
             previous = items.get(session.key)
             files = previous.files if previous else []
             files.append((path, stat.st_size, stat.st_mtime_ns))
-            items[session.key] = _Item(session, raw, files)
+            # A conversation the user moved to another folder has a copy in each; the
+            # newest copy holds all of it and says where it lives now.
+            newest = max((m for _, _, m in files[:-1]), default=-1)
+            if previous and newest > stat.st_mtime_ns:
+                previous.files = files
+            else:
+                items[session.key] = _Item(session, raw, files)
 
         if rebuild:
             # Sessions whose transcript is gone are rebuilt from their raw backup.
