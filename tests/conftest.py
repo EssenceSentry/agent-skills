@@ -110,6 +110,20 @@ def no_model_calls(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_workshop(monkeypatch):
+    """Tests never read the user's real usage for the workshop nor start a real run: a
+    sync sees no window, and a test that needs readings or a launch passes its own."""
+    from ax import workshop
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a test reached the real workshop")
+
+    monkeypatch.setattr(workshop, "_readings", refuse)
+    monkeypatch.setattr(workshop, "_readings_cached", lambda config: ([], None))
+    monkeypatch.setattr(workshop, "_launch", refuse)
+
+
+@pytest.fixture(autouse=True)
 def no_search_tools(monkeypatch):
     """Tests never run the real qmd or Semble: one that needs them passes its own runner."""
     from ax import find

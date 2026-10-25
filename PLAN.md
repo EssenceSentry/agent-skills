@@ -88,6 +88,7 @@ Plan written 2026-10-24. Build window: Saturday 24 and Sunday 25 October 2026.
   - **Reader:** every vault note, read-only, with `[[wiki links]]` resolved by name (shortest path wins) or path, callouts as asides, properties as a table, and raw HTML never rendered. A 470,000-character conversation note renders.
   - **Access:** a token kept owner-only in the data folder, then a Strict, HttpOnly cookie; actions need JSON from the app's own origin. `ax serve --share cloudflare --notify` opens a quick tunnel for the phone and sends the link by ntfy; that link carries a token that dies with the run. Not yet tried live: it publishes the vault's reader through the tunnel.
 - **The app installable and always served, 2026-10-25:** the app is a progressive web app (manifest, icons, a service worker that opens it from its last page while the server restarts; Chromium reports no installability errors). `ax app start|stop|status|open` runs it in the background for any agent, and `ax app service --apply` loads launchd's `com.ax.app`, which keeps `ax serve` on 127.0.0.1:8765 from login (tested: a killed server was back within a second). On this Mac the app now opens without a token, so an installed app works whatever storage its browser gives it; through the tunnel every request still needs the run's token.
+- **The rules workshop built 2026-10-25** (component 18): `ax workshop status|run|stop`, the check after every scheduled sync, the supervisor over the delegation runners, the validated writer and the per-window record; accepting a workshop merge retires what it replaces, and a suggested retirement shows under "Rules to review". Not yet run for real: it waits for a spare last day.
 - **Deferred:**
   - Rules matched per prompt (UserPromptSubmit): the ten rules fit in the always-loaded block, so retrieval waits until the profile grows.
   - The stop check for Codex, whose transcript has another format.
@@ -525,7 +526,7 @@ The vault stays: plain Markdown in a git repository, readable in VS Code and in 
 - **Keep:** the notes and their frontmatter, `[[wiki links]]` (the reader resolves them, and VS Code shows them as text), `ax vault commit` and `push`. Nothing in the vault is deleted without the user: removing the old views and Home from the user's vault is a step the user approves.
 - **Docs:** README, skills and PLAN stop pointing at Obsidian once the app replaces each part.
 
-### 18. A rules workshop on spare allowance (agreed 2026-10-25)
+### 18. A rules workshop on spare allowance (agreed and built 2026-10-25)
 
 A weekly window that ends its week with allowance left resets it unused. The workshop spends that allowance on the rules: strong agents consolidate and design them, and their work waits for the user as proposals.
 

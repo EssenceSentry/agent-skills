@@ -560,3 +560,114 @@ def test_the_app_puts_a_suggested_retirement_up_for_review_and_keep_clears_it(wo
     learn_life.keep(env.config, "explicit-paths")
     rule = next(r for r in profile.load_rules(env.config) if r.id == "explicit-paths")
     assert "workshop" not in rule.extra
+
+
+# Starting by itself, and the commands
+
+
+def spare():
+    return readings_of(plain(claude=40))
+
+
+def test_after_a_sync_a_spare_window_with_work_waiting_starts_a_detached_run(work):
+    from ax import jobs
+
+    env, _ = work
+    launched = []
+
+    def launch(config, key, label):
+        launched.append((key, label))
+        jobs.new(config, key, label=label)  # what the real launch registers
+
+    said = workshop.maybe_start(env.config, readings=spare(), launch=launch, now=NOW)
+    [(key, label)] = launched
+    assert key.startswith("workshop-") and "rules workshop" in label.lower()
+    assert said and key in said
+    # While it runs, another sync starts nothing.
+    assert workshop.maybe_start(env.config, readings=spare(), launch=launch, now=NOW) is None
+    assert len(launched) == 1
+
+
+def test_nothing_starts_without_a_spare_window_or_when_turned_off(work, monkeypatch):
+    env, _ = work
+    never = lambda config, key, label: pytest.fail("started a run")  # noqa: E731
+    late = readings_of(plain(claude=40))
+    assert workshop.maybe_start(env.config, readings=readings_of(([weekly("claude", 40, 30)], None)),
+                                launch=never, now=NOW) is None  # fmt: skip
+    off = workshop.Settings(enabled=False)
+    monkeypatch.setattr(workshop, "settings", lambda config: off)
+    assert workshop.maybe_start(env.config, readings=late, launch=never, now=NOW) is None
+
+
+def test_a_window_is_not_worked_twice_on_the_same_items(work):
+    env, found = work
+    workshop.remember(env.config, [opening("claude", 40, 10)], found, {})
+    never = lambda config, key, label: pytest.fail("started a run")  # noqa: E731
+    assert workshop.maybe_start(env.config, readings=spare(), launch=never, now=NOW) is None
+    profile.add(env.config, "brand-new", rule="Something new to weigh.", status="proposed")
+    started = []
+    workshop.maybe_start(env.config, readings=spare(), now=NOW,
+                         launch=lambda c, k, label: started.append(k))  # fmt: skip
+    assert started
+
+
+def test_a_dry_run_writes_the_material_and_briefs_and_launches_nothing(work):
+    env, _ = work
+    found = workshop.run(env.config, dry_run=True, readings=spare(), now=NOW,
+                         runner=FakeRunner(answers={"designer": "should not run"}))  # fmt: skip
+    folder = env.config.data / "workshop" / "runs" / found["folder"].split("/")[-1]
+    assert (folder / "dossier" / "rules.md").exists()
+    briefs = sorted(p.name for p in (folder / "briefs").iterdir())
+    assert briefs == sorted(f"{a['key']}.md" for a in found["team"])
+    assert found["dry_run"] and found["team"] and "item(s) to design" in found["reason"]
+
+
+def test_a_run_supervises_writes_tells_the_user_and_remembers_the_window(work):
+    env, _ = work
+    told, clock = [], Clock()
+    found = workshop.run(env.config, readings=spare(), runner=FakeRunner(), now=NOW,
+                         clock=clock, sleep=clock.sleep,
+                         notify=lambda title, message: told.append(title))  # fmt: skip
+    assert found["proposals"] == ["tests-before-claims"]
+    assert told == ["Rules workshop started", "Rules workshop finished"]
+    state = workshop.load_state(env.config)
+    [window] = state["windows"].values()
+    # What the run read from disk: the flag and the waiting proposal.
+    assert window["runs"] == 1 and {"flag:bootstrap", "proposal:say-less"} <= set(window["covered"])
+
+
+def test_stop_asks_a_running_workshop_to_stop(env):
+    workshop.stop(env.config)
+    assert workshop.stop_file(env.config).exists()
+
+
+def test_the_commands(work, monkeypatch):
+    import json
+
+    from typer.testing import CliRunner
+
+    from ax.cli import app as cli
+
+    env, _ = work
+    monkeypatch.setenv("AX_CONFIG", str(env.config_path))
+    monkeypatch.setattr(workshop, "_readings", lambda config: spare()())
+    monkeypatch.setattr(workshop, "_now", lambda: NOW)
+    result = CliRunner().invoke(cli, ["workshop", "status", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["openings"][0]["ok"] and data["team"]
+    result = CliRunner().invoke(cli, ["workshop", "run", "--dry-run"])
+    assert result.exit_code == 0 and "dossier" in result.output
+    result = CliRunner().invoke(cli, ["workshop", "stop"])
+    assert result.exit_code == 0 and workshop.stop_file(env.config).exists()
+
+
+def test_sync_checks_whether_the_workshop_should_start(env, monkeypatch):
+    from typer.testing import CliRunner
+
+    from ax.cli import app as cli
+
+    monkeypatch.setenv("AX_CONFIG", str(env.config_path))
+    monkeypatch.setattr(workshop, "maybe_start", lambda config: "started workshop-x: 3 agents")
+    result = CliRunner().invoke(cli, ["sync"])
+    assert "rules workshop: started workshop-x" in result.output

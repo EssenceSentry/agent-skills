@@ -564,6 +564,66 @@ def serve(
         server.server_close()
 
 
+workshop_app = typer.Typer(
+    no_args_is_help=True,
+    help="The rules workshop: a weekly window's spare allowance, spent on the rules.",
+)
+app.add_typer(workshop_app, name="workshop")
+
+
+@workshop_app.command("status")
+def workshop_status(as_json: bool = typer.Option(False, "--json", help="Machine-readable output.")):
+    """Whether a run would start now, with how many agents, and why."""
+    from ax import workshop
+
+    found = workshop.status(load())
+    if as_json:
+        typer.echo(json.dumps(found, indent=2))
+        return
+    for o in found["openings"]:
+        typer.echo(f"{o['tool']:<6} {'spare' if o['ok'] else 'not now'}: {o['reason']}")
+    w = found["work"]
+    typer.echo(f"work   {w['proposals']} proposals, {w['flagged']} flagged, {w['uncovered']} "
+               f"uncovered lessons, {w['conflicts']} conflicts, {w['active']} active rules")  # fmt: skip
+    team = ", ".join(f"{a['role']} ({a['tool']})" for a in found["team"]) or "none"
+    typer.echo(f"team   {team}\n       {found['reason']}")
+    if found["running"]:
+        typer.echo(f"running {found['running']}")
+
+
+@workshop_app.command("run")
+def workshop_run(
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Size the team, write its material and briefs; start nothing."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+):
+    """One run now; the schedule starts it by itself on a spare last day."""
+    from ax import workshop
+
+    found = workshop.run(load(), dry_run=dry_run)
+    if as_json:
+        typer.echo(json.dumps(found, indent=2, default=str))
+        return
+    for a in found["team"]:
+        typer.echo(f"{a['key']:<24} {a['role']:<12} {a['items']} item(s)"
+                   f"{' + consolidation' if a['consolidates'] else ''}")  # fmt: skip
+    typer.echo(found["reason"])
+    if found.get("dry_run") or not found["team"]:
+        typer.echo(f"material and briefs (dossier, briefs) in {found['folder']}")
+        return
+    typer.echo(f"{len(found['proposals'])} proposal(s); report {found['report']}")
+
+
+@workshop_app.command("stop")
+def workshop_stop():
+    """Ask a running workshop to stop its agents and write what it has."""
+    from ax import workshop
+
+    workshop.stop(load())
+    typer.echo("asked the workshop to stop")
+
+
 app_cmd = typer.Typer(
     no_args_is_help=True,
     help="The ax app, served in the background so it's always there to open or install.",
@@ -757,6 +817,14 @@ def sync(quiet: bool = typer.Option(False, "--quiet", "-q", help="Print nothing 
         report.errors.append(f"learn: {type(exc).__name__}: {exc}")
     for path, problem in unreadable:  # the user's to fix; the other rules were refreshed
         typer.echo(f"warning: rule note {path} skipped: {problem}")
+    try:
+        from ax import workshop
+
+        started = workshop.maybe_start(config)  # a spare last day: spend it on the rules
+        if started:
+            typer.echo(f"rules workshop: {started}")
+    except Exception as exc:  # the archive is synced either way
+        typer.echo(f"warning: rules workshop not checked: {type(exc).__name__}: {exc}")
     if not quiet or report.errors:
         typer.echo(
             f"discovered {report.discovered} · parsed {report.parsed} · wrote {report.written}"

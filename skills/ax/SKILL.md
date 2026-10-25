@@ -48,6 +48,11 @@ command has `--help`; most take `--json` for agents.
   `review`, `accept`, `reject`, `keep`, `retire`, `guard`): proposes rules from the
   user's corrections and tracks each rule's evidence. Accepting, rejecting, keeping
   or retiring is the user's decision.
+- `ax workshop` (`status`, `run`, `stop`): the rules workshop. On a weekly window's
+  last day with spare allowance, the scheduled sync starts it by itself: Opus 5.5 or
+  Sol 6.1 agents, sized by the rule work and the allowance left, consolidate and
+  design the rules, and their work lands as proposals. `status` and `run --dry-run`
+  show what it would do.
 
 ## Measuring
 
@@ -90,8 +95,8 @@ command has `--help`; most take `--json` for agents.
 
 - **Alone:** find, search, recall (outline), here, job show and wait, todo list,
   todo add or done when the user asked, scorecard, usage, runs, profile list and
-  check, learn list and review, doctor, app start, status and open, any `--help` or
-  `--dry-run`.
+  check, learn list and review, doctor, app start, status and open, workshop status,
+  any `--help` or `--dry-run`.
 - **Ask first:** anything that spends (`learn label`, `lab run`, `recall --for` or
   `--card`, briefs that launch workers, `index setup`), changes the user's rules or
   tools (`learn accept|reject|keep|retire|guard`, `profile add` or `compile

@@ -15,8 +15,9 @@ import os
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import yaml
 
@@ -705,3 +706,205 @@ def _report(outcome: Outcome, written: Written, lines: list, unreviewed: bool, n
         measured = f" (about {share:.1f}% per agent)" if share else ""
         parts.append(f"- {tool}: {before:.0f}% → {after:.0f}%{measured}")
     return "\n".join(parts) + "\n"
+
+
+# Starting by itself, and remembering what was done
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _readings(config):
+    """Both tools' windows, Claude's asked fresh (a built-in /usage: no model call)."""
+    from ax import usage
+
+    windows = usage.claude_windows(config, refresh=True) + usage.codex_windows(config.codex_home)
+    return windows, usage.codex_credits(config.codex_home)
+
+
+def _readings_cached(config):
+    from ax import usage
+
+    windows = usage.claude_windows(config, refresh=False) + usage.codex_windows(config.codex_home)
+    return windows, usage.codex_credits(config.codex_home)
+
+
+def _launch(config, key: str, label: str) -> None:
+    from ax import jobs
+
+    argv = [sys.executable, "-m", "ax.cli", "workshop", "run"]
+    jobs.run(config, argv, key=key, label=label, cwd=str(config.data))
+
+
+def _notify(config):
+    from ax import job_notify
+
+    ntfy = job_notify.settings(config)
+    if ntfy is None:
+        return lambda title, message: None
+    return lambda title, message: job_notify.send(ntfy, title, message, tags=("hammer",))
+
+
+def keys(work: Load) -> set:
+    """What a run works on, so the next one in the same window can tell what is new."""
+    found = {f"lesson:{g.topic}" for g in work.uncovered}
+    found |= {f"flag:{r.id}" for r in work.flagged}
+    found |= {f"conflict:{f.rule}:{f.message[:60]}" for f in work.conflicts}
+    return found | {f"proposal:{r.id}" for r in work.proposals}
+
+
+def _state_path(config):
+    return config.data / "workshop" / "state.json"
+
+
+def load_state(config) -> dict:
+    try:
+        return json.loads(_state_path(config).read_text())
+    except (OSError, ValueError):
+        return {"windows": {}, "share": {}}
+
+
+def _window_key(found: Opening) -> str:
+    return f"{found.tool}:{found.resets_at.isoformat(timespec='minutes')}"
+
+
+def remember(config, ready: list, work: Load, share: dict) -> None:
+    state = load_state(config)
+    for found in ready:
+        window = state.setdefault("windows", {}).setdefault(
+            _window_key(found), {"covered": [], "runs": 0}
+        )
+        window["covered"] = sorted(set(window["covered"]) | keys(work))
+        window["runs"] += 1
+    for tool, measured in share.items():  # an even mix of the last estimate and this run
+        old = state.setdefault("share", {}).get(tool)
+        state["share"][tool] = round((old + measured) / 2 if old else measured, 2)
+    path = _state_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2))
+
+
+def _share(state: dict, ready: list) -> float | None:
+    known = [state.get("share", {}).get(o.tool) for o in ready]
+    known = [k for k in known if k]
+    return max(known) if known else None
+
+
+def stop_file(config):
+    return config.data / "workshop" / "stop.request"
+
+
+def stop(config) -> None:
+    path = stop_file(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch()
+
+
+def _running(config) -> str | None:
+    from ax import jobs
+
+    for job in jobs.list_jobs(config, refresh_active=False):
+        if job.key.startswith("workshop-") and job.status == "running":
+            return job.key
+    return None
+
+
+def _plan(config, readings, now) -> tuple:
+    s = settings(config)
+    windows, _ = readings()
+    found = openings(windows, s, now)
+    ready = [o for o in found if o.ok]
+    work = load(config)
+    state = load_state(config)
+    crew = team(work, found, s, share=_share(state, ready))
+    return s, found, ready, work, state, crew
+
+
+def maybe_start(config, *, readings=None, launch=None, now=None) -> str | None:
+    """After a sync: start a detached run when a window is spare in its last day and the
+    rules have work that no run in this window has taken yet."""
+    now = now or _now()
+    s, found, ready, work, state, crew = _plan(
+        config, readings or (lambda: _readings_cached(config)), now
+    )
+    if not s.enabled or not ready or not crew.agents or _running(config):
+        return None
+    done = set()
+    for o in ready:
+        done |= set(state.get("windows", {}).get(_window_key(o), {}).get("covered", []))
+    if not keys(work) - done:
+        return None  # this window's runs already took all of it
+    key = f"workshop-{now.astimezone():%Y%m%d-%H%M}"
+    tools = " and ".join(sorted({a.tool for a in crew.agents}))
+    label = (f"Rules workshop: {len(crew.agents)} agents on {tools}'s spare weekly allowance "
+             f"consolidate and design the rules; their work lands as proposals.")  # fmt: skip
+    (launch or _launch)(config, key, label)
+    return f"started {key}: {crew.reason}"
+
+
+def _agent_row(agent: Agent) -> dict:
+    return {"key": agent.key, "role": agent.role, "tool": agent.tool, "phase": agent.phase,
+            "items": len(agent.items), "consolidates": agent.consolidates}  # fmt: skip
+
+
+def status(config, *, readings=None, now=None) -> dict:
+    now = now or _now()
+    s, found, ready, work, state, crew = _plan(config, readings or (lambda: _readings(config)), now)
+    return {
+        "enabled": s.enabled,
+        "running": _running(config),
+        "openings": [
+            {
+                "tool": o.tool,
+                "ok": o.ok,
+                "reason": o.reason,
+                "used": o.used,
+                "budget": round(o.budget, 1),
+            }
+            for o in found
+        ],  # fmt: skip
+        "work": {
+            "proposals": len(work.proposals),
+            "flagged": len(work.flagged),
+            "uncovered": len(work.uncovered),
+            "conflicts": len(work.conflicts),
+            "active": len(work.active),
+        },  # fmt: skip
+        "team": [_agent_row(a) for a in crew.agents],
+        "reason": crew.reason,
+    }
+
+
+def run(config, *, dry_run=False, readings=None, runner=None, now=None, clock=None,
+        sleep=None, notify=None) -> dict:  # fmt: skip
+    """One workshop run, normally started by `maybe_start` as a detached ax job."""
+    now = now or _now()
+    readings = readings or (lambda: _readings(config))
+    s, found, ready, work, state, crew = _plan(config, readings, now)
+    folder = config.data / "workshop" / "runs" / f"{now.astimezone():%Y%m%d-%H%M%S}"
+    summary = {"folder": str(folder), "team": [_agent_row(a) for a in crew.agents],
+               "reason": crew.reason, "dry_run": dry_run}  # fmt: skip
+    if dry_run or not crew.agents:
+        write_dossier(folder / "dossier", work)
+        (folder / "briefs").mkdir(parents=True, exist_ok=True)
+        for agent in crew.agents:
+            (folder / "briefs" / f"{agent.key}.md").write_text(brief(agent))
+        return summary
+    stop_file(config).unlink(missing_ok=True)
+    tell = notify or _notify(config)
+    tell("Rules workshop started", f"{len(crew.agents)} agents: {crew.reason}")
+    outcome = supervise(
+        config, crew, work, s, runner=runner or ProcessRunner(s, folder / "dossier"),
+        readings=readings, folder=folder, clock=clock or _now, sleep=sleep or time.sleep,
+        stop_file=stop_file(config),
+    )  # fmt: skip
+    written = write(config, outcome, work, now=now)
+    remember(config, ready, work, outcome.share)
+    ended = f"stopped early: {outcome.stopped}. " if outcome.stopped else ""
+    tell("Rules workshop finished",
+         f"{ended}{len(written.proposals)} proposal(s) and {len(written.retire)} suggested "
+         f"retirement(s) wait in the app; report: {written.report.name}")  # fmt: skip
+    return {**summary, "proposals": written.proposals, "retire": written.retire,
+            "skipped": written.skipped, "report": str(written.report),
+            "stopped": outcome.stopped}  # fmt: skip
