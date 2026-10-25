@@ -99,7 +99,9 @@ def card(env, tmp_path):
     profile.add(
         env.config, "stage-explicit-paths", rule="Stage explicit paths.", added="2026-10-01"
     )
-    profile.add(env.config, "quiet-rule", rule="A rule that never fires.", added="2026-10-01")
+    profile.add(env.config, "quiet-rule", rule="A rule that never fires.", added="2026-10-01",
+                maturity="established", recurrences=0,
+                review="retire: no evidence since 2026-07-01")  # fmt: skip
     for folder, name in ((env.claude_home / "skills", "dataviz"),
                          (env.claude_home / "skills", "unused-skill"),
                          (env.codex_home / "skills", "plotting")):  # fmt: skip
@@ -138,6 +140,16 @@ def test_rules_show_which_fired_and_which_never_did(card):
     rules = {r["id"]: r for r in card["rules"]}
     assert rules["stage-explicit-paths"]["guard_fires"] == 1
     assert rules["quiet-rule"]["guard_fires"] == 0
+
+
+def test_rules_show_their_maturity_and_what_to_review(card):
+    rules = {r["id"]: r for r in card["rules"]}
+    assert rules["quiet-rule"]["maturity"] == "established"
+    assert rules["quiet-rule"]["review"].startswith("retire:")
+    note = scorecard.markdown(card)
+    assert "| Maturity |" in note and "retire: no evidence since 2026-07-01" in note
+    assert "retire: no evidence" in scorecard.render(card)
+    assert "review quiet-rule: retire" in scorecard.text(card)
 
 
 def test_friction_finds_errors_that_recur_across_sessions(card):

@@ -12,6 +12,12 @@ evidence and fix the wording if needed, then run `ax learn accept <id>` or
 
 ![[Rules.base#Proposed]]
 
+Rules in use that `ax sync` flagged: corrected again, overridden, or silent for 90 days.
+Make one a guard with `ax learn guard <id>`, edit it, `ax learn keep <id>` it, or
+`ax learn retire <id>` it.
+
+![[Rules.base#Needs review]]
+
 ## Recent sessions
 
 Your own conversations in both tools; headless workers are under
@@ -28,6 +34,9 @@ and runs are on the local dashboard: run `ax serve` and open http://127.0.0.1:87
 ## Your rules
 
 Compiled into both tools by `ax profile compile --apply`. Edit a rule's note to change it.
+Maturity and confidence come from the evidence `ax sync` finds: a rule is new for a month,
+then established, proven after three months with fresh evidence and nothing against it,
+and doubtful when the evidence against it outweighs the evidence for it.
 
 ![[Rules.base#Active]]
 

@@ -14,6 +14,22 @@ properties:
     displayName: Status
   added:
     displayName: Added
+  maturity:
+    displayName: Maturity
+  confidence:
+    displayName: Confidence
+  support:
+    displayName: Support
+  recurrences:
+    displayName: Recurrences
+  blocks:
+    displayName: Guard blocks
+  overrides:
+    displayName: Overrides
+  last_evidence:
+    displayName: Last evidence
+  review:
+    displayName: Review
 views:
   - type: table
     name: Proposed
@@ -29,6 +45,19 @@ views:
       - property: added
         direction: DESC
   - type: table
+    name: Needs review
+    filters:
+      and:
+        - 'status == "active"'
+        - file.hasProperty("review")
+    order:
+      - file.name
+      - review
+      - maturity
+      - confidence
+      - recurrences
+      - overrides
+  - type: table
     name: Active
     filters:
       and:
@@ -40,7 +69,12 @@ views:
       - file.name
       - rule
       - level
-      - tools
+      - maturity
+      - confidence
+      - support
+      - recurrences
+      - blocks
+      - last_evidence
   - type: table
     name: Enforced
     filters:
@@ -51,6 +85,7 @@ views:
       - file.name
       - rule
       - scope
+      - blocks
   - type: table
     name: Retired
     filters:

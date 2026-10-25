@@ -248,14 +248,20 @@ def test_init_adds_the_rules_view_and_a_home_that_opens_on_what_needs_you(env):
 
     vault.init(env.config.vault)
     rules = yaml.safe_load((env.vault / "Bases" / "Rules.base").read_text())
-    assert [v["name"] for v in rules["views"]] == ["Proposed", "Active", "Enforced", "Retired"]
+    assert [v["name"] for v in rules["views"]] == [
+        "Proposed", "Needs review", "Active", "Enforced", "Retired"]  # fmt: skip
     assert 'file.inFolder("Profile/rules")' in rules["filters"]["and"]
+    review = next(v for v in rules["views"] if v["name"] == "Needs review")
+    assert 'file.hasProperty("review")' in review["filters"]["and"] and "review" in review["order"]
+    active = next(v for v in rules["views"] if v["name"] == "Active")
+    assert {"maturity", "confidence", "recurrences"} <= set(active["order"])
     sessions = yaml.safe_load((env.vault / "Bases" / "Sessions.base").read_text())
     recent = next(v for v in sessions["views"] if v["name"] == "Recent")
     assert any("sdk-cli" in f for f in recent["filters"]["and"])
     assert "Workers" in [v["name"] for v in sessions["views"]]
     home = (env.vault / "Home.md").read_text()
-    for embed in ("Rules.base#Proposed", "Sessions.base#Recent", "Rules.base#Active",
+    for embed in ("Rules.base#Proposed", "Rules.base#Needs review", "Sessions.base#Recent",
+                  "Rules.base#Active",
                   "Experiments.base#Open", "[[Scorecard]]"):  # fmt: skip
         assert embed in home
 

@@ -343,7 +343,9 @@ def build(config, *, weeks: int = 6, now: datetime | None = None) -> dict:
     for rule in profile.load_rules(config):
         if rule.status == "active":
             rules.append({"id": rule.id, "level": rule.level, "added": rule.added,
-                          "guard_fires": fires.get(rule.id, 0)})  # fmt: skip
+                          "guard_fires": fires.get(rule.id, 0), "maturity": rule.maturity,
+                          "recurrences": rule.recurrences or 0,
+                          "review": rule.review})  # fmt: skip
     return {
         "generated": now.isoformat(timespec="seconds"),
         "weeks": [
@@ -387,6 +389,9 @@ def text(card: dict) -> str:
     quiet = [r["id"] for r in card["rules"] if r["level"] == "block" and not r["guard_fires"]]
     if quiet:
         lines.append(f"block rules that never fired: {', '.join(quiet)}")
+    for r in card["rules"]:
+        if r["review"]:
+            lines.append(f"review {r['id']}: {r['review']}")
     for f in card["friction"]:
         lines.append(f"recurring: {f['sessions']} sessions · {f['signature']}")
     if card["skills"]["unused"]:
@@ -431,13 +436,14 @@ def markdown(card: dict) -> str:
         "",
         "## Rules",
         "",
-        "| Rule | Level | Added | Guard blocks |",
-        "| --- | --- | --- | ---: |",
+        "| Rule | Level | Maturity | Added | Guard blocks | Recurrences | Review |",
+        "| --- | --- | --- | --- | ---: | ---: | --- |",
     ]
     for r in card["rules"]:
         lines.append(
-            f"| [[Profile/rules/{r['id']}\\|{r['id']}]] | {r['level']} | {r['added'] or ''} | "
-            f"{r['guard_fires']} |"
+            f"| [[Profile/rules/{r['id']}\\|{r['id']}]] | {r['level']} | {r['maturity']} | "
+            f"{r['added'] or ''} | {r['guard_fires']} | {r['recurrences']} | "
+            f"{r['review'].replace('|', '/')} |"
         )
     lines += ["", "## Errors that recur", ""]
     if card["friction"]:
@@ -478,8 +484,9 @@ def render(card: dict) -> str:
         for w in card["weeks"] for name, c in sorted(w["cost"].items())
     )  # fmt: skip
     rule_rows = "".join(
-        f"<tr><td>{e(r['id'])}</td><td>{e(r['level'])}</td><td>{e(r['added'] or '')}</td>"
-        f"<td>{r['guard_fires']}</td></tr>"
+        f"<tr><td>{e(r['id'])}</td><td>{e(r['level'])}</td><td>{e(r['maturity'])}</td>"
+        f"<td>{e(r['added'] or '')}</td><td>{r['guard_fires']}</td><td>{r['recurrences']}</td>"
+        f"<td class='wrap'>{e(r['review'])}</td></tr>"
         for r in card["rules"]
     )
     friction = (
@@ -497,7 +504,7 @@ def render(card: dict) -> str:
 <style>{_STYLE}</style></head><body><main>
 <header><h1>Scorecard</h1><p class="muted">{e(card["generated"][:16].replace("T", " "))} · <a href="/">dashboard</a></p></header>
 <section class="panel"><h2>Weeks</h2><div class="scroll"><table><tr>{head}</tr>{rows}</table></div></section>
-<section class="panel"><h2>Rules</h2><table><tr><th>Rule</th><th>Level</th><th>Added</th><th>Guard blocks</th></tr>{rule_rows}</table></section>
+<section class="panel"><h2>Rules</h2><div class="scroll"><table><tr><th>Rule</th><th>Level</th><th>Maturity</th><th>Added</th><th>Guard blocks</th><th>Recurrences</th><th>Review</th></tr>{rule_rows}</table></div></section>
 <section class="panel"><h2>Errors that recur</h2><ul>{friction}</ul></section>
 <section class="panel"><h2>Skills</h2><p>Used: {used}</p><p>Never used: {unused}</p></section>
 <section class="panel"><h2>Cost by model and effort</h2><p class="muted">Codex reports no cost; only its sessions are counted.</p>
@@ -520,6 +527,7 @@ h1 { font-size:22px; margin:0; } h2 { font-size:13px; text-transform:uppercase; 
 .muted { color:var(--muted); } .scroll { overflow-x:auto; }
 table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
 th, td { text-align:left; padding:6px 8px; border-top:1px solid var(--line); white-space:nowrap; }
+td.wrap { white-space:normal; min-width:240px; }
 th { color:var(--muted); font-weight:600; border-top:none; font-size:13px; }
 ul { margin:0; padding-left:18px; } li { margin:4px 0; }
 a { color:var(--text); text-decoration:none; border-bottom:1px solid var(--line); }
