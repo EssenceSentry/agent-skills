@@ -603,7 +603,7 @@ The user tells an agent "use no more than $40 on annotations and don't download 
   6. **App:** the Budgets panel and the Waiting item.
   7. **Docs:** the ax skill, README and Help.
 
-### 21. An optional chat view: every session of both tools in one place (planned 2026-10-26)
+### 21. An optional chat view: every session of both tools in one place (planned 2026-10-26; split into a VS Code extension and a phone page the same day)
 
 The user works in four Claude and four Codex sessions at once, and neither desktop app handles that well. This view lets ax list every session of both tools, show which ones wait for the user, and chat with them, from this Mac or from the phone through the shared app link. It is an option, not a replacement: the desktop apps keep working, and the rest of ax (archive, search, digest, jobs, workshop, budgets) reads transcripts from disk whatever drives a session, so nothing else changes.
 
@@ -624,7 +624,7 @@ The user works in four Claude and four Codex sessions at once, and neither deskt
   - **Usage left the top of every page:** a gauge in the bar shows the most used window, coloured by the most urgent; it opens the details on hover on a computer and a Usage page on a phone.
   - **Writing to sessions, built 2026-10-26** (`ax.chat`, `/api/chat`): a box under each conversation, the reply streaming in, Stop, and approvals as Allow and Refuse. A Codex thread the app has open gets the message through `codex queue`; any other thread is continued through a private app-server, keeping its own approval settings (approvals that would come to the user in the app come to the page). A Claude session nothing else holds is continued by a headless `claude -p` in the background, and the page says so; one the desktop app or a terminal holds is taken over: the user closes it there and ax continues it. Hand back closes ax's process. Through a shared link, each message and approval needs a second yes, a one-time confirmation bound to exactly that request. Checked live on throwaway sessions of both tools; the queue path and a real take-over are not yet tried live.
   - **Images, built 2026-10-26:** pictures pasted or attached in the box go to Claude as image blocks, to a Codex thread ax holds as local files, and to one the Codex app holds through `codex queue --image`; large ones are shrunk in the browser to 2,000 px. In the conversation, the pictures the user pasted show in their message, and the screenshots an agent's tools took show as thumbnails under the answer that followed them, opening full size. The parsers record only where each image sits (line and position), so the archive keeps no image data; the app reads each picture back from the transcript when asked. Checked live: both tools named the colour of a pasted picture, and a real session's 54 screenshot-bearing answers read back.
-  - **Next (asked 2026-10-26):** the desktop app's experience as closely as the web allows, plus the additions above: starting a new session from the view, and redirecting a running turn.
+  - **Next:** see "Two front ends, one backend" below.
 - **Chat:** open a session and talk to it: messages, streamed replies with tool calls folded, interrupt, and approvals as buttons. A new session can be started from the view in a chosen folder.
   - **Codex:** through the app-server. ax connects to the shared daemon when the Codex app runs it, so the app sees the same live state; otherwise ax runs its own app-server, whose threads land in the same list. Each thread keeps the user's approval setting unless they choose "ask me" for it in the view.
   - **Claude:** ax runs one headless process per open chat, without the parent environment's `CLAUDE_CODE_*` variables, and answers its permission requests in the view. Closing the chat in ax ends the process; the session stays on disk.
@@ -632,14 +632,32 @@ The user works in four Claude and four Codex sessions at once, and neither deskt
   - **Codex:** both ways. Close a thread in ax and open it in the Codex app, or the reverse. Two drivers are refused by Codex itself.
   - **Claude, started in ax:** continues by id in a terminal (`claude --resume <id>`, checked with its history intact) or back in ax. It does not appear in the desktop app's sidebar, which lists only sessions the app started.
   - **Claude, started in the desktop app:** the view shows it and its state. While the app has it open, ax only reads it, since driving it would split it into a copy. Once the app has closed it, ax may resume it by id; whether the app then shows ax's turns when reopened is still to check, on a session the user is willing to experiment on.
-- **Not in the first version:** the apps' diff, file, terminal and browser panes, plan mode, slash commands, image paste, and artifacts or previews. A diff view may come later.
+- **Not in the first version:** the apps' diff, file, terminal and browser panes, plan mode, slash commands, image paste, and artifacts or previews. Image paste has since been built; files and diffs come with the VS Code extension below.
 - **Sending from the phone (decided 2026-10-26):** sending messages and answering approvals work through the shared link too, since anyone holding the link could otherwise only read. Each send or approval that arrives through the link asks a second confirmation before it reaches the agent: a step that shows exactly what will be sent or approved, and to which session. On this Mac it goes straight through. Reading needs no confirmation anywhere.
+- **Two front ends, one backend (decided 2026-10-26).** The ax server (`ax.live_sessions`, `ax.chat`, `ax.job_card` and their `/api/*` routes) serves both. Neither front end holds logic the other can't reach.
+  - **VS Code extension: the full desktop client.** VS Code already manages many tabs and side-by-side views and shows code, so the user doesn't switch between apps and no code viewer has to be built.
+    - **Sessions sidebar:** a view of its own in the Activity Bar, a native tree read from `/api/sessions`: grouped by tool and project, with icons for working, waiting and idle, waiting ones first, and a badge counting those waiting.
+    - **Session tabs:** each session opens as an editor tab (a webview panel) that can be split, moved between groups and restored after a restart. The tab holds the same conversation page as the web (message box, streaming, approvals, pictures, job cards), bundled into the extension and themed from VS Code's colours, its requests going to the local ax server.
+    - **New sessions from the workspace:** start a Claude or Codex session in the open workspace folder with a first message, pictures included. ax holds it from the start, so it never needs taking over.
+    - **File links:** paths and `file:line` in answers open in the editor.
+    - **Diffs:** an agent's changes open in VS Code's diff view, against the last commit or since the turn began.
+    - **Notifications:** a VS Code notification when a session waits for the user, for an approval or a question.
+    - **Usage in the status bar:** the gauge's reading, with the details on hover.
+    - Installed locally from a `.vsix`, not published; it lives in this repo.
+  - **Mobile-first web page: watching progress, light actions.** On the phone the user mainly wants to see work progressing, not a full client.
+    - **Shows:** the sessions and their state, each session's latest messages, its job cards and screenshots, and usage.
+    - **Does:** Allow or Refuse an approval, Stop, and a quick reply. No new sessions, no take-over and no desktop panes: the current page gets simpler, not richer.
+    - It stays behind the shared link, with the second confirmation for anything it sends.
 - **Build order, test-first, each stage usable alone:**
   1. **Sessions view (done 2026-10-26):** list and state from both tools, live transcripts, "waiting for you", from fakes of `claude agents` and of an app-server in tests.
   2. **Codex chat (done 2026-10-26, no steering yet):** a client for the app-server protocol (start, resume, turn, steer, interrupt, deltas), tested against a fake server.
   3. **Claude chat (done 2026-10-26):** a driver for the headless stream-json process (handshake, turns, partial messages, interrupt), tested against a fake process.
   4. **Approvals and interrupts in the view (done 2026-10-26),** for both tools, with the second confirmation for anything sent through the shared link.
   5. **Handover helpers:** "open in the Codex app", "continue in a terminal", and the check of desktop-app Claude sessions resumed in ax.
+  6. **New sessions from ax:** start a session of either tool in a folder with a first message, held by ax from the start. Both front ends need it; the extension starts them in the open workspace.
+  7. **VS Code extension, first cut:** the sessions sidebar and session tabs, with the conversation page bundled and themed.
+  8. **Extension touches:** file links, diffs, notifications and status-bar usage, in any order.
+  9. **The phone page trimmed** to progress and light actions.
 
 ## Schedule
 
