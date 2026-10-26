@@ -82,16 +82,19 @@ costs the whole time you expected it to take. Right after launching:
 
 With `--wake`, the note reaches your conversation even while it is open: a Codex
 thread open in the app gets it through `codex queue`; a Claude session that is still
-running gets it in a background copy (`claude agents` lists it), and the user gets a
-push saying so. A note about a job that is still running is a warning, not a go-ahead:
-keep waiting or stop the job, and leave what its description says comes next until it
-ends. If a job fails, Haiku reads the end of its log first and the note
-starts with its diagnosis. While it runs, Haiku looks at the log every 30 minutes with
-`--wake` (`--check-every 45s`, `10m`, `2h`; a bare number is minutes; 0 turns it
-off). Each look leaves a short summary of where the job is, kept even when all is well
-and shown by `ax job show`, the job's dashboard and the app; you are woken once per
-problem it sees, such as the same error on every item. If no route reaches you, the
-user gets a push.
+open gets it as a message from another session, through the inbox Claude Code opens
+for the commands it starts, so register the job from your own shell. ax never resumes
+an open Claude session, since that would start a copy working beside it on the same
+files: when it can't reach the inbox (a follower the background service restarted),
+the user gets the note as a push instead. A note about a job that is still running is
+a warning, not a go-ahead: keep waiting or stop the job, and leave what its
+description says comes next until it ends. If a job fails, Haiku reads the end of its
+log first and the note starts with its diagnosis. While it runs, Haiku looks at the
+log every 30 minutes with `--wake` (`--check-every 45s`, `10m`, `2h`; a bare number is
+minutes; 0 turns it off). Each look leaves a short summary of where the job is, kept
+even when all is well and shown by `ax job show`, the job's dashboard and the app; you
+are woken once per problem it sees, such as the same error on every item. If no route
+reaches you, the user gets a push.
 
 - **When the user names an interval** ("have Haiku check every 10 minutes"): pass
   `--check-every 10m` to `ax job follow`, or run `ax job check KEY --every 10m` right

@@ -8,18 +8,25 @@ The note goes in as a new turn of that session:
   ~/.codex/thread-writer-locks; a refused resume falls back to the queue as well.
 - Codex, thread closed: `codex exec resume <thread> <note>` runs one turn without a
   terminal, in the folder the job was registered from.
-- Claude Code: `claude --bg --resume <session> <note>` continues the session in the
-  background, or a copy of it when the session is still open; Claude Code says so,
-  and the wake reports the copy so the user can be told where the turn went.
-
-A Claude session that is still open is better woken by running `ax job wait KEY` as
-a background command, which returns into that session; the jobs skill says so.
+- Claude Code, session open: the note goes to the session's inbox, the socket Claude
+  Code opens for messages from other sessions; it arrives as one, during or between
+  turns. Claude Code hands each process a session starts the socket and its token
+  (CLAUDE_CODE_MESSAGING_SOCKET, _TOKEN) to message it back; ax's follower starts from
+  the agent's shell, so it holds them. A process that doesn't, such as a follower the
+  background service restarted, can't reach the inbox, and the wake fails so the user
+  gets a push. It never resumes an open session: Claude Code would start a copy of it
+  that works on its own, beside the session, on the same files.
+- Claude Code, session closed: `claude --bg --resume <session> <note>` continues it in
+  the background. Should the session turn out open after all, Claude Code starts a
+  copy and says so; the wake reports it so the user can be told where the turn went.
 """
 
+import json
 import os
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 
@@ -145,6 +152,40 @@ def codex_held(config, thread: str) -> bool:
     return bool(found.stdout.strip())
 
 
+def _inbox(job, environ) -> tuple[str, str] | None:
+    """The inbox socket and token of the job's Claude session, when this process
+    descends from that session."""
+    session = job.agent.get(_SESSION["claude"])
+    path = environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
+    token = environ.get("CLAUDE_CODE_MESSAGING_TOKEN")
+    if session and path and token and environ.get("CLAUDE_CODE_SESSION_ID") == session:
+        return path, token
+    return None
+
+
+def deliver(path: str, token: str, note: str, *, timeout: float = 5.0) -> None:
+    """Hand the note to a Claude session's inbox, in the form Claude Code documents for
+    the processes it starts. Raises OSError when the session isn't listening."""
+    lines = [{"type": "auth", "token": token},
+             {"type": "user", "message": {"role": "user", "content": note}}]  # fmt: skip
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
+        sock.connect(path)
+        sock.sendall("".join(json.dumps(line) + "\n" for line in lines).encode())
+        sock.shutdown(socket.SHUT_WR)
+        sock.recv(1)  # the session closes the connection once it has read the lines
+
+
+def open_sessions(binary: str) -> set[str] | None:
+    """The Claude sessions open now, interactive or background; None when unknown."""
+    try:
+        done = subprocess.run([binary, "agents", "--json"], capture_output=True, text=True,
+                              timeout=30)  # fmt: skip
+        return {s["sessionId"] for s in json.loads(done.stdout) if s.get("sessionId")}
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError):
+        return None
+
+
 def _run_now(argv, *, cwd, env) -> tuple[int, str]:
     done = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True, timeout=60)
     return done.returncode, (done.stdout or "") + (done.stderr or "")
@@ -214,6 +255,8 @@ def wake(
     environ=None,
     settle: float = 5.0,
     note: str | None = None,
+    send=deliver,
+    listed=open_sessions,
 ) -> dict:
     """Deliver the note to the agent's conversation and record how it went on the job.
 
@@ -223,10 +266,27 @@ def wake(
     """
     found = plan(config, job, agent, which=which, note=note, held=held)
     agent = found["agent"]
-    env = clean_env(os.environ if environ is None else environ)
+    environ = os.environ if environ is None else environ
+    env = clean_env(environ)
     log = Path(found["log"])
     if found["via"] == "queue":
         return _queued(config, job, found, run, env)
+    if agent == "claude":
+        inbox = _inbox(job, environ)
+        if inbox:
+            try:
+                send(*inbox, found["argv"][-1])
+            except OSError:
+                pass  # closed, or reopened on another socket; see whether it is open
+            else:
+                found |= {"via": "inbox", "copy": None}
+                _record(config, job, found)
+                return found
+        if found["session"] in (listed(found["argv"][0]) or ()):
+            raise WakeError(
+                "its Claude session is open, but only a process started from it can reach "
+                "its inbox, and resuming it would start a copy that works on its own"
+            )
     offset = log.stat().st_size if log.exists() else 0
     child = spawn(found["argv"], cwd=found["cwd"], log=found["log"], env=env)
     try:

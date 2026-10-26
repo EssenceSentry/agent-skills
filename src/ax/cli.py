@@ -2076,6 +2076,8 @@ def job_wake_cmd(
     elif dry_run:
         typer.echo(job_wake.describe(found))
         typer.echo(found["argv"][-1])
+    elif found["via"] == "inbox":
+        typer.echo(f"sent the note to the open {found['agent']} session's inbox")
     else:
         typer.echo(f"woke the {found['agent']} session (pid {found['pid']}); log: {found['log']}")
 

@@ -234,8 +234,9 @@ def follow(
             found = waker(job) if note is None else waker(job, note)
         except (WakeError, OSError) as exc:
             jobs.record_event(config, key, "wake_failed", {"error": str(exc)})
+            what = note or f"{job.key} {job.status}"
             alert(f"{key}: couldn't reach the agent",
-                  f"{job.key} {job.status}; couldn't reach its conversation: {exc}")  # fmt: skip
+                  f"{what}\nCouldn't reach its conversation: {exc}")  # fmt: skip
             return
         if isinstance(found, dict) and found.get("copy"):
             alert(f"{key}: woke a copy",

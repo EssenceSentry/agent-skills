@@ -260,6 +260,76 @@ def test_the_plan_shows_the_queue_for_an_open_codex_thread(env):
     assert job_wake.plan(env.config, job, which=on_path, held=lambda t: False)["via"] == "resume"
 
 
+SESSION = {"CLAUDE_CODE_SESSION_ID": "sess-1"}
+FROM_SESSION = {**SESSION, "CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/s.sock",
+                "CLAUDE_CODE_MESSAGING_TOKEN": "tok"}  # fmt: skip
+
+
+def test_an_open_claude_session_gets_the_note_in_its_inbox_not_a_copy(env):
+    job = ended_job(env, "c", agent=SESSION)
+    sent, spawn = [], Spawned()
+    woke = job_wake.wake(env.config, job, spawn=spawn, which=on_path, environ=FROM_SESSION,
+                         send=lambda *args: sent.append(args), listed=lambda b: {"sess-1"})  # fmt: skip
+    assert woke["via"] == "inbox" and spawn.calls == []
+    assert sent[0][:2] == ("/tmp/s.sock", "tok") and sent[0][2].startswith("[ax job] c done")
+    [event] = [e for e in jobs.events(env.config, "c") if e["type"] == "woke"]
+    assert event["data"]["via"] == "inbox"
+
+
+def test_an_open_session_ax_cannot_reach_is_never_resumed(env):
+    job = ended_job(env, "c", agent=SESSION)
+    spawn = Spawned()
+    other = {
+        "CLAUDE_CODE_SESSION_ID": "sess-2",
+        "CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/o.sock",
+        "CLAUDE_CODE_MESSAGING_TOKEN": "tok",
+    }  # another session's inbox is not this one's
+    for environ in ({}, other):
+        with pytest.raises(job_wake.WakeError, match="would start a copy"):
+            job_wake.wake(env.config, job, spawn=spawn, which=on_path, environ=environ,
+                          send=lambda *a: pytest.fail("sent"), listed=lambda b: {"sess-1"})  # fmt: skip
+    assert spawn.calls == []
+
+
+def test_a_closed_session_is_resumed_even_when_its_inbox_is_gone(env):
+    job = ended_job(env, "c", agent=SESSION)
+    spawn = Spawned()
+
+    def gone(*args):
+        raise ConnectionRefusedError("no one listening")
+
+    woke = job_wake.wake(env.config, job, spawn=spawn, which=on_path, environ=FROM_SESSION,
+                         send=gone, listed=lambda b: set(), settle=0)  # fmt: skip
+    assert woke["via"] == "resume" and spawn.calls[0]["argv"][1:4] == ["--bg", "--resume", "sess-1"]
+
+
+def test_the_inbox_gets_an_auth_line_then_the_note(tmp_path):
+    import socket
+    import tempfile
+    import threading
+
+    path = tempfile.mkdtemp(prefix="ax", dir="/tmp") + "/s"  # under the ~104-byte limit
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(path)
+    server.listen(1)
+    got = []
+
+    def read():
+        conn, _ = server.accept()
+        with conn, conn.makefile() as lines:
+            got.extend(json.loads(line) for line in lines)
+
+    reader = threading.Thread(target=read)
+    reader.start()
+    job_wake.deliver(path, "tok", "[ax job] score done")
+    reader.join(5)
+    server.close()
+    assert got == [{"type": "auth", "token": "tok"},
+                   {"type": "user", "message": {"role": "user", "content": "[ax job] score done"}}]  # fmt: skip
+    with pytest.raises(OSError):
+        job_wake.deliver(str(tmp_path / "none.sock"), "tok", "x")
+
+
 def test_a_note_on_a_running_job_does_not_say_carry_on(env):
     jobs.new(env.config, "score", label="Score rows; then build the report", env={})
     job = jobs.get(env.config, "score")

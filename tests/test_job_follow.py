@@ -238,7 +238,8 @@ def test_a_wake_that_fails_or_lands_in_a_copy_alerts_the_user(env):
 
     follow_with(env, {1: [{"status": "done"}]}, waker=refuse, alerter=alerts.append)
     assert (
-        "couldn't reach" in alerts[0]["message"] and "codex exited with 1" in alerts[0]["message"]
+        "reach its conversation" in alerts[0]["message"]
+        and "codex exited with 1" in alerts[0]["message"]
     )
     jobs.forget(env.config, "score")
     jobs.new(env.config, "score", env={"CLAUDE_CODE_SESSION_ID": "s-1"})
@@ -366,3 +367,21 @@ def test_a_job_behind_its_pace_is_warned_about_once_and_left_running(env):
     assert "429 rate limits" in warned[0] and "ax job wait score" in warned[0]
     assert [e["type"] for e in jobs.events(env.config, "score")].count("slow") == 1
     assert alerts == []  # the agent decides; ax neither stops the job nor pages the user
+
+
+def test_a_warning_the_agent_cannot_get_reaches_the_user_with_its_text(env):
+    from ax.job_triage import Look
+    from ax.job_wake import WakeError
+
+    jobs.new(env.config, "score", env={"CLAUDE_CODE_SESSION_ID": "s-1"})
+    alerts = []
+
+    def refuse(job, note=None):
+        raise WakeError("its Claude session is open, but ...")
+
+    follow_with(env, {5: [{"status": "done"}]}, check_every=120, waker=refuse,
+                checker=lambda job: Look("Batch 3 of 40.", None, "429 rate limits"),
+                alerter=alerts.append)  # fmt: skip
+    [warning] = [a for a in alerts if "429 rate limits" in a["message"]]
+    assert "score is still running" in warning["message"]
+    assert "session is open" in warning["message"]
