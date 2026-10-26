@@ -247,6 +247,9 @@ def served(env, tmp_path, monkeypatch):
     web = tmp_path / "web"
     web.mkdir()
     (web / "index.html").write_text("<!doctype html><title>ax</title>")
+    from ax import chat
+
+    monkeypatch.setattr(chat, "claude_open_elsewhere", lambda config, sid: False)
     monkeypatch.setattr(live_sessions, "listing", lambda config: {
         "sessions": [{"provider": "claude", "id": CLAUDE_SESSION, "name": "fetch",
                       "state": "idle", "jobs": 1}], "errors": []})  # fmt: skip

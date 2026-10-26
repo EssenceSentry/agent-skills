@@ -309,6 +309,15 @@ def listing(config, *, claude_of=claude, codex_of=codex) -> dict:
             sessions += read(config)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             errors.append(f"{name}: {exc}")
+    from ax import chat
+
+    listed = {(s["provider"], s["id"]): s for s in sessions}
+    for mine in chat.held():  # what ax holds itself: its state is the true one
+        found = listed.get((mine["provider"], mine["id"]))
+        if found:
+            found.update(state=mine["state"], waiting_for=mine["waiting_for"], kind=mine["kind"])
+        else:
+            sessions.append(mine)
     counts = job_card.counts(config)
     for s in sessions:
         s["jobs"] = counts.get((s["provider"], s["id"]), 0)
@@ -393,4 +402,7 @@ def session_view(config, provider: str, sid: str, *, after: int = 0) -> dict:
     listed = cached_listing(config)["sessions"]
     session = next((s for s in listed if s["provider"] == provider and s["id"] == sid),
                    {"provider": provider, "id": sid, "name": sid[:8], "state": None})  # fmt: skip
-    return {"session": session, **found, "cards": job_card.session_cards(config, provider, sid)}
+    from ax import chat
+
+    return {"session": session, **found, "cards": job_card.session_cards(config, provider, sid),
+            "chat": chat.state(config, provider, sid)}  # fmt: skip

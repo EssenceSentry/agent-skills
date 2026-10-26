@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from ax import exp, find, job_eta, job_follow, jobs, live_sessions, runs, scorecard, usage
+from ax import chat, exp, find, job_eta, job_follow, jobs, live_sessions, runs, scorecard, usage
 from ax.config import Config
 from ax.config import load as load_config
 from ax.store import Store
@@ -344,7 +344,7 @@ def make_server(
             if not self._host_ok():
                 return self._text(403, "Unknown host name.")
             parts = urlsplit(self.path)
-            if parts.path != "/api/act":
+            if parts.path not in ("/api/act", "/api/chat"):
                 return self._text(404, "Not found.")
             how = self._authorised({})
             if not how:
@@ -362,6 +362,8 @@ def make_server(
                 payload = json.loads(self.rfile.read(size) or b"{}")
                 if not isinstance(payload, dict):
                     raise ValueError("send a JSON object")
+                if parts.path == "/api/chat":  # through a shared link, a second yes first
+                    return self._json(200, chat.act(config, payload, remote=how != "local"))
                 said = app.act(config, str(payload.pop("action", "")), payload)
             except ValueError as exc:
                 return self._json(400, {"error": str(exc)})
