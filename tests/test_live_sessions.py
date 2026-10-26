@@ -36,11 +36,8 @@ def test_claude_sessions_come_with_their_state_and_last_words(env):
     rows = [
         INTERACTIVE,
         {**INTERACTIVE, "pid": 12, "sessionId": "aaaa", "name": "idle one", "status": "idle"},
-        {"id": "bbbb", "cwd": "/Users/me/Repos/demo", "kind": "background", "startedAt": 1,
-         "sessionId": "bbbb-1", "name": "asks", "status": "waiting",
-         "waitingFor": "input needed", "state": "blocked"},
-        {"id": "cccc", "cwd": "/Users/me/Repos/demo", "kind": "background", "startedAt": 1,
-         "sessionId": "cccc-1", "name": "done for now", "state": "blocked"},
+        {**INTERACTIVE, "pid": 13, "sessionId": "dddd", "name": "asks", "status": "waiting",
+         "waitingFor": "input needed"},
     ]  # fmt: skip
     found = {s["id"]: s for s in live_sessions.claude(env.config, run=claude_agents(*rows))}
     fetch = found[CLAUDE_SESSION]
@@ -49,8 +46,18 @@ def test_claude_sessions_come_with_their_state_and_last_words(env):
     )  # fmt: skip
     assert fetch["last"] == "Done. Here is the snippet:"
     assert found["aaaa"]["state"] == "idle" and found["aaaa"]["last"] is None
-    assert (found["bbbb-1"]["state"], found["bbbb-1"]["waiting_for"]) == ("waiting", "input needed")
-    assert found["cccc-1"]["state"] == "idle"
+    assert (found["dddd"]["state"], found["dddd"]["waiting_for"]) == ("waiting", "input needed")
+
+
+def test_background_sessions_are_agents_side_tasks_and_stay_out(env):
+    rows = [
+        INTERACTIVE,
+        {"id": "bbbb", "cwd": "/Users/me/Repos/demo", "kind": "background", "startedAt": 1,
+         "sessionId": "bbbb-1", "name": "release notebook check", "status": "waiting",
+         "waitingFor": "input needed", "state": "blocked"},
+    ]  # fmt: skip
+    found = live_sessions.claude(env.config, run=claude_agents(*rows))
+    assert [s["id"] for s in found] == [CLAUDE_SESSION]
 
 
 def test_claude_being_unavailable_is_an_error_not_a_crash(env):

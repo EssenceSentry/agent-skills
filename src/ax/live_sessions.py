@@ -2,10 +2,10 @@
 said, the jobs it waits on, and its transcript as it grows.
 
 This is the read-only first stage of the chat view (PLAN.md, component 21). Claude's
-sessions, the desktop app's included, come from `claude agents --json`. Codex threads
-come from its app-server: the shared daemon when the Codex app runs one, so states match
-the app, else a short-lived `codex app-server`, whose threads aren't loaded; their state
-is then read from the end of each rollout. Transcripts are parsed with the archive's own
+interactive sessions, the desktop app's included, come from `claude agents --json`.
+Codex threads come from its app-server: the shared daemon when the Codex app runs one,
+so states match the app, else a short-lived `codex app-server`, whose threads aren't
+loaded; their state is then read from the end of each rollout. Transcripts are parsed with the archive's own
 parsers, again only when the file grew, and redacted before they leave ax.
 """
 
@@ -77,12 +77,13 @@ def _session(provider, sid, name, cwd, state, waiting_for, *, kind, started, upd
 
 
 def claude(config, *, run=_run) -> list[dict]:
-    """Claude's sessions as `claude agents` lists them: interactive ones, the desktop
-    app's included, and background ones."""
+    """Claude's interactive sessions as `claude agents` lists them, the desktop app's
+    included. Background sessions (`claude --bg`: wake-ups, dispatched checks) are
+    agents' side tasks, not conversations the user holds, so they stay out."""
     found = []
     for row in json.loads(run(["claude", "agents", "--json"]) or "[]"):
         sid = row.get("sessionId")
-        if not isinstance(sid, str) or not sid:
+        if not isinstance(sid, str) or not sid or row.get("kind") == "background":
             continue
         path = _claude_path(config, sid)
         last, said_at = _claude_tail(path)
@@ -97,8 +98,8 @@ def claude(config, *, run=_run) -> list[dict]:
 
 
 def _claude_state(row: dict) -> tuple[str, str | None]:
-    status, state = row.get("status"), row.get("state")
-    if status in ("busy", "working", "running") or state in ("working", "running"):
+    status = row.get("status")
+    if status in ("busy", "working", "running"):
         return "working", None
     if status == "waiting" or row.get("waitingFor"):
         return "waiting", row.get("waitingFor") or "you"
