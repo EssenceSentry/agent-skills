@@ -8,6 +8,7 @@ from ax.model import Event, Session
 from ax.sources.common import (
     as_text,
     code,
+    codex_images,
     first_line,
     iter_records,
     parse_ts,
@@ -100,7 +101,7 @@ def parse(path: Path, titles: dict[str, str] | None = None) -> Session:
     meta_seen = False
     history_start = 0
     stamps = []
-    for rec in iter_records(path, session.unknown):
+    for line, rec in iter_records(path, session.unknown, numbered=True):
         rtype = rec.get("type")
         payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
         if rtype == "session_meta":
@@ -122,7 +123,7 @@ def parse(path: Path, titles: dict[str, str] | None = None) -> Session:
             session.effort = as_text(payload.get("effort")) or session.effort
             session.cwd = session.cwd or as_text(payload.get("cwd"))
         elif rtype == "response_item":
-            _item(session, payload, ts, calls)
+            _item(session, payload, ts, calls, line)
         elif rtype == "event_msg":
             _event(session, payload, ts)
         elif rtype == "compacted":
@@ -162,15 +163,23 @@ def _meta(session: Session, meta: dict, *, keep_id: bool) -> str | None:
     return as_text(git.get("repository_url"))
 
 
-def _item(session: Session, item: dict, ts, calls: dict) -> None:
+def _item(session: Session, item: dict, ts, calls: dict, line=None) -> None:
     kind = item.get("type")
+    images = [{"line": line, "n": n, "media": media}
+              for n, (media, _, _) in enumerate(codex_images(item))] if line is not None else []  # fmt: skip
     if kind == "message":
         texts = [c.get("text", "") for c in item.get("content") or [] if isinstance(c, dict)]
         if item.get("role") == "user":
+            said = None
             for text in texts:
                 text = _user_text(text)
                 if text:
-                    session.events.append(Event("user", text, ts))
+                    said = Event("user", text, ts)
+                    session.events.append(said)
+            if images and said is None:
+                session.events.append(Event("user", "", ts, images=images))
+            elif images:
+                said.images.extend(images)
         elif item.get("role") == "assistant":
             text = "\n\n".join(t.strip() for t in texts if t.strip())
             if text:
@@ -204,6 +213,7 @@ def _item(session: Session, item: dict, ts, calls: dict) -> None:
         event = calls.get(item.get("call_id"))
         if event is not None:
             _attach_output(event, _output_text(item.get("output")))
+            event.images.extend(images)  # screenshots the tool returned
     elif kind == "web_search_call":
         action = item.get("action") if isinstance(item.get("action"), dict) else {}
         query = action.get("query")

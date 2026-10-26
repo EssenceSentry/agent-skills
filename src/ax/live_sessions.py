@@ -9,6 +9,8 @@ loaded; their state is then read from the end of each rollout. Transcripts are p
 parsers, again only when the file grew, and redacted before they leave ax.
 """
 
+import base64
+import binascii
 import contextlib
 import json
 import queue
@@ -17,12 +19,13 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from ax import job_card, jobs
 from ax.redact import redact
 from ax.sources import claude as claude_source
 from ax.sources import codex as codex_source
-from ax.sources.common import first_line, project_name
+from ax.sources.common import claude_images, codex_images, first_line, project_name
 
 # A Codex thread untouched this long, and not open anywhere, isn't live.
 RECENT = 24 * 3600.0
@@ -360,11 +363,22 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + "\n…"
 
 
-def _shown(i: int, e) -> dict:
+def _picture(provider: str, sid: str, ref: dict) -> dict:
+    url = (f"/api/session/image?provider={provider}&id={quote(sid)}"
+           f"&line={ref['line']}&n={ref['n']}")  # fmt: skip
+    return {"url": url, "media": ref["media"], "line": ref["line"], "n": ref["n"]}
+
+
+def _shown(i: int, e, provider: str = "", sid: str = "", shots=()) -> dict:
+    text = e.text or ""
+    if e.images:  # the archive marks each picture with "[image]"; here it shows itself
+        text = "\n\n".join(p for p in text.split("\n\n") if p.strip() != "[image]")
     return {
-        "i": i, "kind": e.kind, "text": redact(_clip(e.text or "", TEXT_CHARS)),
+        "i": i, "kind": e.kind, "text": redact(_clip(text, TEXT_CHARS)),
         "tool": e.tool, "ok": e.ok, "output": redact(_clip(e.output or "", OUTPUT_CHARS)),
         "ts": e.ts.isoformat(timespec="seconds") if e.ts else None,
+        "images": [_picture(provider, sid, ref) for ref in e.images],
+        "shots": [_picture(provider, sid, ref) for ref in shots],
     }  # fmt: skip
 
 
@@ -387,13 +401,72 @@ def transcript(config, provider: str, sid: str, *, after: int = 0, limit: int = 
     since = chat[-1] + 1 if chat else 0
     running = [i for i in range(since, len(events))
                if events[i].kind == "tool" and events[i].ok is None and not events[i].output]  # fmt: skip
+    # Screenshots and pictures the tools returned go under the answer that follows them.
+    shots: dict[int, list] = {}
+    waiting: list = []
+    for i, e in enumerate(events):
+        if e.kind == "tool":
+            waiting += e.images
+        elif e.kind == "assistant":
+            shots[i], waiting = waiting, []
     return {
-        "events": [_shown(i, events[i]) for i in picked],
-        "running": [_shown(i, events[i]) for i in running[-1:]],
+        "events": [_shown(i, events[i], provider, sid, shots.get(i, ())) for i in picked],
+        "running": [_shown(i, events[i], provider, sid) for i in running[-1:]],
+        "shots": [_picture(provider, sid, ref) for ref in waiting],  # no answer after them yet
         "next": len(events),
         "first": after if after else (picked[0] if picked else 0),
         "earlier": 0 if after else len(chat) - len(picked),
     }
+
+
+_offsets: dict[str, tuple[int, list[int]]] = {}
+
+
+def _line_at(path: Path, number: int) -> bytes | None:
+    """One line of a growing transcript, from an index of where its lines start that is
+    extended as the file grows."""
+    size = path.stat().st_size
+    scanned, starts = _offsets.get(str(path), (0, [0]))
+    if size < scanned:  # replaced, not grown
+        scanned, starts = 0, [0]
+    with path.open("rb") as f:
+        if size > scanned:
+            f.seek(scanned)
+            at = scanned
+            while chunk := f.read(1 << 20):
+                found = chunk.find(b"\n")
+                while found != -1:
+                    starts.append(at + found + 1)
+                    found = chunk.find(b"\n", found + 1)
+                at += len(chunk)
+            _offsets[str(path)] = (size, starts)
+        if not 0 <= number < len(starts) or starts[number] >= size:
+            return None
+        f.seek(starts[number])
+        return f.readline()
+
+
+def image(config, provider: str, sid: str, line: int, n: int) -> tuple[bytes, str]:
+    """The `n`th image in line `line` of a session's transcript, and its media type."""
+    if provider not in ("claude", "codex"):
+        raise ValueError(f"unknown provider {provider!r}")
+    path = _claude_path(config, sid) if provider == "claude" else _codex_path(config, sid)
+    raw = _line_at(path, line) if path and path.exists() else None
+    try:
+        record = json.loads(raw) if raw else None
+    except ValueError:
+        record = None
+    if not isinstance(record, dict):
+        raise NotFound(f"no line {line} in that transcript")
+    found = (claude_images(record) if provider == "claude"
+             else codex_images(record.get("payload") or {}))  # fmt: skip
+    if not 0 <= n < len(found):
+        raise NotFound(f"no image {n} on line {line}")
+    media, data, _ = found[n]
+    try:
+        return base64.b64decode(data), media
+    except (ValueError, binascii.Error):
+        raise NotFound("that image can't be read") from None
 
 
 def session_view(config, provider: str, sid: str, *, after: int = 0) -> dict:

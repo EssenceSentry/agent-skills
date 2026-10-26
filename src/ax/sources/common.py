@@ -2,6 +2,7 @@
 
 import io
 import json
+import re
 from collections import Counter
 from collections.abc import Iterator
 from datetime import datetime
@@ -18,10 +19,11 @@ def open_text(path: Path) -> io.TextIOBase:
     return path.open(encoding="utf-8", errors="replace")
 
 
-def iter_records(path: Path, unknown: Counter) -> Iterator[dict]:
-    """Yield each JSON object in a JSONL file; count lines that aren't one."""
+def iter_records(path: Path, unknown: Counter, *, numbered: bool = False) -> Iterator:
+    """Yield each JSON object in a JSONL file, or with `numbered` (its line, the object);
+    count lines that aren't one."""
     with open_text(path) as fh:
-        for line in fh:
+        for number, line in enumerate(fh):
             line = line.strip()
             if not line:
                 continue
@@ -31,9 +33,54 @@ def iter_records(path: Path, unknown: Counter) -> Iterator[dict]:
                 unknown["invalid-json"] += 1
                 continue
             if isinstance(record, dict):
-                yield record
+                yield (number, record) if numbered else record
             else:
                 unknown["invalid-json"] += 1
+
+
+_DATA_URL = re.compile(r"data:(image/[\w.+-]+);base64,(.*)", re.S)
+
+
+def claude_images(record: dict) -> list[tuple[str, str, str | None]]:
+    """Each image in a Claude record, in order: its media type, its base64 data, and the
+    tool call it came back from (None for one the user pasted)."""
+    content = (record.get("message") or {}).get("content")
+    found: list[tuple[str, str, str | None]] = []
+
+    def add(block, owner):
+        source = block.get("source")
+        if isinstance(source, dict) and source.get("type") == "base64" and source.get("data"):
+            found.append((str(source.get("media_type") or "image/png"), source["data"], owner))
+
+    for item in content if isinstance(content, list) else ():
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "image":
+            add(item, None)
+        elif item.get("type") == "tool_result" and isinstance(item.get("content"), list):
+            for part in item["content"]:
+                if isinstance(part, dict) and part.get("type") == "image":
+                    add(part, item.get("tool_use_id"))
+    return found
+
+
+def codex_images(payload: dict) -> list[tuple[str, str, str | None]]:
+    """Each image in a Codex response item, in order: its media type, its base64 data, and
+    the tool call it came back from (None for one in a message)."""
+    kind = payload.get("type")
+    if kind == "message":
+        parts, owner = payload.get("content"), None
+    elif kind in ("function_call_output", "custom_tool_call_output"):
+        parts, owner = payload.get("output"), payload.get("call_id")
+    else:
+        return []
+    found = []
+    for part in parts if isinstance(parts, list) else ():
+        if isinstance(part, dict) and part.get("type") == "input_image":
+            data = _DATA_URL.match(str(part.get("image_url") or ""))
+            if data:
+                found.append((data.group(1), data.group(2), owner))
+    return found
 
 
 def parse_ts(value) -> datetime | None:

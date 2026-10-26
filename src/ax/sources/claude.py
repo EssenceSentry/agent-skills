@@ -8,6 +8,7 @@ from pathlib import Path
 from ax.model import Event, Session
 from ax.sources.common import (
     as_text,
+    claude_images,
     code,
     first_line,
     iter_records,
@@ -75,7 +76,7 @@ def parse(path: Path) -> Session:
     models: Counter = Counter()
     stamps = []
     cwds: list[str] = []
-    for rec in iter_records(path, session.unknown):
+    for line, rec in iter_records(path, session.unknown, numbered=True):
         rtype = rec.get("type")
         ts = parse_ts(rec.get("timestamp"))
         if ts:
@@ -89,7 +90,7 @@ def parse(path: Path) -> Session:
         session.version = as_text(rec.get("version")) or session.version
 
         if rtype == "user":
-            _user(rec, ts, session, pending)
+            _user(rec, ts, session, pending, line)
         elif rtype == "assistant":
             _assistant(rec, ts, session, pending, usage, models)
         elif rtype == "system":
@@ -160,14 +161,19 @@ def _read_meta(meta: Path) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _user(rec, ts, session, pending):
+def _user(rec, ts, session, pending, line=None):
     if rec.get("isMeta"):
         return
+    images = [({"line": line, "n": n, "media": media}, owner)
+              for n, (media, _, owner) in enumerate(claude_images(rec))] if line is not None else []  # fmt: skip
     content = (rec.get("message") or {}).get("content")
     if isinstance(content, list) and any(_is(i, "tool_result") for i in content):
         for item in content:
             if _is(item, "tool_result"):
                 _attach_result(pending.get(item.get("tool_use_id")), item, rec.get("toolUseResult"))
+        for ref, owner in images:  # screenshots and pictures a tool returned
+            if owner and pending.get(owner) is not None:
+                pending[owner].images.append(ref)
         return
     text = _prompt_text(content)
     if rec.get("isCompactSummary"):
@@ -180,8 +186,9 @@ def _user(rec, ts, session, pending):
             session.events.append(Event("notice", note, ts))
         return
     text = _clean(text)
-    if text:
-        session.events.append(Event("user", text, ts))
+    pasted = [ref for ref, owner in images if owner is None]
+    if text or pasted:
+        session.events.append(Event("user", text, ts, images=pasted))
 
 
 def _assistant(rec, ts, session, pending, usage, models):

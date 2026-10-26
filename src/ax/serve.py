@@ -247,6 +247,13 @@ def make_server(
             try:
                 if parts.path == "/api/sessions":
                     return self._json(200, live_sessions.cached_listing(config))
+                if parts.path == "/api/session/image":  # a screenshot or a pasted image
+                    data, media = live_sessions.image(
+                        config, (query.get("provider") or [""])[0], (query.get("id") or [""])[0],
+                        int((query.get("line") or ["-1"])[0]), int((query.get("n") or ["0"])[0]),
+                    )  # fmt: skip
+                    return self._send(200, data, media, {**_APP_HEADERS,
+                                      "Cache-Control": "private, max-age=86400, immutable"})  # fmt: skip
                 if parts.path == "/api/session":
                     provider = (query.get("provider") or [""])[0]
                     sid = (query.get("id") or [""])[0]
@@ -356,7 +363,7 @@ def make_server(
             if not (self.headers.get("Content-Type") or "").startswith("application/json"):
                 return self._json(415, {"error": "send JSON"})
             size = int(self.headers.get("Content-Length") or 0)
-            if size > _MAX_BODY:
+            if size > (_MAX_CHAT_BODY if parts.path == "/api/chat" else _MAX_BODY):
                 return self._json(413, {"error": "too large"})
             try:
                 payload = json.loads(self.rfile.read(size) or b"{}")
@@ -417,6 +424,7 @@ _APP_HEADERS = {
 }
 _KEEPALIVE = 15  # seconds between comments on a quiet stream
 _MAX_BODY = 64_000
+_MAX_CHAT_BODY = 40_000_000  # a message may carry pasted images
 
 
 def _fresh_usage_cache() -> dict:

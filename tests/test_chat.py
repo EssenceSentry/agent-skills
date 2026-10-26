@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -347,3 +348,93 @@ def test_the_app_sends_from_this_mac_at_once_and_asks_twice_through_a_tunnel(env
 def test_a_refused_message_is_a_clear_error(env, served):
     status, said = post(f"{served}/api/chat", {"action": "send", "provider": "codex", "id": "t"})
     assert status == 400 and "text" in said["error"]
+
+
+# Images
+
+
+PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000d49444154789c63fccf54030f00048501808ca98c210000000049454e44ae426082"
+)
+
+
+def image(data: bytes = PNG, media: str = "image/png") -> dict:
+    import base64
+
+    return {"media": media, "data": base64.b64encode(data).decode()}
+
+
+def test_a_pasted_image_goes_to_claude_beside_the_words(env, chats):
+    registry, _, claude_log = chats
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "cwd": "/repo",
+                          "text": "What's wrong here?", "images": [image()]})  # fmt: skip
+    until(lambda: not chat.state(env.config, "claude", "s-1")["busy"])
+    content = logged(claude_log)[1]["message"]["content"]
+    assert content[0] == {"type": "image", "source": {"type": "base64",
+                                                      "media_type": "image/png",
+                                                      "data": image()["data"]}}  # fmt: skip
+    assert content[1] == {"type": "text", "text": "What's wrong here?"}
+
+
+def test_an_image_alone_is_a_message_too(env, chats):
+    registry, _, claude_log = chats
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "cwd": "/repo",
+                          "text": "", "images": [image()]})  # fmt: skip
+    until(lambda: not chat.state(env.config, "claude", "s-1")["busy"])
+    assert [b["type"] for b in logged(claude_log)[1]["message"]["content"]] == ["image"]
+
+
+def test_a_pasted_image_goes_to_codex_as_a_local_file(env, chats):
+    registry, codex_log, _ = chats
+    chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1", "cwd": "/repo",
+                          "text": "Check the chart", "images": [image()]})  # fmt: skip
+    until(lambda: not chat.state(env.config, "codex", "t-1")["busy"])
+    turn = next(m for m in logged(codex_log) if m.get("method") == "turn/start")
+    picture, words = turn["params"]["input"]
+    assert picture["type"] == "localImage" and Path(picture["path"]).read_bytes() == PNG
+    assert words == {"type": "text", "text": "Check the chart"}
+
+
+def test_a_thread_open_in_the_codex_app_gets_the_image_through_its_queue(env, chats, monkeypatch):
+    ran = []
+    monkeypatch.setattr(chat, "codex_open_in_app", lambda config, tid: True)
+    monkeypatch.setattr(chat, "_run", lambda argv, env: ran.append(argv) or (0, ""))
+    chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-2",
+                          "text": "This one", "images": [image()]})  # fmt: skip
+    [argv] = ran
+    picture = argv[argv.index("--image") + 1]
+    assert Path(picture).read_bytes() == PNG and argv[argv.index("--message") + 1] == "This one"
+
+
+@pytest.mark.parametrize(
+    ("images", "error"),
+    [
+        ([{"media": "image/svg+xml", "data": "PHN2Zz4="}], "PNG, JPEG, GIF or WebP"),
+        ([{"media": "image/png", "data": "not base64!"}], "isn't an image"),
+        ([image()] * 11, "at most 10"),
+    ],
+)
+def test_images_are_checked_before_anything_is_sent(env, chats, images, error):
+    with pytest.raises(ValueError, match=error):
+        chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1",
+                              "text": "hi", "images": images})  # fmt: skip
+    assert chat.CHATS.get("claude", "s-1") is None
+
+
+def test_a_confirmation_covers_the_images_as_well_as_the_words(env, chats):
+    ask = {"action": "send", "provider": "codex", "id": "t-1", "text": "Look", "cwd": "/repo",
+           "images": [image()]}  # fmt: skip
+    first = chat.act(env.config, dict(ask), remote=True)
+    assert "1 image" in first["question"]
+    with pytest.raises(ValueError, match="confirm"):
+        chat.act(env.config, {**ask, "images": [image(PNG + b"x")], "confirm": first["confirm"]},
+                 remote=True)  # fmt: skip
+
+
+def test_the_app_takes_a_message_with_a_screenshot_in_it(env, served):
+    big = image(PNG + b"\0" * 200_000)  # well over the size other actions accept
+    body = {"action": "send", "provider": "codex", "id": "t-1", "text": "See", "cwd": "/r",
+            "images": [big]}  # fmt: skip
+    status, said = post(f"{served}/api/chat", body)
+    assert status == 200 and said["ok"], said

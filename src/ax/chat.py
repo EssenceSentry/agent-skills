@@ -17,6 +17,8 @@ with a one-time confirmation for exactly that message or approval, and only a se
 request carrying it acts.
 """
 
+import base64
+import binascii
 import contextlib
 import hashlib
 import json
@@ -27,6 +29,7 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from ax import job_wake
@@ -34,6 +37,14 @@ from ax.sources import claude as claude_source
 
 CONFIRM_TTL = 120.0  # seconds a confirmation from a shared link stays good
 CODEX_RESUME = {"excludeTurns": True}  # what resuming a thread changes: nothing it runs with
+IMAGE_TYPES = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+MAX_IMAGES = 10
+MAX_IMAGE_BYTES = 10_000_000
 OPEN_TTL = 3.0  # seconds `claude agents` is trusted for which sessions are open elsewhere
 _APPROVALS = {
     "item/commandExecution/requestApproval",
@@ -186,11 +197,12 @@ class CodexDriver(Driver):
         self.approval = {"id": key, "tool": method.split("/")[1], "summary": summary,
                          "reason": params.get("reason"), "detail": None}  # fmt: skip
 
-    def send(self, text: str) -> None:
+    def send(self, text: str, images=()) -> None:
         self._claim()
+        given = [{"type": "localImage", "path": i["path"]} for i in images]
+        given += [{"type": "text", "text": text}] if text else []
         try:
-            started = self.call("turn/start", {"threadId": self.sid,
-                                               "input": [{"type": "text", "text": text}]})  # fmt: skip
+            started = self.call("turn/start", {"threadId": self.sid, "input": given})
         except ValueError:
             self.busy = False
             raise
@@ -254,10 +266,12 @@ class ClaudeDriver(Driver):
             if subtype.startswith("error") and subtype != "error_during_execution":
                 self.error = message.get("result") or subtype.replace("_", " ")
 
-    def send(self, text: str) -> None:
+    def send(self, text: str, images=()) -> None:
         self._claim()
-        self._write({"type": "user", "message": {"role": "user",
-                                                 "content": [{"type": "text", "text": text}]}})  # fmt: skip
+        content = [{"type": "image", "source": {"type": "base64", "media_type": i["media"],
+                                                "data": i["data"]}} for i in images]  # fmt: skip
+        content += [{"type": "text", "text": text}] if text else []
+        self._write({"type": "user", "message": {"role": "user", "content": content}})
 
     def answer(self, request: str, allow: bool) -> None:
         given = self.inputs.pop(request, None)
@@ -430,7 +444,10 @@ def state(config, provider: str, sid: str) -> dict:
 
 def _fingerprint(payload: dict) -> str:
     keys = ("action", "provider", "id", "text", "request", "allow")
-    return hashlib.sha256(json.dumps([payload.get(k) for k in keys]).encode()).hexdigest()
+    pictures = [i.get("data") for i in payload.get("images") or [] if isinstance(i, dict)]
+    return hashlib.sha256(
+        json.dumps([[payload.get(k) for k in keys], pictures]).encode()
+    ).hexdigest()
 
 
 def _question(payload: dict) -> str:
@@ -438,7 +455,9 @@ def _question(payload: dict) -> str:
     if payload.get("action") == "send":
         text = str(payload.get("text") or "").strip()
         shown = text if len(text) <= 300 else text[:300] + "…"
-        return f"Send this to {name} from the shared link?\n\n“{shown}”"
+        count = len(payload.get("images") or [])
+        pictures = f"\n\nwith {count} image{'s' if count != 1 else ''}" if count else ""
+        return f"Send this to {name} from the shared link?\n\n“{shown}”{pictures}"
     driver = CHATS.get(payload.get("provider"), payload.get("id"))
     approval = (driver.approval if driver else None) or {}
     verb = "Allow" if payload.get("allow") else "Refuse"
@@ -470,15 +489,17 @@ def act(config, payload: dict, *, remote: bool = False) -> dict:
     action, provider, sid = payload.get("action"), payload.get("provider"), payload.get("id")
     if provider not in ("claude", "codex") or not isinstance(sid, str) or not sid:
         raise ValueError("say which session: provider (claude or codex) and id")
-    if action == "send" and not str(payload.get("text") or "").strip():
-        raise ValueError("there is no text to send")
+    images = _images(payload) if action == "send" else []
+    if action == "send" and not str(payload.get("text") or "").strip() and not images:
+        raise ValueError("there is nothing to send: no text and no image")
     if remote and action in ("send", "answer"):
         ask = _confirmed(payload)
         if ask:
             return ask
     cwd, name = payload.get("cwd"), payload.get("name")
     if action == "send":
-        return _send(config, provider, sid, str(payload["text"]).strip(), cwd, name)
+        text = str(payload.get("text") or "").strip()
+        return _send(config, provider, sid, text, cwd, name, images)
     if action == "answer":
         driver = CHATS.get(provider, sid)
         if driver is None:
@@ -509,11 +530,50 @@ def act(config, payload: dict, *, remote: bool = False) -> dict:
     raise ValueError(f"unknown action {action!r}")
 
 
-def _send(config, provider: str, sid: str, text: str, cwd, name) -> dict:
+def _images(payload: dict) -> list[dict]:
+    """The pasted images, checked before anything is sent: their media type, base64 data
+    and bytes."""
+    given = payload.get("images") or []
+    if not isinstance(given, list):
+        raise ValueError("images must be a list")
+    if len(given) > MAX_IMAGES:
+        raise ValueError(f"send at most {MAX_IMAGES} images at once")
+    found = []
+    for item in given:
+        media = item.get("media") if isinstance(item, dict) else None
+        if media not in IMAGE_TYPES:
+            raise ValueError("images must be PNG, JPEG, GIF or WebP")
+        try:
+            raw = base64.b64decode(str(item.get("data") or ""), validate=True)
+        except (ValueError, binascii.Error):
+            raw = b""
+        if not raw:
+            raise ValueError("one of the images isn't an image")
+        if len(raw) > MAX_IMAGE_BYTES:
+            raise ValueError(f"an image is over {MAX_IMAGE_BYTES // 1_000_000} MB")
+        found.append({"media": media, "data": item["data"], "bytes": raw})
+    return found
+
+
+def _saved(config, images: list[dict]) -> list[dict]:
+    """The images as files, for Codex, which takes pictures by path."""
+    folder = config.data / "chat-images"
+    folder.mkdir(parents=True, exist_ok=True)
+    for image in images:
+        path = folder / f"{uuid.uuid4().hex}{IMAGE_TYPES[image['media']]}"
+        path.write_bytes(image["bytes"])
+        image["path"] = str(path)
+    return images
+
+
+def _send(config, provider: str, sid: str, text: str, cwd, name, images=()) -> dict:
     driver = CHATS.get(provider, sid)
+    if provider == "codex":
+        images = _saved(config, list(images))
     if driver is None and provider == "codex" and codex_open_in_app(config, sid):
         binary = shutil.which("codex") or "codex"
         argv = job_wake.command("codex", sid, text, binary, queue=True)
+        argv += [arg for image in images for arg in ("--image", image["path"])]
         code, said = _run(argv, job_wake.clean_env(os.environ))
         if code:
             lines = [line for line in said.splitlines() if line.strip()]
@@ -523,5 +583,5 @@ def _send(config, provider: str, sid: str, text: str, cwd, name) -> dict:
         raise ValueError("it's open in the Claude app or a terminal: take it over first")
     if driver is None:
         driver = CHATS.open(provider, sid, cwd=cwd, name=name)
-    driver.send(text)
+    driver.send(text, images)
     return {"ok": True, "via": "ax", "message": "Sent."}
