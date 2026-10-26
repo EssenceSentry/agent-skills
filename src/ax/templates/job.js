@@ -1,4 +1,5 @@
-// The ax job dashboard: polls /api/job and fills the page with text only.
+// The ax job dashboard: polls api/job and fills the page with text only. Its paths are
+// relative, so the same page works at a follower's own address and inside the ax app.
 "use strict";
 
 const $ = (id) => document.getElementById(id);
@@ -13,7 +14,7 @@ try {
 } catch (error) {
   // Storage can be off (private browsing); the token stays in memory for this page.
 }
-if (location.search) history.replaceState(null, "", "/");
+if (location.search) history.replaceState(null, "", location.pathname);
 
 function duration(seconds) {
   seconds = Math.max(0, Math.round(seconds));
@@ -173,7 +174,7 @@ function render(data) {
 
 async function load() {
   try {
-    const response = await fetch("/api/job", {
+    const response = await fetch("api/job", {
       cache: "no-store",
       credentials: "same-origin",
       headers: token ? { "X-Ax-Token": token } : {},

@@ -567,6 +567,28 @@ def test_the_shipped_app_embeds_nothing_its_policy_blocks():
     assert "img-src 'self' data:" in serve._APP_HEADERS["Content-Security-Policy"]
 
 
+def test_the_app_serves_each_job_s_dashboard_behind_its_own_token(served):
+    vault, base, token = served
+    jobs.new(vault.config, "embed-1", total=10, unit="files", label="Embed thumbnails")
+    status, _, body = call(f"{base}/jobs/embed-1/")
+    assert status == 200 and b'src="app.js"' in body and b'href="app.css"' in body
+    data = json.loads(call(f"{base}/jobs/embed-1/api/job")[2])
+    assert data["key"] == "embed-1" and data["label"] == "Embed thumbnails"
+    assert call(f"{base}/jobs/embed-1/app.js")[1]["Content-Type"].startswith("text/javascript")
+    assert call(f"{base}/jobs/embed-1")[2] == call(f"{base}/jobs/embed-1/")[2]  # redirected
+    assert call(f"{base}/jobs/nope/api/job")[0] == 404
+    assert call(f"{base}/jobs/..%2F..%2Fetc/api/job")[0] == 404
+    # Through the shared link it takes the app's token, like everything else.
+    assert call(f"{base}/jobs/embed-1/api/job", headers=REMOTE)[0] == 401
+    assert call(f"{base}/jobs/embed-1/api/job", cookie=token, headers=REMOTE)[0] == 200
+
+
+def test_a_job_card_links_to_the_dashboard_inside_the_app(env):
+    jobs.new(env.config, "embed-1", label="Embed thumbnails")
+    [job] = app.now_state(env.config, usage_of=fake_usage)["jobs"]
+    assert job["page"] == "/jobs/embed-1/"
+
+
 def test_other_host_names_are_refused(served):
     _, base, token = served
     assert call(f"{base}/api/now", cookie=token, headers={"Host": "evil.example"})[0] == 403

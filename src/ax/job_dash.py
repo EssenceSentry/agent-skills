@@ -116,33 +116,41 @@ class Dashboard:
         self.httpd.server_close()
 
     def state(self) -> dict | None:
-        job = jobs.get(self.config, self.key)
-        if job is None:
-            return None
-        recent = [
-            e
-            for e in jobs.events(self.config, self.key, limit=60, latest=True)
-            if e["type"] not in _QUIET_EVENTS
-        ][-15:]
-        data = {
-            **job.to_dict(),
-            "progress_text": jobs.progress_text(job),
-            "console_url": _console_url(job),
-            "eta": job_eta.estimate(self.config, job),
-            "events": recent,
-            "looks": [
-                {"at": e["ts"], "summary": e["data"].get("summary") or "",
-                 "problem": e["data"].get("problem")}
-                for e in reversed(jobs.events(self.config, self.key, limit=200, latest=True))
-                if e["type"] == "look"
-            ][:12],
-            "check_every": job_follow.check_every(self.config, self.key),
-        }  # fmt: skip
-        for private in ("spec", "agent", "cwd"):
-            data.pop(private, None)
-        if self.show_log:
-            data["log"] = _log_tail(job, self.config)
-        return data
+        return job_state(self.config, self.key, show_log=self.show_log)
+
+
+def job_state(config, key: str, *, show_log: bool = False) -> dict | None:
+    """What a job's page shows, from the follower's dashboard or from the ax app."""
+    job = jobs.get(config, key)
+    if job is None:
+        return None
+    recent = [
+        e for e in jobs.events(config, key, limit=60, latest=True) if e["type"] not in _QUIET_EVENTS
+    ][-15:]
+    data = {
+        **job.to_dict(),
+        "progress_text": jobs.progress_text(job),
+        "console_url": _console_url(job),
+        "eta": job_eta.estimate(config, job),
+        "events": recent,
+        "looks": [
+            {"at": e["ts"], "summary": e["data"].get("summary") or "",
+             "problem": e["data"].get("problem")}
+            for e in reversed(jobs.events(config, key, limit=200, latest=True))
+            if e["type"] == "look"
+        ][:12],
+        "check_every": job_follow.check_every(config, key),
+    }  # fmt: skip
+    for private in ("spec", "agent", "cwd"):
+        data.pop(private, None)
+    if show_log:
+        data["log"] = _log_tail(job, config)
+    return data
+
+
+def page(name: str) -> bytes:
+    """The job page's files, which the ax app serves too: job.html, job.js, job.css."""
+    return (_TEMPLATES / name).read_bytes()
 
 
 def _handler(dash: Dashboard):

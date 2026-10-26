@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from ax import exp, find, job_eta, job_follow, jobs, runs, scorecard, usage
 from ax.config import Config
@@ -233,6 +233,8 @@ def make_server(
                 return self._page(how)
             if parts.path == "/events":
                 return self._events()
+            if parts.path.startswith("/jobs/"):
+                return self._job_page(parts.path)
             if parts.path in _CLASSIC:
                 kind, build = _CLASSIC[parts.path]
                 body = build(config, usage_of).encode()
@@ -256,6 +258,32 @@ def make_server(
                 return self._json(400, {"error": str(exc)})
             except find.FindError as exc:  # the index isn't set up, or qmd failed
                 return self._json(503, {"error": str(exc)})
+            return self._text(404, "Not found.")
+
+        def _job_page(self, path: str):
+            """A job's dashboard inside the app, so one shared link reaches every job."""
+            from ax import job_dash, job_follow
+
+            name, slash, rest = path[len("/jobs/") :].partition("/")
+            key = unquote(name)
+            try:
+                jobs.check_key(key)
+            except ValueError:
+                return self._text(404, "No such job.")
+            if jobs.get(config, key) is None:
+                return self._text(404, "No such job.")
+            if not slash:  # the page's paths are relative to its folder
+                return self._send(301, b"", "text/plain", {"Location": f"/jobs/{quote(key)}/"})
+            files = {"": ("job.html", "text/html; charset=utf-8"),
+                     "app.js": ("job.js", "text/javascript; charset=utf-8"),
+                     "app.css": ("job.css", "text/css; charset=utf-8")}  # fmt: skip
+            if rest in files:
+                file, kind = files[rest]
+                return self._send(200, job_dash.page(file), kind, _APP_HEADERS)
+            if rest == "api/job":
+                follower = job_follow.running(config, key) or {}
+                shown = bool((follower.get("options") or {}).get("show_log"))
+                return self._json(200, job_dash.job_state(config, key, show_log=shown))
             return self._text(404, "Not found.")
 
         def _page(self, how: str):
@@ -473,6 +501,7 @@ def _jobs(config: Config) -> list[dict]:
                 "check_error": job.check_error,
                 "updated": job.updated,
                 "link": follower.get("link") if follower else None,
+                "page": f"/jobs/{quote(job.key)}/",  # its dashboard, inside the app
                 "check_every": None if job.terminal else job_follow.check_every(config, job.key),
                 "look": jobs.latest_look(config, job.key),
             }

@@ -297,6 +297,7 @@ export const exampleNow: NowState = {
   jobs: [
     {
       key: "embed-thumbnails",
+      page: "/jobs/embed-thumbnails/",
       label: "Embed 3,120 thumbnails with SigLIP",
       status: "running",
       stage: "embedding",
@@ -316,6 +317,7 @@ export const exampleNow: NowState = {
     },
     {
       key: "review-leakage",
+      page: "/jobs/review-leakage/",
       label: "Opus review: holdout and provenance safeguards",
       status: "running",
       stage: null,

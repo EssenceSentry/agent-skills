@@ -58,7 +58,7 @@ def test_the_link_serves_the_page_directly_and_sets_a_lax_cookie(dash):
     # without a Strict cookie, so the link must work in one request.
     server = dash()
     status, headers, body = request(server, "/", token=server.token)
-    assert status == 200 and b'src="/app.js"' in body
+    assert status == 200 and b'src="app.js"' in body
     cookie = headers["Set-Cookie"]
     assert "HttpOnly" in cookie and "SameSite=Lax" in cookie
     assert b"Score" not in body  # job data reaches the page only as JSON

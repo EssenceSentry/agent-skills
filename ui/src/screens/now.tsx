@@ -693,9 +693,9 @@ function JobRow({ job }: { job: Job }) {
           )}
         </div>
       )}
-      {job.link && (
+      {job.page && (
         <a
-          href={job.link}
+          href={job.page}
           target="_blank"
           rel="noreferrer"
           className="inline-flex items-center gap-1 text-xs text-primary-ink hover:underline"
