@@ -603,6 +603,38 @@ The user tells an agent "use no more than $40 on annotations and don't download 
   6. **App:** the Budgets panel and the Waiting item.
   7. **Docs:** the ax skill, README and Help.
 
+### 21. An optional chat view: every session of both tools in one place (planned 2026-10-26)
+
+The user works in four Claude and four Codex sessions at once, and neither desktop app handles that well. This view lets ax list every session of both tools, show which ones wait for the user, and chat with them, from this Mac or from the phone through the shared app link. It is an option, not a replacement: the desktop apps keep working, and the rest of ax (archive, search, digest, jobs, workshop, budgets) reads transcripts from disk whatever drives a session, so nothing else changes.
+
+- **What a check on 2026-10-26 showed** (throwaway sessions only):
+
+  | | Claude | Codex |
+  |---|---|---|
+  | List every session with its live state | `claude agents --json`: the desktop app's sessions too, busy, idle, or blocked waiting for input | app-server `thread/list` with status, plus `thread/status/changed` notices |
+  | Send messages, several turns, live | one long-lived `claude -p --input-format stream-json --output-format stream-json` process | app-server `turn/start` (and `turn/steer` mid-turn) |
+  | Stream the reply | `--include-partial-messages` | `item/agentMessage/delta` and item events |
+  | Interrupt | control request `interrupt` | `turn/interrupt` |
+  | Approve or refuse an action | after the host's `initialize` control request, with `--permission-prompts host --permission-prompt-tool stdio`: `can_use_tool` requests | `item/*/requestApproval` requests, when the thread's `approvalsReviewer` is `user` (with `auto_review`, the user's current setting, Codex's reviewer decides) |
+  | Hand over to the desktop app | partly: see below | yes: the same thread list the Codex app reads |
+
+- **Sessions view (read-only):** every live session of both tools, grouped by tool and project, with what each is doing and which ones wait for the user, the last thing each asked, and how long it has waited. Each opens its live transcript. This alone answers "which of my eight sessions needs me".
+- **Chat:** open a session and talk to it: messages, streamed replies with tool calls folded, interrupt, and approvals as buttons. A new session can be started from the view in a chosen folder.
+  - **Codex:** through the app-server. ax connects to the shared daemon when the Codex app runs it, so the app sees the same live state; otherwise ax runs its own app-server, whose threads land in the same list. Each thread keeps the user's approval setting unless they choose "ask me" for it in the view.
+  - **Claude:** ax runs one headless process per open chat, without the parent environment's `CLAUDE_CODE_*` variables, and answers its permission requests in the view. Closing the chat in ax ends the process; the session stays on disk.
+- **Handover, one driver at a time:**
+  - **Codex:** both ways. Close a thread in ax and open it in the Codex app, or the reverse. Two drivers are refused by Codex itself.
+  - **Claude, started in ax:** continues by id in a terminal (`claude --resume <id>`, checked with its history intact) or back in ax. It does not appear in the desktop app's sidebar, which lists only sessions the app started.
+  - **Claude, started in the desktop app:** the view shows it and its state. While the app has it open, ax only reads it, since driving it would split it into a copy. Once the app has closed it, ax may resume it by id; whether the app then shows ax's turns when reopened is still to check, on a session the user is willing to experiment on.
+- **Not in the first version:** the apps' diff, file, terminal and browser panes, plan mode, slash commands, image paste, and artifacts or previews. A diff view may come later.
+- **Security, to decide before building chat:** through the shared link, anyone holding it could instruct the user's agents. The proposal is that reading works everywhere and sending and approving work only on this Mac, unless the user turns remote sending on (`[chat] remote_send = true`) or each remote send asks a second confirmation.
+- **Build order, test-first, each stage usable alone:**
+  1. **Sessions view:** list and state from both tools, live transcripts, "waiting for you", from fakes of `claude agents` and of an app-server in tests.
+  2. **Codex chat:** a client for the app-server protocol (start, resume, turn, steer, interrupt, deltas), tested against a fake server.
+  3. **Claude chat:** a driver for the headless stream-json process (handshake, turns, partial messages, interrupt), tested against a fake process.
+  4. **Approvals and interrupts in the view,** for both tools, with the security choice above.
+  5. **Handover helpers:** "open in the Codex app", "continue in a terminal", and the check of desktop-app Claude sessions resumed in ax.
+
 ## Schedule
 
 ### Saturday, afternoon and evening
