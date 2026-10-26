@@ -121,7 +121,7 @@ export const areas: Area[] = [
     id: "usage",
     area: "Usage",
     title: "Both tools' allowance at a glance",
-    body: "Every window of Claude and Codex, Codex's credit balance, and what each weekly window leaves per day until it resets, at the top of every screen here. Scripts can call ax usage guard to stop before they run a tool dry.",
+    body: "Every window of Claude and Codex, Codex's credit balance, and what each weekly window leaves per day until it resets, behind the gauge in the bar here: hover it on a computer, tap it on a phone. Scripts can call ax usage guard to stop before they run a tool dry.",
     commands: ["ax usage"],
   },
   {

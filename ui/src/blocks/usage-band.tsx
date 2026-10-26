@@ -1,8 +1,8 @@
-import { Hourglass, TriangleAlert } from "lucide-react"
+import { Gauge, Hourglass, TriangleAlert } from "lucide-react"
 
 import type { Credits, UsageRow } from "@/lib/ax"
 import { ago } from "@/lib/time"
-import { EVEN_PER_DAY, usageFoot, usagePace, usageTone } from "@/lib/usage"
+import { EVEN_PER_DAY, usageFoot, usagePace, usageSummary, usageTone } from "@/lib/usage"
 import { cn } from "@/lib/utils"
 
 const PROVIDERS = [
@@ -14,8 +14,6 @@ const WINDOWS: Record<string, { label: string; hint: string; order: number }> = 
   weekly: { label: "Weekly", hint: "The 7-day window, all models", order: 1 },
   weekly_fable: { label: "Fable weekly", hint: "The 7-day window for Fable", order: 2 },
 }
-// On a phone every tool gets three columns, so the same window lines up across tools.
-const COLUMNS = ["md:grid-cols-1", "md:grid-cols-1", "md:grid-cols-2", "md:grid-cols-3"]
 const UNKNOWN: Record<string, string> = {
   unavailable: "not reported",
   stale: "stale reading",
@@ -119,48 +117,66 @@ function CreditCell({ credits }: { credits: Credits }) {
   )
 }
 
-/** Both tools' allowance, every window and Codex's credits, at the top of every screen. */
-export function UsageBand({ rows, credits }: { rows: UsageRow[]; credits: Credits[] }) {
+/** Both tools' allowance, every window and Codex's credits, one tool per row. */
+export function UsageDetails({ rows, credits }: { rows: UsageRow[]; credits: Credits[] }) {
   return (
-    <section
-      aria-label="Usage"
-      className="border-b bg-background/85 backdrop-blur-md md:sticky md:top-14 md:z-10"
-    >
-      <div className="mx-auto flex max-w-[1360px] flex-col gap-3 px-4 py-3 md:flex-row md:gap-8 md:px-6">
-        {PROVIDERS.map((provider) => {
-          const windows = rows
-            .filter((r) => r.provider === provider.id)
-            .sort((a, b) => (WINDOWS[a.window]?.order ?? 9) - (WINDOWS[b.window]?.order ?? 9))
-          const balance = credits.filter((c) => c.provider === provider.id)
-          const cells = windows.length + balance.length
-          return (
-            <div
-              key={provider.id}
-              className="flex min-w-0 gap-3"
-              style={{ flexGrow: Math.max(cells, 1), flexBasis: 0 }}
-            >
-              <div className="w-12 shrink-0 pt-px text-[13px] font-semibold">{provider.name}</div>
-              {cells ? (
-                <div
-                  className={cn(
-                    "grid min-w-0 flex-1 grid-cols-3 gap-4",
-                    COLUMNS[Math.min(cells, 3)]
-                  )}
-                >
-                  {windows.map((row) => (
-                    <Window key={row.window} row={row} />
-                  ))}
-                  {balance.map((c) => (
-                    <CreditCell key={`credits-${c.provider}`} credits={c} />
-                  ))}
-                </div>
-              ) : (
-                <div className="pt-px text-[12px] text-muted-foreground">not reported</div>
-              )}
-            </div>
-          )
-        })}
-      </div>
+    <section aria-label="Usage" className="flex flex-col gap-4">
+      {PROVIDERS.map((provider) => {
+        const windows = rows
+          .filter((r) => r.provider === provider.id)
+          .sort((a, b) => (WINDOWS[a.window]?.order ?? 9) - (WINDOWS[b.window]?.order ?? 9))
+        const balance = credits.filter((c) => c.provider === provider.id)
+        return (
+          <div key={provider.id} className="flex min-w-0 gap-3">
+            <div className="w-12 shrink-0 pt-px text-[13px] font-semibold">{provider.name}</div>
+            {windows.length + balance.length ? (
+              <div className="grid min-w-0 flex-1 grid-cols-3 gap-4">
+                {windows.map((row) => (
+                  <Window key={row.window} row={row} />
+                ))}
+                {balance.map((c) => (
+                  <CreditCell key={`credits-${c.provider}`} credits={c} />
+                ))}
+              </div>
+            ) : (
+              <div className="pt-px text-[12px] text-muted-foreground">not reported</div>
+            )}
+          </div>
+        )
+      })}
     </section>
+  )
+}
+
+const TONE = {
+  primary: "text-muted-foreground",
+  warning: "text-warning",
+  critical: "text-critical",
+}
+
+/**
+ * Usage in the bar, read at a glance: the most used window, coloured by the most urgent.
+ * The details open on hover or focus on a computer, and on their own page from a phone.
+ */
+export function UsageIndicator({ rows, credits }: { rows: UsageRow[]; credits: Credits[] }) {
+  const summary = usageSummary(rows)
+  return (
+    <div className="group relative">
+      <a
+        href="#/usage"
+        aria-label={`${summary.label}; all usage`}
+        className="flex h-8 items-center gap-1.5 rounded-lg px-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      >
+        <Gauge className={cn("size-[18px]", TONE[summary.tone])} aria-hidden />
+        {summary.used !== null && (
+          <span className="num hidden text-[13px] sm:inline">{Math.round(summary.used)}%</span>
+        )}
+      </a>
+      <div className="invisible absolute top-full right-0 z-30 pt-2 opacity-0 transition-opacity group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100 max-sm:hidden">
+        <div className="w-[min(680px,calc(100vw-2rem))] rounded-xl border bg-card p-4 shadow-lg">
+          <UsageDetails rows={rows} credits={credits} />
+        </div>
+      </div>
+    </div>
   )
 }

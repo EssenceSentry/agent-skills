@@ -118,8 +118,9 @@ command has `--help`; most take `--json` for agents.
 - `ax vault` (`init`, `commit`, `push`): the vault's views, a scanned commit, and a
   push only to a private GitHub repo.
 - `ax doctor`: archive health. `ax serve`: the ax app for the user (what waits,
-  usage and credits, jobs, conversations, a vault reader); `--share cloudflare
-  --notify` reaches their phone.
+  every live session with its transcript and the jobs it waits on, usage and credits,
+  jobs, conversations, a vault reader); `--share cloudflare --notify` reaches their
+  phone.
 - `ax app` (`start`, `stop`, `status`, `open`, `service`): the app served in the
   background at http://127.0.0.1:8765/, where the user can install it. Start it when
   the user wants the app; `service --apply` keeps it running from login, and with

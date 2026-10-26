@@ -3,7 +3,7 @@ import { CircleHelp } from "lucide-react"
 import { AppIcon } from "@/app-icon"
 import { AppBar } from "@/blocks/app-bar"
 import { StatusBadge } from "@/blocks/primitives"
-import { UsageBand } from "@/blocks/usage-band"
+import { UsageIndicator } from "@/blocks/usage-band"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { type LiveStatus, useNow, useTick } from "@/lib/ax"
 import { type Route, useRoute } from "@/lib/routes"
@@ -13,6 +13,9 @@ import { HelpScreen } from "@/screens/help"
 import { NowScreen } from "@/screens/now"
 import { ReaderScreen } from "@/screens/reader"
 import { SearchScreen } from "@/screens/search"
+import { SessionScreen } from "@/screens/session"
+import { SessionsScreen } from "@/screens/sessions"
+import { UsageScreen } from "@/screens/usage"
 
 const LIVE_BADGE: Record<
   LiveStatus,
@@ -31,7 +34,7 @@ function NavLink({ href, active, children }: { href: string; active: boolean; ch
       href={href}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "rounded-lg px-2.5 py-1 text-sm transition-colors",
+        "rounded-lg px-2 py-1 text-sm transition-colors sm:px-2.5",
         active
           ? "bg-primary-soft font-medium text-primary-ink"
           : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -48,6 +51,9 @@ const CRUMBS: Record<Route["screen"], string> = {
   notes: "Notes",
   read: "Notes",
   search: "Search",
+  sessions: "Sessions",
+  session: "Sessions",
+  usage: "Usage",
 }
 
 export default function App() {
@@ -68,6 +74,9 @@ export default function App() {
                 <NavLink href="#/" active={route.screen === "now"}>
                   Now
                 </NavLink>
+                <NavLink href="#/sessions" active={["sessions", "session"].includes(route.screen)}>
+                  Sessions
+                </NavLink>
                 <NavLink href="#/notes" active={["notes", "read", "search"].includes(route.screen)}>
                   Notes
                 </NavLink>
@@ -86,17 +95,22 @@ export default function App() {
                   <CircleHelp className="size-[18px]" />
                 </a>
               </nav>
+              {state && <UsageIndicator rows={state.usage} credits={state.credits ?? []} />}
               <span
                 className="hidden text-[11px] text-muted-foreground md:inline"
                 title="When ax last archived your conversations"
               >
                 synced {ago(state?.last_sync)}
               </span>
-              <StatusBadge status={badge.status} label={badge.label} />
+              {/* On a phone the bar has room only for a status that needs reading. */}
+              <StatusBadge
+                status={badge.status}
+                label={badge.label}
+                className={cn((status === "live" || status === "example") && "max-sm:hidden")}
+              />
             </>
           }
         />
-        {state && <UsageBand rows={state.usage} credits={state.credits ?? []} />}
         {route.screen === "help" ? (
           <HelpScreen />
         ) : state ? (
@@ -104,6 +118,12 @@ export default function App() {
             <NowScreen state={state} refresh={refresh} />
           ) : route.screen === "search" ? (
             <SearchScreen query={route.query} />
+          ) : route.screen === "usage" ? (
+            <UsageScreen state={state} />
+          ) : route.screen === "sessions" ? (
+            <SessionsScreen />
+          ) : route.screen === "session" ? (
+            <SessionScreen provider={route.provider} id={route.id} />
           ) : (
             <ReaderScreen route={route} />
           )

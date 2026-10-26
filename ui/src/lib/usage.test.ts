@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { usageFoot, usagePace, usageTone } from "@/lib/usage"
+import { usageFoot, usagePace, usageSummary, usageTone } from "@/lib/usage"
 
 const NOW = Date.parse("2026-10-25T18:00:00Z")
 const inHours = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString()
@@ -68,5 +68,39 @@ describe("usageTone", () => {
   it("turns any window red when nearly spent", () => {
     expect(usageTone(row("session", 96, 1), NOW)).toBe("critical")
     expect(usageTone(row("weekly_fable", 97, 30), NOW)).toBe("critical")
+  })
+})
+
+describe("usageSummary", () => {
+  const at = (provider: string, window: string, used: number | null, hours: number) => ({
+    provider,
+    window,
+    used,
+    resets_at: inHours(hours),
+  })
+
+  it("names the most used window and takes the most urgent colour of all", () => {
+    const summary = usageSummary(
+      [
+        at("claude", "session", 44, 2),
+        at("claude", "weekly", 83, 30), // tight: 17% left for over a day... and more
+        at("codex", "weekly", 12, 140),
+      ],
+      NOW
+    )
+    expect(summary).toEqual({ used: 83, label: "Claude weekly 83% used", tone: "warning" })
+  })
+
+  it("says nothing it doesn't know", () => {
+    expect(usageSummary([at("codex", "weekly", null, 10)], NOW)).toEqual({
+      used: null,
+      label: "Usage not reported",
+      tone: "primary",
+    })
+    expect(usageSummary([], NOW).used).toBeNull()
+  })
+
+  it("turns red when a window is nearly spent", () => {
+    expect(usageSummary([at("claude", "session", 97, 1)], NOW).tone).toBe("critical")
   })
 })

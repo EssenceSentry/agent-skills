@@ -6,6 +6,9 @@ export type Route =
   | { screen: "notes"; dir: string }
   | { screen: "read"; path: string }
   | { screen: "search"; query: string }
+  | { screen: "sessions" }
+  | { screen: "usage" }
+  | { screen: "session"; provider: "claude" | "codex"; id: string }
 
 function decode(part: string): string {
   try {
@@ -36,6 +39,11 @@ export function parseRoute(hash: string): Route {
   }
   if (h.startsWith("/read/")) return { screen: "read", path: decode(h.slice("/read/".length)) }
   if (h === "/help") return { screen: "help" }
+  if (h === "/sessions") return { screen: "sessions" }
+  if (h === "/usage") return { screen: "usage" }
+  const opened = h.match(/^\/sessions\/(claude|codex)\/(.+)$/)
+  if (opened)
+    return { screen: "session", provider: opened[1] as "claude" | "codex", id: decode(opened[2]) }
   if (h === "/search" || h.startsWith("/search?")) {
     return {
       screen: "search",
@@ -48,6 +56,8 @@ export function parseRoute(hash: string): Route {
 export const readHref = (path: string) => `#/read/${encodePath(path)}`
 export const folderHref = (dir: string) => (dir ? `#/notes/${encodePath(dir)}` : "#/notes")
 export const searchHref = (query: string) => `#/search?q=${encodeURIComponent(query)}`
+export const sessionHref = (provider: string, id: string) =>
+  `#/sessions/${provider}/${encodeURIComponent(id)}`
 
 export function useRoute(): Route {
   const [route, setRoute] = useState(() => parseRoute(window.location.hash))

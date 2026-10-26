@@ -13,6 +13,7 @@ describe("routes", () => {
       path: "Sessions/2026/10/Other note.md",
     })
     expect(parseRoute("#/help")).toEqual({ screen: "help" })
+    expect(parseRoute("#/usage")).toEqual({ screen: "usage" })
     expect(parseRoute("#/elsewhere")).toEqual({ screen: "now" })
   })
 

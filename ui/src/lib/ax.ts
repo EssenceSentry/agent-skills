@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useState } from "react"
 
-import { exampleFind, exampleFolder, exampleNote, exampleNow } from "@/lib/example"
+import {
+  exampleFind,
+  exampleFolder,
+  exampleNote,
+  exampleNow,
+  exampleSession,
+  exampleSessions,
+} from "@/lib/example"
 import type { Hit } from "@/lib/search"
+import { mergePage, type Sessions, type SessionView } from "@/lib/sessions"
 
 export type UsageRow = {
   provider: string
@@ -265,4 +273,60 @@ export function useTick(ms = 30_000) {
     const timer = setInterval(() => setTick((t) => t + 1), ms)
     return () => clearInterval(timer)
   }, [ms])
+}
+
+/** Every live session of both tools, read again every few seconds while on screen. */
+export function useSessions(every = 5_000) {
+  const [found, setFound] = useState<{ data?: Sessions; error?: string }>(
+    LIVE ? {} : { data: exampleSessions() }
+  )
+  useEffect(() => {
+    if (!LIVE) return
+    let current = true
+    const load = () =>
+      getJson<Sessions>("/api/sessions").then(
+        (data) => current && setFound({ data }),
+        (error: Error) => current && setFound((was) => ({ ...was, error: error.message }))
+      )
+    load()
+    const timer = setInterval(load, every)
+    return () => {
+      current = false
+      clearInterval(timer)
+    }
+  }, [every])
+  return found
+}
+
+/**
+ * One session: its state and job cards, and its transcript, to which each reading adds
+ * what happened since the last one.
+ */
+export function useSession(provider: string, id: string, every = 3_000) {
+  const [found, setFound] = useState<{ data?: SessionView; error?: string }>(() =>
+    LIVE ? {} : { data: exampleSession(provider, id) }
+  )
+  useEffect(() => {
+    if (!LIVE) return
+    let current = true
+    let shown: SessionView | undefined
+    setFound({})
+    const base = `/api/session?provider=${encodeURIComponent(provider)}&id=${encodeURIComponent(id)}`
+    const load = () =>
+      getJson<SessionView>(`${base}&after=${shown?.next ?? 0}`).then(
+        (page) => {
+          if (!current) return
+          shown = shown ? { ...page, ...mergePage(shown, page) } : page
+          setFound({ data: shown })
+        },
+        (error: Error) => current && setFound((was) => ({ ...was, error: error.message }))
+      )
+    load()
+    const timer = setInterval(load, every)
+    return () => {
+      current = false
+      clearInterval(timer)
+    }
+  }, [provider, id, every])
+  return found
 }

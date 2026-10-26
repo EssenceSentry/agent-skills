@@ -28,6 +28,10 @@ const routes = [
   },
   { name: "help", hash: "#/help" },
   { name: "search", hash: "#/search?q=reserve%20then%20settle" },
+  { name: "sessions", hash: "#/sessions" },
+  { name: "session", hash: "#/sessions/claude/7f3c2a10-release" },
+  { name: "working", hash: "#/sessions/claude/0b8e6f55-fetch" },
+  { name: "usage", hash: "#/usage" },
 ]
 for (const colorScheme of ["light", "dark"]) {
   for (const viewport of viewports)

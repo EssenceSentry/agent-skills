@@ -60,3 +60,35 @@ export function usageTone(
   if (pace === "tight" || (pace === "spare" && SPARE_WARNS.has(row.window))) return "warning"
   return pace === null && used >= 80 ? "warning" : "primary"
 }
+
+const TOOL: Record<string, string> = { claude: "Claude", codex: "Codex" }
+const WINDOW: Record<string, string> = {
+  session: "session",
+  weekly: "weekly",
+  weekly_fable: "Fable weekly",
+}
+const URGENCY = { primary: 0, warning: 1, critical: 2 } as const
+
+/**
+ * The bar's whole reading of usage: the most used window, and the most urgent colour any
+ * window takes, so the details can wait behind it.
+ */
+export function usageSummary(
+  rows: { provider: string; window: string; used: number | null; resets_at: string | null }[],
+  now = Date.now()
+): { used: number | null; label: string; tone: "primary" | "warning" | "critical" } {
+  const known = rows.filter((r) => r.used !== null)
+  const top = known.reduce<(typeof known)[number] | null>(
+    (best, r) => (best === null || (r.used ?? 0) > (best.used ?? 0) ? r : best),
+    null
+  )
+  const tone = known
+    .map((r) => usageTone(r, now))
+    .reduce<"primary" | "warning" | "critical">(
+      (worst, t) => (URGENCY[t] > URGENCY[worst] ? t : worst),
+      "primary"
+    )
+  if (!top || top.used === null) return { used: null, label: "Usage not reported", tone }
+  const name = `${TOOL[top.provider] ?? top.provider} ${WINDOW[top.window] ?? top.window}`
+  return { used: top.used, label: `${name} ${Math.round(top.used)}% used`, tone }
+}

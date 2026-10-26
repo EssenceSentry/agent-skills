@@ -1,6 +1,7 @@
 // Example state, shown when no ax is behind the page (`npm run dev`, `npm run check`).
 // The status in the bar says "Example data" whenever these are on screen.
 import type { Folder, Found, Note, NowState } from "@/lib/ax"
+import type { Card, Session, Sessions, SessionView, TranscriptEvent } from "@/lib/sessions"
 
 const MINUTE = 60_000
 const at = (minutes: number) => new Date(Date.now() + minutes * MINUTE).toISOString()
@@ -550,5 +551,175 @@ export function exampleFind(query: string): Found {
           'def reserve(data, name, amount, *, note=None):\n    """Hold an amount before spending it; returns the ticket."""',
       },
     ],
+  }
+}
+
+const SESSIONS: Session[] = [
+  {
+    provider: "claude",
+    id: "7f3c2a10-release",
+    name: "Release the scoring image",
+    cwd: "/Users/me/Repos/demo",
+    project: "demo",
+    state: "idle",
+    waiting_for: null,
+    kind: "interactive",
+    started: at(-95),
+    updated: at(-12),
+    last: "The release notebook is running under ax; I'll pick up when it finishes.",
+    jobs: 2,
+  },
+  {
+    provider: "claude",
+    id: "c41d9e02-pricing",
+    name: "Pricing study",
+    cwd: "/Users/me/Repos/demo",
+    project: "demo",
+    state: "waiting",
+    waiting_for: "input needed",
+    kind: "background",
+    started: at(-240),
+    updated: at(-31),
+    last: "Should I raise the annotation cap from $5 to $8 for the second pass?",
+    jobs: 0,
+  },
+  {
+    provider: "claude",
+    id: "0b8e6f55-fetch",
+    name: "Retry for the fetch helper",
+    cwd: "/Users/me/Repos/agent-skills",
+    project: "agent-skills",
+    state: "working",
+    waiting_for: null,
+    kind: "interactive",
+    started: at(-20),
+    updated: at(0),
+    last: "Running the tests after the retry change.",
+    jobs: 0,
+  },
+  {
+    provider: "codex",
+    id: "01a17c3e-card",
+    name: "Review the model card",
+    cwd: "/Users/me/Repos/demo",
+    project: "demo",
+    state: "waiting",
+    waiting_for: "approval",
+    kind: "app",
+    started: at(-60),
+    updated: at(-3),
+    last: "I'd like to run the card's link checker; it needs network access.",
+    jobs: 0,
+  },
+  {
+    provider: "codex",
+    id: "01a16b2d-audit",
+    name: "Summarise the ranked audit",
+    cwd: "/Users/me/Repos/demo",
+    project: "demo",
+    state: "idle",
+    waiting_for: null,
+    kind: "vscode",
+    started: at(-400),
+    updated: at(-180),
+    last: "The audit summary is in reports/audit.md.",
+    jobs: 0,
+  },
+]
+
+export function exampleSessions(): Sessions {
+  return { sessions: SESSIONS, errors: [] }
+}
+
+const EVENTS: TranscriptEvent[] = [
+  ["user", "Release v2.0: rebuild the image, run the one-instance test, and register the stage."],
+  [
+    "assistant",
+    "I'll run the release notebook under Runwatch, registered with ax, so its pauses wake me.",
+  ],
+  [
+    "assistant",
+    "It started cleanly and is on the build cells now.\n\n- **Next:** when it ends, I record the image digest in `model_card.yaml`.\n- **If it pauses:** ax wakes me with the cell and its error.",
+  ],
+  ["user", "Thanks. Ping me if the test instance fails."],
+  ["assistant", "The release notebook is running under ax; I'll pick up when it finishes."],
+].map(([kind, text], i) => ({
+  i: i * 3,
+  kind: kind as string,
+  text: text as string,
+  tool: null,
+  ok: null,
+  output: "",
+  ts: at(-40 + i * 6),
+}))
+
+const RUNNING: TranscriptEvent = {
+  i: 15,
+  kind: "tool",
+  text: "ran `uv run pytest -q tests/test_fetch.py`",
+  tool: "Bash",
+  ok: null,
+  output: "",
+  ts: at(0),
+}
+
+const CARDS: Card[] = [
+  {
+    key: "release-v2",
+    label: "Release notebook: build and push v2.0, one-instance test, register the stage",
+    kind: "run",
+    status: "running",
+    stage: "cell 61",
+    message: "Notebook is running",
+    progress: { done: 3, total: 8, unit: "layers", percent: 38, text: "3/8 layers (38%)" },
+    eta: "~9 min left (5–16 min)",
+    look: {
+      summary: "Pushing the image: three of eight layers are up, the rest waiting; no errors.",
+      at: at(-2),
+    },
+    notebook: {
+      cell: { index: 61, label: "SageMaker release image" },
+      cells: { done: 32, total: 37 },
+      resources: [
+        {
+          label: "demo-scoring-test-1793",
+          kind: "sagemaker processing_job",
+          status: "InProgress",
+        },
+      ],
+    },
+    attention: null,
+    page: "/jobs/release-v2/",
+    updated: at(-1),
+  },
+  {
+    key: "score-audit",
+    label: "Score the audit sample; then compare with last week",
+    kind: "run",
+    status: "running",
+    stage: "scoring",
+    message: null,
+    progress: { done: 450, total: 1000, unit: "rows", percent: 45, text: "450/1000 rows (45%)" },
+    eta: "~6 min left",
+    look: null,
+    notebook: null,
+    attention: null,
+    page: "/jobs/score-audit/",
+    updated: at(-1),
+  },
+]
+
+export function exampleSession(provider: string, id: string): SessionView {
+  const session =
+    SESSIONS.find((s) => s.provider === provider && s.id === id) ?? (SESSIONS[0] as Session)
+  const mine = session.id === SESSIONS[0]?.id
+  return {
+    session,
+    events: EVENTS,
+    next: 16,
+    first: 0,
+    running: session.state === "working" ? [RUNNING] : [],
+    earlier: 0,
+    cards: mine ? CARDS : [],
   }
 }
