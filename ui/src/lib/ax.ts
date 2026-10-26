@@ -65,8 +65,8 @@ export type Job = {
   page?: string
   /** Seconds between Haiku's looks at the log, when it looks. */
   check_every?: number | null
-  /** What Haiku saw last: where the job is, and what looks wrong, if anything. */
-  look?: { at: string; summary: string; problem: string | null } | null
+  /** What Haiku saw last: where the job is, what looks wrong, and whether it fell behind. */
+  look?: { at: string; summary: string; problem: string | null; slow?: string | null } | null
 }
 
 export type BudgetEntry = {

@@ -135,7 +135,7 @@ def job_state(config, key: str, *, show_log: bool = False) -> dict | None:
         "events": recent,
         "looks": [
             {"at": e["ts"], "summary": e["data"].get("summary") or "",
-             "problem": e["data"].get("problem")}
+             "problem": e["data"].get("problem"), "slow": e["data"].get("slow")}
             for e in reversed(jobs.events(config, key, limit=200, latest=True))
             if e["type"] == "look"
         ][:12],

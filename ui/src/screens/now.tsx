@@ -6,6 +6,7 @@ import {
   FileText,
   FileWarning,
   Gauge,
+  Hourglass,
   Lightbulb,
   ListTodo,
   Loader2,
@@ -686,10 +687,17 @@ function JobRow({ job }: { job: Job }) {
           {job.look?.summary && (
             <p className="text-[13px] leading-snug text-ink-2">{job.look.summary}</p>
           )}
-          {job.look?.problem && (
+          {job.look?.problem ? (
             <div className="flex items-start gap-1.5 text-xs">
               <TriangleAlert className="mt-px size-3.5 shrink-0 text-warning" /> {job.look.problem}
             </div>
+          ) : (
+            job.look?.slow && (
+              <div className="flex items-start gap-1.5 text-xs">
+                <Hourglass className="mt-px size-3.5 shrink-0 text-warning" /> Behind its expected
+                pace: {job.look.slow}
+              </div>
+            )
           )}
         </div>
       )}

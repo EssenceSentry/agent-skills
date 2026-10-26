@@ -151,10 +151,11 @@ function render(data) {
       const summary = document.createElement("span");
       summary.textContent = look.summary || "(no summary)";
       what.append(summary);
-      if (look.problem) {
+      const warning = look.problem || (look.slow && `Behind its expected pace: ${look.slow}`);
+      if (warning) {
         const problem = document.createElement("p");
         problem.className = "warning";
-        problem.textContent = look.problem;
+        problem.textContent = warning;
         what.append(problem);
       }
       item.append(when, what);
