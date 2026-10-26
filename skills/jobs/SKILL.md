@@ -37,9 +37,14 @@ share a key stem (`score-…`) teach the estimator their usual duration.
 **Say how long you expect it to take** with `--expect` (`--expect 25m`) on `run`,
 `watch` or `new`; a rough guess is fine. A job expected to take over 10 minutes gets a
 Haiku look every 5 minutes asking two questions: is it working, and is it working at
-the pace it was expected to take? When it is, Haiku leaves a one-sentence summary
-(`ax job show KEY`, the dashboard and the app show the latest). When it isn't, the
-problem is recorded and `ax job wait` ends with exit 5, which wakes you.
+the pace it was expected to take? Each look leaves a one-sentence summary (`ax job show
+KEY`, the dashboard and the app show the latest). When the job isn't working, the
+problem is recorded and `ax job wait` ends with exit 5, which wakes you. Being behind
+is not a problem by itself, since your estimate was a guess: you are warned once, with
+exit 6, only when the log shows something holding it back (rate limits, a growing
+backoff, items getting several times slower) or the job runs more than 20% past what
+you expected. ax never stops a job: on 5 or 6 it is still running, and the message
+says how to keep waiting or stop it yourself.
 
 **Always describe the job** with `--label`: what it does and what you will do next
 when it succeeds or fails ("Extract candidate text and embeddings; then build the
@@ -79,9 +84,10 @@ user gets a push.
 
 `ax job wait` exit codes: 0 done, 1 failed, 2 stopped or ended, 3 stalled (with
 `--until stalled`), 4 the source check kept failing (credentials, a wrong name),
-5 Haiku saw a problem (not working, or well behind its expected pace), 124 timed out,
-69 no such job. On 1, 4 or 5, read `ax job show KEY` before acting; on 5 the job is
-still running, so fix or stop it rather than waiting again.
+5 Haiku sees it not working, 6 Haiku sees it well behind its expected pace, 124 timed
+out, 69 no such job. On 1, 4, 5 or 6, read `ax job show KEY` before acting. On 5 and 6
+the job is still running and ax leaves it so: decide whether to wait again (`ax job
+wait KEY`; a pace warning comes once) or stop it yourself, as the message says.
 
 ## Report
 

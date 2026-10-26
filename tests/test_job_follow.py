@@ -277,8 +277,8 @@ def test_the_health_check_wakes_the_agent_once_per_problem(env):
                 checker=lambda job: Look("Scoring rows.", next(problems, None)),
                 alerter=alerts.append, waker=lambda job, note=None: woken.append(note))  # fmt: skip
     looks_wrong = [n for n in woken if n]
-    assert len(looks_wrong) == 2 and "every row errors" in looks_wrong[0]
-    assert "disk is full" in looks_wrong[1] and len(alerts) == 2
+    assert len(looks_wrong) == 2 and "row errors with KeyError" in looks_wrong[0]
+    assert "Disk is full" in looks_wrong[1] and len(alerts) == 2
     assert [e["type"] for e in jobs.events(env.config, "score")].count("problem") == 2
 
 
@@ -351,3 +351,18 @@ def test_follow_takes_intervals_with_units(env, monkeypatch):
     assert result.exit_code == 0, result.output
     [options] = seen
     assert (options.check_every, options.every, options.stall_after) == (45, 7200, 86400)
+
+
+def test_a_job_behind_its_pace_is_warned_about_once_and_left_running(env):
+    from ax.job_triage import Look
+
+    jobs.new(env.config, "score", env={"CODEX_THREAD_ID": "th-1"})
+    woken, alerts = [], []
+    follow_with(env, {9: [{"status": "done"}]}, check_every=120,
+                checker=lambda job: Look("Batch 3 of 40.", None, "429 rate limits; 4x behind"),
+                alerter=alerts.append, waker=lambda job, note=None: woken.append(note))  # fmt: skip
+    warned = [n for n in woken if n]
+    assert len(warned) == 1 and "score is still running" in warned[0]
+    assert "429 rate limits" in warned[0] and "ax job wait score" in warned[0]
+    assert [e["type"] for e in jobs.events(env.config, "score")].count("slow") == 1
+    assert alerts == []  # the agent decides; ax neither stops the job nor pages the user

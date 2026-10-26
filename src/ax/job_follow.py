@@ -256,8 +256,9 @@ def follow(
             jobs.record_event(config, key, "diagnosis", {"text": text})
 
     def check(job, state: dict) -> None:
-        """Ask the model where a running job is and whether it looks wrong. Every look is
-        kept, healthy or not; the agent is woken once per problem."""
+        """Ask the model where a running job is, whether it works and whether it keeps its
+        expected pace. Every look is kept. The agent is woken once per problem, and warned
+        once per job when it falls behind; ax never stops the job, the agent decides."""
         try:
             look = checker(job)
         except Exception as exc:
@@ -265,12 +266,17 @@ def follow(
             return
         problem = look.problem
         jobs.record_event(config, key, "look", {"summary": look.summary, "problem": problem,
+                                                "slow": look.slow,
                                                 "every": options.check_every})  # fmt: skip
         if problem and problem != state.get("problem"):
             jobs.record_event(config, key, "problem", {"text": problem})
-            wake(job, problem)
+            wake(job, jobs.still_running(job, problem))
             alert(f"{key}: looks wrong", problem)
         state["problem"] = problem
+        if look.slow and not state.get("slow") and not jobs.latest_event(config, key, "slow"):
+            jobs.record_event(config, key, "slow", {"text": look.slow})
+            wake(job, jobs.still_running(job, f"behind its expected pace: {look.slow}"))
+            state["slow"] = True
 
     stopping = threading.Event()
     previous = None

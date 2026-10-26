@@ -32,7 +32,7 @@ TERMINAL = frozenset({"done", "failed", "stopped", "ended"})
 # `ax job wait` exit codes; 69 (no such job) matches `ax usage guard`'s "unknown".
 WAIT_CODES = {
     "done": 0, "failed": 1, "stopped": 2, "ended": 2, "stalled": 3, "check_error": 4,
-    "problem": 5, "timeout": 124,
+    "problem": 5, "slow": 6, "timeout": 124,
 }  # fmt: skip
 SOURCE_KINDS = ("file", "pid", "sagemaker", "seamless", "runwatch", "tools")
 # Kinds ax checks itself: the watchable sources plus `ax job run`, whose runner is a process.
@@ -633,12 +633,22 @@ def looks_every(expected_seconds: float | None) -> float | None:
     return LOOK_EVERY if expected_seconds and expected_seconds > WATCH_OVER else None
 
 
-def latest_problem(config, key: str) -> dict | None:
-    """The last problem a model saw in the job: when, and what."""
+def latest_event(config, key: str, type_: str) -> dict | None:
+    """The job's last event of this type: when, and its data."""
     for e in reversed(events(config, key, limit=200, latest=True)):
-        if e["type"] == "problem":
+        if e["type"] == type_:
             return {"at": e["ts"], **e["data"]}
     return None
+
+
+def still_running(job, what: str) -> str:
+    """A warning that leaves the job alone: what was seen, that the job is still running,
+    and how the agent can keep waiting or stop it itself. ax never stops a job."""
+    pid = job.spec.get("pid") if job.kind in ("run", "pid") else None
+    stop = f"stop it yourself with `kill {pid}`" if pid else "stop it yourself where it runs"
+    what = what.strip().rstrip(".")
+    return (f"{what[:1].upper()}{what[1:]}. {job.key} is still running and has not been "
+            f"stopped: keep waiting with `ax job wait {job.key}`, or {stop}.")  # fmt: skip
 
 
 def latest_look(config, key: str) -> dict | None:
@@ -686,12 +696,13 @@ def wait(
     since nothing else can happen to it. "stalled" in `until` turns on stall
     detection after 30 minutes unless `stall_after` says otherwise. A source check
     that keeps failing for `error_after` seconds, such as a mistyped SageMaker name
-    or expired credentials, ends the wait too, since waiting can't fix it. So does a
-    problem a model sees in the job while it runs (with `problems`), so the waiting
-    agent is woken to deal with it instead of waiting on a job that is not working.
+    or expired credentials, ends the wait too, since waiting can't fix it. With
+    `problems`, so does what a model sees while the job runs: a problem (it is not
+    working) or a first fall behind its expected pace. The job keeps running either
+    way; the woken agent decides whether to wait again or stop it.
 
     Returns (outcome, job), where outcome is a status, "stalled", "check_error",
-    "problem" or "timeout". Raises KeyError for an unknown job.
+    "problem", "slow" or "timeout". Raises KeyError for an unknown job.
     """
     until = set(until or TERMINAL)
     if "stalled" in until and stall_after is None:
@@ -704,9 +715,10 @@ def wait(
             raise KeyError(key)
         if job.status in until or job.terminal:
             return job.status, job
-        seen = latest_problem(config, key) if problems else None
-        if seen and parse_iso(seen["at"]).timestamp() >= start:
-            return "problem", job
+        for kind in ("problem", "slow") if problems else ():
+            seen = latest_event(config, key, kind)
+            if seen and parse_iso(seen["at"]).timestamp() >= start:
+                return kind, job
         if (
             stall_after is not None
             and job.status == "running"

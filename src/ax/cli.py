@@ -1504,7 +1504,8 @@ _EXPECT = typer.Option(
     None,
     "--expect",
     help="How long you expect the job to take (25m, 2h). Over 10 minutes, Haiku looks every "
-    "5 minutes at whether it is working at that pace; `ax job wait` ends if not.",
+    "5 minutes at whether it is working at that pace; `ax job wait` ends, leaving the job "
+    "running, if it is not working, or once if it falls well behind.",
 )
 _WAKE = typer.Option(
     None,
@@ -1775,8 +1776,8 @@ def job_wait(
     """Block until the job ends; spends no tokens while waiting.
 
     Exit codes: 0 done, 1 failed, 2 stopped or ended, 3 stalled, 4 its check kept failing,
-    5 Haiku saw a problem (not working, or well behind its expected pace), 124 timed out,
-    69 no such job.
+    5 Haiku sees it not working, 6 Haiku sees it well behind its expected pace (both leave
+    the job running), 124 timed out, 69 no such job.
     """
     wanted = {part.strip() for part in until.split(",") if part.strip()}
     unknown = wanted - set(jobs_module.STATUSES) - {"stalled"}
@@ -1801,9 +1802,11 @@ def job_wait(
         note = f" · {job.message}" if job.message else ""
         if outcome == "check_error":
             note = f" · {job.check_error}"
-        if outcome == "problem":
-            seen = jobs_module.latest_problem(_jobs_config(), job.key) or {}
-            note = f" · {seen.get('text', '')}"
+        if outcome in ("problem", "slow"):
+            seen = jobs_module.latest_event(_jobs_config(), job.key, outcome) or {}
+            what = seen.get("text", "")
+            what = f"behind its expected pace: {what}" if outcome == "slow" else what
+            note = f"\n{jobs_module.still_running(job, what)}"
         typer.echo(f"{job.key}: {outcome} · {_progress(job)}{note}")
     raise typer.Exit(jobs_module.WAIT_CODES.get(outcome, 1))
 
@@ -2018,11 +2021,13 @@ def job_check_cmd(
         from ax import job_triage
 
         look = job_triage.check(config, job)
-        jobs_module.record_event(config, key, "look",
-                                 {"summary": look.summary, "problem": look.problem, "every": None})  # fmt: skip
+        jobs_module.record_event(config, key, "look", {"summary": look.summary,
+                                 "problem": look.problem, "slow": look.slow, "every": None})  # fmt: skip
         typer.echo(look.summary or "(no summary)")
         if look.problem:
             typer.echo(f"problem: {look.problem}")
+        elif look.slow:
+            typer.echo(f"slow: {look.slow}")
     if seconds is None and not now:
         typer.echo(_haiku_line(config, key) or f"Haiku doesn't look at {key}")
 
@@ -2041,6 +2046,8 @@ def _haiku_line(config, key: str) -> str:
         lines.append(f"{'':<12} {look['summary']}")
     if look and look.get("problem"):
         lines.append(f"{'':<12} problem: {look['problem']}")
+    elif look and look.get("slow"):
+        lines.append(f"{'':<12} slow: {look['slow']}")
     return "\n".join(lines)
 
 

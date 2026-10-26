@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -313,3 +314,25 @@ def test_only_jobs_expected_to_run_long_get_model_looks(env):
     assert jobs.expected(env.config, "score") == 1500
     assert jobs.looks_every(1500) == 300
     assert jobs.looks_every(600) is None and jobs.looks_every(None) is None
+
+
+def test_wait_ends_when_a_model_sees_the_job_fall_behind_and_leaves_it_running(env):
+    jobs.new(env.config, "score")
+    clock = FakeClock()
+
+    def sleep(seconds):
+        clock.sleep(seconds)
+        jobs.record_event(env.config, "score", "slow", {"text": "429 rate limits"})
+
+    outcome, job = jobs.wait(env.config, "score", interval=5, sleep=sleep)
+    assert outcome == "slow" and job.status == "running"
+    assert jobs.WAIT_CODES["slow"] == 6
+
+
+def test_a_warning_says_the_job_still_runs_and_how_to_stop_it(env):
+    jobs.new(env.config, "score")
+    note = jobs.still_running(jobs.get(env.config, "score"), "every row errors")
+    assert note.startswith("Every row errors. score is still running and has not been stopped")
+    assert "ax job wait score" in note and "where it runs" in note
+    run = replace(jobs.get(env.config, "score"), kind="run", spec={"pid": 4242})
+    assert "stop it yourself with `kill 4242`" in jobs.still_running(run, "behind")
