@@ -744,7 +744,7 @@ def _runwatch_updates(job: Job, rw: dict) -> list[Update]:
     return [*updates, update]
 
 
-def _label(label) -> str:
+def section_label(label) -> str:
     """A cell's section heading as people read it: "# Train" -> "Train"."""
     return str(label or "").strip().lstrip("#").strip()
 
@@ -752,7 +752,7 @@ def _label(label) -> str:
 def _named(cell: dict | None, index=None) -> str:
     index = cell.get("cell_index", index) if cell else index
     where = f"cell {index}" if index is not None else "a cell"
-    label = _label(cell.get("label")) if cell else ""
+    label = section_label(cell.get("label")) if cell else ""
     return f"{where} ({label})" if label else where
 
 
@@ -911,15 +911,17 @@ def _resolve_checkpoint(ask: str, cells: list[dict]) -> dict | None:
         return {"ids": [found[0]["cell_id"]], "section": False} if found else None
     if any(c.get("cell_id") == ask for c in cells):
         return {"ids": [ask], "section": False}
-    wanted = _label(ask).casefold()
-    ids = [c["cell_id"] for c in cells if wanted and _label(c.get("label")).casefold() == wanted]
+    wanted = section_label(ask).casefold()
+    ids = [
+        c["cell_id"] for c in cells if wanted and section_label(c.get("label")).casefold() == wanted
+    ]
     return {"ids": ids, "section": True} if ids else None
 
 
 def _checkpoint_name(resolved: dict, mine: list[dict]) -> str:
     last = max(mine, key=lambda c: c.get("cell_index", 0))
     if resolved["section"]:
-        return f"the end of section {_label(last.get('label'))}"
+        return f"the end of section {section_label(last.get('label'))}"
     return _named(last)
 
 
@@ -944,7 +946,9 @@ def checkpoint_names(rw: dict, asked: list[str]) -> list[str]:
 
 
 def _cell_help(cells: list[dict]) -> str:
-    sections = list(dict.fromkeys(_label(c.get("label")) for c in cells if _label(c.get("label"))))
+    sections = list(
+        dict.fromkeys(section_label(c.get("label")) for c in cells if section_label(c.get("label")))
+    )
     last = max((c.get("cell_index", 0) for c in cells), default=0)
     return (f"Give a cell number from 0 to {last} (as `runwatch context --json` counts them), "
             f"a cell id, or a section: {'; '.join(sections) or 'none'}.")  # fmt: skip
@@ -993,7 +997,7 @@ def _checkpoints(job: Job, rw: dict, context: dict | None, asked: list[str]) -> 
         name = _checkpoint_name(resolved, mine)
         events.append(("checkpoint", {
             "text": f"reached {name}", "cell": last.get("cell_index"),
-            "label": _label(last.get("label")), "source": "runwatch",
+            "label": section_label(last.get("label")), "source": "runwatch",
             "details": _checkpoint_details(job, rw, last),
         }))  # fmt: skip
     return [Update(events=events)] if events else []

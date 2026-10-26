@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from ax import exp, find, job_eta, job_follow, jobs, runs, scorecard, usage
+from ax import exp, find, job_eta, job_follow, jobs, live_sessions, runs, scorecard, usage
 from ax.config import Config
 from ax.config import load as load_config
 from ax.store import Store
@@ -245,6 +245,14 @@ def make_server(
                 "/api/note": lambda: app.note(config, (query.get("path") or [""])[0]),
             }
             try:
+                if parts.path == "/api/sessions":
+                    return self._json(200, live_sessions.cached_listing(config))
+                if parts.path == "/api/session":
+                    provider = (query.get("provider") or [""])[0]
+                    sid = (query.get("id") or [""])[0]
+                    after = int((query.get("after") or ["0"])[0] or 0)
+                    return self._json(200, live_sessions.session_view(config, provider, sid,
+                                                                      after=after))  # fmt: skip
                 if parts.path == "/api/find":
                     return self._json(200, app.search(config, (query.get("q") or [""])[0]))
                 if parts.path == "/api/file":
@@ -252,7 +260,7 @@ def make_server(
                     return self._send(200, body, kind, _APP_HEADERS)
                 if parts.path in reads:
                     return self._json(200, reads[parts.path]())
-            except app.NotFound as exc:
+            except (app.NotFound, live_sessions.NotFound) as exc:
                 return self._json(404, {"error": str(exc)})
             except ValueError as exc:
                 return self._json(400, {"error": str(exc)})
