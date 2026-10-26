@@ -478,7 +478,13 @@ def stop_check(payload: dict) -> str | None:
     )
 
 
-_AX_JOB = re.compile(r"^\s*(?:\S+=\S*\s+)*(?:\S*/)?ax\s+job\b")
+# `ax job …`, after any `cd DIR &&` (or `;`), VAR=value settings and `uv run [flags]`.
+_AX_JOB = re.compile(
+    r"^\s*(?:cd\s+\S+\s*(?:&&|;)\s*)*"
+    r"(?:\S+=\S*\s+)*"
+    r"(?:uv\s+run(?:\s+--?[\w-]+(?:=\S+|\s+(?!ax\s)[^\s-]\S*)?)*\s+)?"
+    r"(?:\S*/)?ax\s+job\b"
+)
 
 BACKGROUND = (
     "Pause: background work goes through ax, so it stays visible and wakes you when it "

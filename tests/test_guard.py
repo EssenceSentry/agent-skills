@@ -398,6 +398,13 @@ def test_a_probe_records_who_is_calling_while_its_marker_exists(env):
         ("ax job wait score", False),
         ("/Users/me/.local/bin/ax job run --key k --expect 20m -- python score.py", False),
         ('AX_INTENT="dev server" npm run dev', False),
+        ("uv run ax job wait score --timeout 120", False),
+        ("uv run --project ~/Repos/agent-skills ax job wait score", False),
+        ("cd ~/Repos/agent-skills && uv run ax job wait score", False),
+        ('cd "/Users/me/My Repo"; ax job wait score', False),
+        ("uv run python score.py", True),
+        ("cd ~/Repos/app && npm run build", True),
+        ("uv run --with ax python -m ax", True),
     ],
 )
 def test_background_commands_go_through_ax_jobs(env, command, paused):
