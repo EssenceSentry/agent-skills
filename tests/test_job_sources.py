@@ -194,13 +194,13 @@ def test_expired_credentials_keep_the_last_status(env, aws):
 
 
 def test_an_unknown_sagemaker_job_is_a_check_error(env, aws):
-    aws(
-        describe_processing_job=job_sources.AwsError(
-            "ValidationException: Could not find requested job"
-        )
-    )
+    missing = job_sources.AwsError("ValidationException: Could not find requested job")
+    aws(describe_processing_job=missing, describe_training_job=missing,
+        describe_transform_job=missing)  # fmt: skip
     job = jobs.watch(env.config, "sagemaker", "nope-1")
-    assert job.status == "running" and "no processing job" in job.check_error
+    assert job.status == "running" and "no processing, training or transform job" in job.check_error
+    job = jobs.watch(env.config, "sagemaker", "nope-2", options={"type": "processing"})
+    assert "no processing job named nope-2" in job.check_error  # a type given is asked alone
 
 
 @pytest.mark.parametrize(
@@ -306,14 +306,15 @@ def test_seamless_reads_its_dashboard_state_without_aws(env, aws):
     assert {a[1] for a, _, _ in fake.calls} == {"describe-processing-job", "filter-log-events"}
 
 
-def test_cli_watch_prints_the_key_and_warns_on_a_check_error(env, aws):
+def test_cli_watch_prints_the_key_and_warns_on_a_check_error(env, aws, no_followers):
     from typer.testing import CliRunner
 
     from ax.cli import app
 
     aws(describe_processing_job=job_sources.AwsError("ExpiredTokenException: expired"))
     result = CliRunner().invoke(
-        app, ["job", "watch", "sagemaker", "merge-1", "--region", "us-east-1"],
+        app, ["job", "watch", "sagemaker", "merge-1", "--key", "merge-1", "--label", "Merge",
+              "--region", "us-east-1"],
         env={"AX_CONFIG": str(env.config_path)},
     )  # fmt: skip
     assert result.exit_code == 0, result.output
@@ -321,13 +322,14 @@ def test_cli_watch_prints_the_key_and_warns_on_a_check_error(env, aws):
     assert "credentials" in result.stderr
 
 
-def test_cli_watch_refuses_options_that_do_not_apply(env, tmp_path):
+def test_cli_watch_refuses_options_that_do_not_apply(env, tmp_path, no_followers):
     from typer.testing import CliRunner
 
     from ax.cli import app
 
     result = CliRunner().invoke(
-        app, ["job", "watch", "file", str(tmp_path / "p.json"), "--type", "training"],
+        app, ["job", "watch", "file", str(tmp_path / "p.json"), "--key", "p", "--label", "P",
+              "--type", "training"],
         env={"AX_CONFIG": str(env.config_path)},
     )  # fmt: skip
     assert result.exit_code == 2

@@ -5,9 +5,11 @@ description: Register, watch, wait on and report long-running work with `ax job`
 
 # Jobs
 
-`ax job` keeps long work visible without spending tokens: it records progress,
-estimates the finish with an 80% interval, ends waits on failure, and can wake your
-session when the job ends. Every command takes `--json`.
+`ax job` keeps long work visible without spending tokens. You give each job a key and
+a label; ax does the rest. It follows the job, wakes you when it ends, fails or needs
+attention, has Haiku check it every 5 minutes once it has run 10, and pushes to the
+user's phone what no agent hears. There is nothing else to choose. Every command takes
+`--json`.
 
 **It is the default for long or background work.** Don't guess whether a command is
 long enough to deserve it: anything you would run in the background, loop over a
@@ -17,138 +19,108 @@ background Bash call that bypasses it is paused by the guard; rerun it with
 
 ## Register the work
 
-- **A command you start:** `ax job run --key KEY -- CMD ARGS`. It runs detached and
-  records the exit code. A heredoc works: `ax job run --key KEY -- python - <<'PY' … PY`.
-  A tqdm bar in the output counts as progress; for exact progress, the command can
-  append `{"done": 10, "total": 40}` lines to `$AX_JOB_FILE`.
-- **Something already running:**
-  - `ax job watch pid PID`
-  - `ax job watch sagemaker NAME [--type training|transform] [--profile P]`
-  - `ax job watch seamless NAME [--state-url URL]`
-  - `ax job watch runwatch RUN_DIR`
-  - `ax job watch tools MCP_JOB_ID` (a job of the auto-classifier Tools MCP)
-  - `ax job watch file PATH` (a JSON progress file)
-- **A producer you write:** `F=$(ax job new KEY --total N --unit rows)`, then append
-  JSON lines to `$F`, ending with `{"status": "done"}` or `{"exit": CODE}`.
-- **A Runwatch notebook:** `ax job run --key KEY -- runwatch execute NB --run-dir RUN_DIR
-  …`, wrapped as it needs to be (`uv run`, `env`, a credentials script). ax follows the
-  notebook, not only the process, and keeps one job for the run's whole life: each
-  pause (a failed cell) wakes you with the cell, its error and the end of its output,
-  and the job stays active through `runwatch resume` or `restart` to the run's end.
-  Don't register it again after a resume. A run started elsewhere: `ax job watch
-  runwatch RUN_DIR`. Registered from your session, either wakes you by default (`--wake
-  none` opts out).
-- **Checkpoints:** `--wake-at CELL` on that `run` or `watch` wakes you when the cell
-  succeeds, with its output, while the run goes on: use it to look at intermediate
-  results instead of polling the run. A cell is a number counted from 0 (`--wake-at
-  12,30`), a cell id, or a section heading (`--wake-at "Evaluate"`, its last cell);
-  repeat the option for more. `ax job wake-at KEY CELL…` changes them while the run
-  goes (`--clear` drops them). Each wakes you once per run of its cell, again after a
-  restart.
+Every registration takes two things, both required:
 
-Pick a short key that names the work (`score-violence-v5`); runs of one family that
-share a key stem (`score-…`) teach the estimator their usual duration.
+- `--key`: a short name for the work (`score-violence-v5`). Runs of one family that
+  share a key stem (`score-…`) teach the estimator their usual duration.
+- `--label`: what the job does and what you will do next when it succeeds or fails
+  ("Extract candidate text and embeddings; then build the annotation pilot. On failure,
+  fix and relaunch from the saved scores"). The note that wakes you carries it.
 
-**Say how long you expect it to take** with `--expect` (`--expect 25m`) on `run`,
-`watch` or `new`; a rough guess is fine. A job expected to take over 10 minutes gets a
-Haiku look every 5 minutes asking two questions: is it working, and is it working at
-the pace it was expected to take? Each look leaves a one-sentence summary (`ax job show
-KEY`, the dashboard and the app show the latest). When the job isn't working, the
-problem is recorded and `ax job wait` ends with exit 5, which wakes you. Being behind
-is not a problem by itself, since your estimate was a guess: you are warned once, with
-exit 6, only when the log shows something holding it back (rate limits, a growing
-backoff, items getting several times slower) or the job runs more than 20% past what
-you expected. ax never stops a job: on 5 or 6 it is still running, and the message
-says how to keep waiting or stop it yourself.
+Then one of:
 
-**Always describe the job** with `--label`: what it does and what you will do next
-when it succeeds or fails ("Extract candidate text and embeddings; then build the
-annotation pilot. On failure, fix and relaunch from the saved scores"). The
-dashboard, the notifications and the note that wakes you all carry it. If you forgot,
-`ax job describe KEY --label "…"` adds it to a job already running.
+- **A command you start:** `ax job run --key KEY --label "…" -- CMD ARGS`, keeping any
+  wrapper the command needs (`uv run`, `env`, a credentials script). A heredoc works:
+  `ax job run --key KEY --label "…" -- python - <<'PY' … PY`. A tqdm bar in the output
+  counts as progress, and so do `{"done": 10, "total": 40}` lines the command appends
+  to `$AX_JOB_FILE`.
+- **Something already running:** `ax job watch KIND REF --key KEY --label "…"`, where
+  KIND is `pid`, `sagemaker` (a job name), `seamless`, `runwatch` (a run folder),
+  `tools` (a Tools MCP job id) or `file` (a JSON progress file). ax finds the rest
+  itself: a SageMaker job's type, the AWS region and profile from your shell, the
+  runwatch command.
+- **A producer you write:** `F=$(ax job new --key KEY --label "…")`, then append JSON
+  lines to `$F`: `{"done": 10, "total": 40}`, `{"stage": "scoring"}`, and at the end
+  `{"status": "done"}` or `{"exit": CODE}`.
+
+**Notebooks under Runwatch.** Launch through `ax job run --key KEY --label "…" --
+runwatch execute NOTEBOOK …`. ax follows the notebook, not only the process, as one
+job for the run's whole life: each pause (a failed cell) wakes you with the cell, its
+error and the end of its output. Repair it, `runwatch resume` or `restart`, and wait on
+the same key; don't register it again. To look at intermediate results, add `--wake-at
+CELL`: a cell number counted from 0 (`--wake-at 12,30`), a cell id, or a section
+heading (its last cell). It wakes you with that cell's output while the run goes on;
+`ax job wake-at KEY CELL…` changes the checkpoints (`--clear` drops them).
 
 ## Check it started before you wait
 
 Many failures land in the first seconds: a typo, a missing file or import, a wrong
-profile or job name, a service that refuses the first request. Waiting on such a job
-costs the whole time you expected it to take. Right after launching:
+profile or job name. Right after launching:
 
-1. Run `ax job wait KEY --timeout 60 --interval 5` in the foreground. Exit 124 means it
-   is still running after a minute; any other code means it already ended, so read why.
-2. Read what it has done so far: `ax job show KEY` for status, stage, progress and a
-   watched source's state, and for a run job the start of its log (`output.log`, next
-   to the events file `ax job show` prints). Confirm it is doing the work you meant:
-   the right inputs and settings, a first item done or progress moving, no error
-   repeating.
-3. Only then wait on it as below. If its first item takes longer than a minute, wait
-   for that item the same way with a longer `--timeout` rather than skipping the check.
+1. Run `ax job wait KEY --timeout 60` in the foreground. Exit 124 means it is still
+   running after a minute; any other code means it already ended, so read why.
+2. Read what it has done so far: `ax job show KEY`, and for a run job the start of its
+   output (`output.log`, beside the events file `ax job show` prints). Confirm it is
+   doing the work you meant: the right inputs, a first item done or progress moving,
+   no error repeating.
+3. Only then wait on it as below.
 
 ## Wait without polling
 
 - **Claude Code:** run `ax job wait KEY` as a background command
-  (`run_in_background`). It costs nothing while it waits, and its exit wakes you. Do not
-  loop on `sleep` or `ax job show`.
-- **Codex:** for a job under about 20 minutes, run `ax job wait KEY --timeout 1500`; if
-  the shell hands back a session, wait on it with long pauses rather than re-running
-  status commands. For anything longer, register with `--wake codex`, tell the user,
-  and end your turn: the thread is resumed with a note when the job ends.
-- **Overnight or unattended:** add `--wake auto` to `run`, `watch` or `new`; it resumes
-  the session that registered the job once it ends.
+  (`run_in_background`). It costs nothing while it waits, and its exit wakes you. Do
+  not loop on `sleep` or `ax job show`.
+- **Codex:** for a job under about 20 minutes, run `ax job wait KEY --timeout 1500`.
+  For anything longer, tell the user and end your turn: ax wakes your thread.
 
-Your own `ax job wait` and `--wake` don't both wake you: while a wait from your session
-is running, or after it has returned what happened, the follower skips its note.
+Even without a wait, ax wakes the session that registered the job: a Codex thread open
+in the app through `codex queue`, an open Claude session through its inbox, a closed
+one by resuming it. While your own `ax job wait` runs, or once it has returned what
+happened, ax doesn't wake you a second time.
 
-With `--wake`, the note reaches your conversation even while it is open: a Codex
-thread open in the app gets it through `codex queue`; a Claude session that is still
-open gets it as a message from another session, through the inbox Claude Code opens
-for the commands it starts, so register the job from your own shell. ax never resumes
-an open Claude session, since that would start a copy working beside it on the same
-files: when it can't reach the inbox (a follower the background service restarted),
-the user gets the note as a push instead. A note about a job that is still running is
-a warning, not a go-ahead: keep waiting or stop the job, and leave what its
-description says comes next until it ends. If a job fails, Haiku reads the end of its
-log first and the note starts with its diagnosis. While it runs, Haiku looks at the
-log every 30 minutes with `--wake` (`--check-every 45s`, `10m`, `2h`; a bare number is
-minutes; 0 turns it off). Each look leaves a short summary of where the job is, kept
-even when all is well and shown by `ax job show`, the job's dashboard and the app; you
-are woken once per problem it sees, such as the same error on every item. If no route
-reaches you, the user gets a push.
+`ax job wait` exit codes: 0 done, 1 failed, 2 stopped or ended, 4 the source check kept
+failing (credentials, a wrong name), 5 it is not working (Haiku sees a problem, or a
+Runwatch run paused), 6 Haiku sees it well behind a pace it can't recover, 7 a
+checkpoint cell succeeded, 124 timed out, 69 no such job. On 5 to 7 the job is still
+running and ax leaves it so: the message says what was seen and what to do. After
+repairing a paused run or looking at a checkpoint, wait again on the same key. ax never
+stops a job; if one must stop, stop it yourself (`kill PID` for a run job; `ax job
+show KEY` has its pid).
 
-- **When the user names an interval** ("have Haiku check every 10 minutes"): pass
-  `--check-every 10m` to `ax job follow`, or run `ax job check KEY --every 10m` right
-  after `run`, `new` or `watch` starts it, and to change a running job (`--every 0`
-  stops the looks). `ax job check KEY
-  --now` has Haiku look right away, and `ax job check KEY` shows the interval and the
-  last summary. You may run these alone.
+## What ax does on its own
 
-`ax job wait` exit codes: 0 done, 1 failed, 2 stopped or ended, 3 stalled (with
-`--until stalled`), 4 the source check kept failing (credentials, a wrong name),
-5 it is not working (Haiku sees it, or a Runwatch run paused), 6 Haiku sees it well
-behind its expected pace, 7 a checkpoint cell succeeded, 124 timed out, 69 no such
-job. On 1, 4, 5 or 6, read `ax job show KEY` before acting. On 5 to 7 the job is
-still running and ax leaves it so: the message says what was seen and what to do.
-After repairing a paused run and resuming it, or looking at a checkpoint, wait again
-with `ax job wait KEY`; otherwise decide whether to wait again (a pace warning comes
-once) or stop it yourself.
+- A job that fails: Haiku reads the end of its log, and the note that wakes you starts
+  with its diagnosis.
+- From 10 minutes into a job, Haiku looks every 5 minutes: is it working, and is it
+  going at a pace it can sustain? Each look leaves a one-sentence summary (`ax job
+  show KEY`, the dashboard, the app). You are woken once per problem it sees, such as
+  the same error on every item, and warned once when something holds it back (rate
+  limits, a growing backoff). A note about a job that is still running is a warning,
+  not a go-ahead: leave what its label says comes next until it ends.
+- When no agent can be reached, or none registered the job, the user's phone gets a
+  push.
+- **When the user names an interval** ("have Haiku check every 10 minutes"): `ax job
+  check KEY --every 10m` (`--every 0` stops the looks, `--now` has Haiku look right
+  away, and `ax job check KEY` shows the interval and the last summary). You may run
+  these alone.
 
 ## Report
 
 - `ax job show KEY` prints status, progress, the estimate ("~12 min left (8–20 min)")
   and recent events; `ax job ls` lists active jobs.
-- For the user's phone: every job's dashboard is also in the ax app, at
-  `/jobs/KEY/` and on its card, so when the app is shared (`ax app service --share
-  cloudflare --notify`) its one link reaches every job; don't start a tunnel per job
-  then. Without it, `--share cloudflare --notify` on `run`, `watch` or `new` (or
-  `ax job follow KEY --share cloudflare --notify --detach`) starts a dashboard and ntfy
-  messages. A link carries an access token: give it to the user in your reply only,
-  never in commits, docs or other messages, and only share publicly when asked.
+- For the user's phone: every job's page is in the ax app, at `/jobs/KEY/` and on its
+  card, so when the app is shared (`ax app service --share cloudflare --notify`) its one
+  link reaches every job. A link carries an access token: give it to the user in your
+  reply only, never in commits, docs or other messages.
 - Seamless jobs have their own dashboard; link to it rather than sharing an ax page.
 
 ## Rules
 
 - Never stop, forget or re-register a job you did not start without asking.
-- A paused Runwatch run keeps its ax job: repair it, `runwatch resume` or `restart`, and
-  wait on the same key. A run still at "created" with no controller two minutes after
-  it was made fails its job: it never started, and the output of the command that
-  launched it says why (a taken port, a bad setting).
+- A Runwatch run still at "created" with no controller two minutes after it was made
+  fails its job: it never started, and the output of the command that launched it says
+  why (a taken port, a bad setting).
 - AWS checks use the calling shell's credentials; a check error is not a failed job.
+- Options from before (`--wake`, `--expect`, `--share`, `--notify`, `--show-log` on
+  `run`, `watch` or `new`) are no longer needed: ax accepts them with a note and does
+  what they asked for on its own. Don't add them.

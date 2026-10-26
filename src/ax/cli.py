@@ -1496,23 +1496,12 @@ def _claude_retention(settings) -> int | None:
 job_app = typer.Typer(no_args_is_help=True, help="Long jobs any agent can register and wait on.")
 app.add_typer(job_app, name="job")
 _JSON = typer.Option(False, "--json", help="Machine-readable output.")
-_SHARE = typer.Option(
-    None, "--share", help="Start a follower with a dashboard: none (this Mac), lan or cloudflare."
-)
-_NOTIFY = typer.Option(False, "--notify", help="Start a follower that sends ntfy messages.")
-_EXPECT = typer.Option(
+_KEY = typer.Option(None, "--key", help="Required: a short name for the job (score-violence-v5).")
+_LABEL = typer.Option(
     None,
-    "--expect",
-    help="How long you expect the job to take (25m, 2h). Over 10 minutes, Haiku looks every "
-    "5 minutes at whether it is working at that pace; `ax job wait` ends, leaving the job "
-    "running, if it is not working, or once if it falls well behind.",
-)
-_WAKE = typer.Option(
-    None,
-    "--wake",
-    help="auto, claude, codex or none: when the job ends, resume the session that registered "
-    "it. A Runwatch run registered from an agent session wakes it unless --wake none; it also "
-    "wakes it at every pause and checkpoint.",
+    "--label",
+    help="Required: what the job does and what you'll do next when it succeeds or fails. "
+    "The note that wakes you carries it.",
 )
 _WAKE_AT = typer.Option(
     None,
@@ -1521,48 +1510,52 @@ _WAKE_AT = typer.Option(
     "number counted from 0 (several: 12,30), a cell id, or a section heading (its last cell). "
     "Repeat for more; change them later with `ax job wake-at`.",
 )
+# Options agents no longer choose, since what they did is now automatic. They are still
+# accepted, with a note, so an old habit doesn't stop a job from starting.
+_OLD_SHARE = typer.Option(None, "--share", hidden=True)
+_OLD_NOTIFY = typer.Option(False, "--notify", hidden=True)
+_OLD_SHOW_LOG = typer.Option(False, "--show-log", hidden=True)
+_OLD_WAKE = typer.Option(None, "--wake", hidden=True)
+_OLD_EXPECT = typer.Option(None, "--expect", hidden=True)
 
 
-def _wake_for(config, key: str, wake: str | None) -> str | None:
-    """--wake as asked; a Runwatch run registered from an agent session wakes it unless
-    told `--wake none`, since its pauses wait on that agent."""
-    if wake == "none":
-        return None
-    if wake:
-        return wake
-    from ax.job_sources import runwatch_spec
+def _old_options(**given) -> None:
+    """Say that the old options given are no longer needed, and what happens instead."""
+    names = [f"--{name.replace('_', '-')}" for name, value in given.items() if value]
+    if names:
+        typer.echo(
+            f"note: ax no longer takes {', '.join(names)}, so the job was registered without "
+            "them: every job wakes the session that registered it when it ends, fails or needs "
+            "attention, Haiku checks it every 5 minutes once it has run 10, and its page is in "
+            "the ax app.",
+            err=True,
+        )
 
+
+def _require(key: str | None, label: str | None) -> None:
+    if not key:
+        typer.echo("--key is required: a short name for the job, such as score-violence-v5",
+                   err=True)  # fmt: skip
+        raise typer.Exit(2)
+    if not (label or "").strip():
+        typer.echo("--label is required: say what the job does and what you'll do next when it "
+                   "succeeds or fails; the note that wakes you carries it", err=True)  # fmt: skip
+        raise typer.Exit(2)
+
+
+def _start_follower(config, key: str) -> None:
+    """Start the job's follower: it wakes the session that registered the job, has Haiku
+    look at it, and pushes to the user's phone what no agent will hear. Its link goes to
+    stderr, so stdout stays capturable."""
     job = jobs_module.get(config, key)
-    return "auto" if job and job.agent and runwatch_spec(job) is not None else None
-
-
-def _start_follower(
-    config, key: str, share: str | None, notify: bool, show_log=False, wake=None, expect=None
-) -> None:
-    """Start a detached follower when asked, or when the job is expected to run long enough
-    for Haiku's looks; its link goes to stderr, so stdout stays capturable."""
-    wake = _wake_for(config, key, wake)
-    seconds = None
-    if expect:
-        try:
-            seconds = jobs_module.parse_duration(expect)
-        except ValueError as exc:
-            typer.echo(str(exc), err=True)
-            raise typer.Exit(2) from None
-        jobs_module.expect(config, key, seconds)
-    looks = jobs_module.looks_every(seconds)
-    if share is None and not notify and not wake and not looks:
-        return
-    args = ["--share", share or "none"] + (["--notify"] if notify else [])
-    args += ["--show-log"] if show_log else []
-    args += ["--wake", wake] if wake else []
-    args += ["--check-every", f"{looks / 60:g}"] if looks else []
-    args += ["--since", "0"]  # what the job's source saw at registration counts
+    args = ["--share", "none", "--since", "0"]  # what the source saw at registration counts
+    args += ["--wake", "auto"] if job and job.agent else []
     try:
         info = job_follow.start_detached(config, key, args)
     except RuntimeError as exc:
-        typer.echo(f"follower not started: {exc}", err=True)
-        raise typer.Exit(2) from None
+        typer.echo(f"warning: no follower ({exc}), so nothing will wake you: run `ax job wait "
+                   f"{key}` in the background", err=True)  # fmt: skip
+        return
     typer.echo(f"dashboard: {info['link']}", err=True)
 
 
@@ -1608,20 +1601,25 @@ def _job_or_exit(fn):
 
 @job_app.command("new")
 def job_new(
-    key: str = typer.Argument(..., help="A short name for the job, used as its folder."),
-    total: float = typer.Option(None, help="Total units of work, if known."),
-    unit: str = typer.Option(None, help="What the counts measure, e.g. rows."),
-    label: str = typer.Option(None, help="A human description."),
-    share: str = _SHARE,
-    notify: bool = _NOTIFY,
-    wake: str = _WAKE,
-    expect: str = _EXPECT,
+    key_arg: str = typer.Argument(None, hidden=True),
+    key: str = _KEY,
+    label: str = _LABEL,
+    total: float = typer.Option(None, hidden=True),
+    unit: str = typer.Option(None, hidden=True),
+    share: str = _OLD_SHARE,
+    notify: bool = _OLD_NOTIFY,
+    show_log: bool = _OLD_SHOW_LOG,
+    wake: str = _OLD_WAKE,
+    expect: str = _OLD_EXPECT,
     as_json: bool = _JSON,
 ):
-    """Register a job fed through its events file, and print that file's path.
+    """Register work you report yourself, and print its events file.
 
-    Producers append one JSON object per line, e.g. {"done": 10} or {"status": "done"}.
+    Append one JSON object per line to it: {"done": 10, "total": 40}, {"stage": "scoring"},
+    and at the end {"status": "done"} or {"exit": 1}.
     """
+    key = key or key_arg
+    _require(key, label)
     config = _jobs_config()
     job = _job_or_exit(lambda: jobs_module.new(config, key, total=total, unit=unit, label=label))
     path = jobs_module.events_path(config, job.key)
@@ -1629,42 +1627,47 @@ def job_new(
         typer.echo(json.dumps({"key": job.key, "events_file": str(path)}))
     else:
         typer.echo(str(path))
-    _start_follower(config, job.key, share, notify, wake=wake, expect=expect)
+    _old_options(share=share, notify=notify, show_log=show_log, wake=wake, expect=expect)
+    _start_follower(config, job.key)
 
 
 @job_app.command("watch")
 def job_watch(
-    kind: str = typer.Argument(..., help="file, pid, sagemaker, seamless, runwatch or tools."),
+    kind: str = typer.Argument(..., help="pid, sagemaker, seamless, runwatch, tools or file."),
     ref: str = typer.Argument(
-        ..., help="A path, process id, SageMaker job name, Runwatch run folder or Tools MCP job id."
+        ..., help="A process id, SageMaker job name, Runwatch run folder, Tools MCP job id or path."
     ),
-    key: str = typer.Option(None, help="Name the job; defaults to one derived from REF."),
-    label: str = typer.Option(None, help="A human description."),
-    type_: str = typer.Option(None, "--type", help="sagemaker: processing, training or transform."),
-    region: str = typer.Option(None, help="sagemaker, seamless: AWS region."),
-    profile: str = typer.Option(None, help="sagemaker, seamless: AWS profile."),
-    state_url: str = typer.Option(None, help="seamless: its dashboard's /api/state address."),
-    done_key: str = typer.Option(None, help="file (.json): dotted path of the done count."),
-    total_key: str = typer.Option(None, help="file (.json): dotted path of the total."),
-    status_key: str = typer.Option(None, help="file (.json): dotted path of the status."),
-    stage_key: str = typer.Option(None, help="file (.json): dotted path of the stage."),
-    message_key: str = typer.Option(None, help="file (.json): dotted path of a message."),
-    done_when: str = typer.Option(None, help="file: a path whose appearance means done."),
-    format_: str = typer.Option(None, "--format", help="file: json or jsonl (default: by suffix)."),
-    runwatch: str = typer.Option(None, help="runwatch: its command, if not on PATH."),
-    state_root: str = typer.Option(None, help="tools: the Tools MCP state folder."),
-    share: str = _SHARE,
-    notify: bool = _NOTIFY,
-    wake: str = _WAKE,
+    key: str = _KEY,
+    label: str = _LABEL,
     wake_at: list[str] = _WAKE_AT,
-    expect: str = _EXPECT,
+    type_: str = typer.Option(None, "--type", hidden=True),
+    region: str = typer.Option(None, hidden=True),
+    profile: str = typer.Option(None, hidden=True),
+    state_url: str = typer.Option(None, hidden=True),
+    done_key: str = typer.Option(None, hidden=True),
+    total_key: str = typer.Option(None, hidden=True),
+    status_key: str = typer.Option(None, hidden=True),
+    stage_key: str = typer.Option(None, hidden=True),
+    message_key: str = typer.Option(None, hidden=True),
+    done_when: str = typer.Option(None, hidden=True),
+    format_: str = typer.Option(None, "--format", hidden=True),
+    runwatch: str = typer.Option(None, hidden=True),
+    state_root: str = typer.Option(None, hidden=True),
+    share: str = _OLD_SHARE,
+    notify: bool = _OLD_NOTIFY,
+    show_log: bool = _OLD_SHOW_LOG,
+    wake: str = _OLD_WAKE,
+    expect: str = _OLD_EXPECT,
     as_json: bool = _JSON,
 ):
-    """Register a job that ax checks itself, check it once, and print its key.
+    """Register work that is already running, which ax checks itself, and print its key.
 
-    A Runwatch run stays one job through its pauses: each pause wakes the agent with the
-    failed cell, and the job follows `runwatch resume` or `restart` to the run's end.
+    ax finds what it needs: a SageMaker job's type, the AWS region and profile from your
+    shell, the runwatch command. A Runwatch run stays one job through its pauses: each
+    pause wakes you with the failed cell, and the job follows `runwatch resume` or
+    `restart` to the run's end.
     """
+    _require(key, label)
     options = {
         "type": type_, "region": region, "profile": profile, "state_url": state_url,
         "done_key": done_key, "total_key": total_key, "status_key": status_key,
@@ -1681,11 +1684,12 @@ def job_watch(
     )
     if as_json:
         typer.echo(json.dumps(job.to_dict(), indent=2))
-        return
-    typer.echo(job.key)
+    else:
+        typer.echo(job.key)
     if job.check_error:
         typer.echo(f"warning: {job.check_error}", err=True)
-    _start_follower(config, job.key, share, notify, wake=wake, expect=expect)
+    _old_options(share=share, notify=notify, show_log=show_log, wake=wake, expect=expect)
+    _start_follower(config, job.key)
 
 
 def _piped_stdin() -> bytes | None:
@@ -1711,25 +1715,25 @@ def _piped_stdin() -> bytes | None:
 @job_app.command("run")
 def job_run(
     command: list[str] = typer.Argument(..., help="The command, after --."),
-    key: str = typer.Option(None, help="Name the job; defaults to the program and the time."),
-    label: str = typer.Option(None, help="A human description."),
-    no_stdin: bool = typer.Option(False, "--no-stdin", help="Don't pass piped input on."),
-    share: str = _SHARE,
-    notify: bool = _NOTIFY,
-    show_log: bool = typer.Option(
-        False, "--show-log", help="Show the output's tail on the dashboard."
-    ),
-    wake: str = _WAKE,
+    key: str = _KEY,
+    label: str = _LABEL,
     wake_at: list[str] = _WAKE_AT,
-    expect: str = _EXPECT,
+    no_stdin: bool = typer.Option(False, "--no-stdin", hidden=True),
+    share: str = _OLD_SHARE,
+    notify: bool = _OLD_NOTIFY,
+    show_log: bool = _OLD_SHOW_LOG,
+    wake: str = _OLD_WAKE,
+    expect: str = _OLD_EXPECT,
     as_json: bool = _JSON,
 ):
-    """Start a command detached, record its exit code, and print the job's key.
+    """Start a command detached, record how it ends, and print the job's key.
 
-    A heredoc piped in is replayed to the command: ax job run -- python - <<'PY' ... PY.
-    The command can report progress by appending JSON lines to $AX_JOB_FILE. A
-    `runwatch execute` command, however wrapped, is followed as its notebook run.
+    A heredoc piped in is replayed to the command: ax job run ... -- python - <<'PY' ... PY.
+    A tqdm bar in its output counts as progress, and so do JSON lines it appends to
+    $AX_JOB_FILE. A `runwatch execute` command, however wrapped, is followed as its
+    notebook run.
     """
+    _require(key, label)
     config = _jobs_config()
     stdin = None if no_stdin else _piped_stdin()
     from ax.job_sources import split_wake_at
@@ -1747,7 +1751,8 @@ def job_run(
         typer.echo(json.dumps({**job.to_dict(), "output_log": job.spec["log"]}, indent=2))
     else:
         typer.echo(job.key)
-    _start_follower(config, job.key, share, notify, show_log, wake, expect)
+    _old_options(share=share, notify=notify, show_log=show_log, wake=wake, expect=expect)
+    _start_follower(config, job.key)
 
 
 @job_app.command("ls")
@@ -1767,7 +1772,7 @@ def job_ls(
 @job_app.command("show")
 def job_show(
     key: str = typer.Argument(...),
-    events: int = typer.Option(10, help="How many recent events to include."),
+    events: int = typer.Option(10, hidden=True),
     as_json: bool = _JSON,
 ):
     """One job, refreshed, with its recent events."""
@@ -1810,15 +1815,11 @@ def job_show(
 @job_app.command("wait")
 def job_wait(
     key: str = typer.Argument(...),
-    until: str = typer.Option(
-        "done,failed,stopped,ended", help="Statuses to stop at; add 'stalled' to stop on stalls."
-    ),
+    until: str = typer.Option("done,failed,stopped,ended", hidden=True),
     timeout: float = typer.Option(None, help="Give up after this many seconds (exit 124)."),
-    interval: float = typer.Option(15.0, help="Seconds between checks."),
-    stall_after: float = typer.Option(None, help="Seconds without change that count as stalled."),
-    error_after: float = typer.Option(
-        600.0, help="Give up after the job's check has failed this long (exit 4); 0 never."
-    ),
+    interval: float = typer.Option(15.0, hidden=True),
+    stall_after: float = typer.Option(None, hidden=True),
+    error_after: float = typer.Option(600.0, hidden=True),
     as_json: bool = _JSON,
 ):
     """Block until the job ends; spends no tokens while waiting.
@@ -1858,7 +1859,7 @@ def job_wait(
     raise typer.Exit(jobs_module.WAIT_CODES.get(outcome, 1))
 
 
-@job_app.command("poll")
+@job_app.command("poll", hidden=True)
 def job_poll(
     background: bool = typer.Option(
         False,
@@ -1889,7 +1890,7 @@ def job_poll(
         typer.echo(", ".join(f"{len(keys)} {name}" for name, keys in found.items()))
 
 
-@job_app.command("service")
+@job_app.command("service", hidden=True)
 def job_service_cmd(
     apply: bool = typer.Option(False, "--apply", help="Write and load it; otherwise preview."),
     remove: bool = typer.Option(False, "--remove", help="Unload and delete it."),
@@ -1920,7 +1921,7 @@ def job_service_cmd(
         typer.echo(f"loaded {glue.JOBS_LABEL}")
 
 
-@job_app.command("describe")
+@job_app.command("describe", hidden=True)
 def job_describe(
     key: str = typer.Argument(...),
     label: str = typer.Option(..., help="What the job does and what to do when it ends."),
@@ -1934,7 +1935,7 @@ def job_describe(
     typer.echo(f"described {key}")
 
 
-@job_app.command("eta-report")
+@job_app.command("eta-report", hidden=True)
 def job_eta_report(as_json: bool = _JSON):
     """How often finished jobs landed inside their 80% finish-time intervals."""
     found = job_eta.report(_jobs_config())
@@ -1952,7 +1953,7 @@ def job_eta_report(as_json: bool = _JSON):
     )
 
 
-@job_app.command("forget")
+@job_app.command("forget", hidden=True)
 def job_forget(key: str = typer.Argument(...)):
     """Drop a job and its folder in ax's data; nothing outside ax is touched."""
     config = _jobs_config()
@@ -1963,7 +1964,7 @@ def job_forget(key: str = typer.Argument(...)):
     typer.echo(f"forgot {key}")
 
 
-@job_app.command("follow")
+@job_app.command("follow", hidden=True)
 def job_follow_cmd(
     key: str = typer.Argument(...),
     share: str = typer.Option("none", help="Dashboard reach: none (this Mac), lan or cloudflare."),
@@ -1978,11 +1979,14 @@ def job_follow_cmd(
     port: int = typer.Option(0, help="Local port for the dashboard; 0 picks a free one."),
     interval: float = typer.Option(3.0, help="Seconds between refreshes."),
     detach: bool = typer.Option(False, "--detach", help="Run in the background; print the link."),
-    wake: str = _WAKE,
+    wake: str = typer.Option(
+        None, "--wake", help="auto, claude or codex: wake the session that registered the job."
+    ),
     check_every: str = typer.Option(
         None,
         help="Time between Haiku's looks at the log (45s, 10m, 2h; a bare number is minutes); "
-        "30m with --wake, 0 for none. Change it later with `ax job check`.",
+        "by default every 5 minutes once the job has run 10, 0 for none. Change it later "
+        "with `ax job check`.",
     ),
     resumed: bool = typer.Option(
         False, "--resumed", hidden=True, help="Restarted by the poller: send nothing twice."
@@ -2002,14 +2006,12 @@ def job_follow_cmd(
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from None
-    if checks is None:
-        checks = 1800.0 if wake else 0.0
-    elif not resumed and jobs_module.get(config, key) is not None:
+    if checks is not None and not resumed and jobs_module.get(config, key) is not None:
         job_follow.set_check(config, key, every=checks)  # what you asked now wins
     options = job_follow.FollowOptions(
         share=share, notify=notify, every=every_s, notify_stages=notify_stages,
         stall_after=stall_s, linger=linger, show_log=show_log, interval=interval, port=port,
-        wake=wake, resumed=resumed, check_every=checks or None, since=since,
+        wake=wake, resumed=resumed, check_every=checks, since=since,
     )  # fmt: skip
     if detach:
         args = job_follow.options_args(options)
@@ -2131,7 +2133,7 @@ def _haiku_line(config, key: str) -> str:
     return "\n".join(lines)
 
 
-@job_app.command("wake")
+@job_app.command("wake", hidden=True)
 def job_wake_cmd(
     key: str = typer.Argument(...),
     agent: str = typer.Option("auto", help="auto, claude or codex."),
@@ -2162,7 +2164,7 @@ def job_wake_cmd(
         typer.echo(f"woke the {found['agent']} session (pid {found['pid']}); log: {found['log']}")
 
 
-@job_app.command("unfollow")
+@job_app.command("unfollow", hidden=True)
 def job_unfollow(key: str = typer.Argument(...)):
     """Stop a job's follower; the job itself carries on."""
     if not job_follow.stop(_jobs_config(), key):

@@ -27,6 +27,16 @@ CODEX_FORKED = CODEX_DAY / f"rollout-2026-10-20T11-00-00-{CODEX_SESSION}_{CODEX_
 
 
 @pytest.fixture
+def no_followers(monkeypatch):
+    """Registering a job through the CLI starts its follower; tests that don't follow it
+    get a stand-in instead of a background process."""
+    from ax import job_follow
+
+    monkeypatch.setattr(job_follow, "start_detached",
+                        lambda config, key, args: {"link": "http://127.0.0.1:1/"})  # fmt: skip
+
+
+@pytest.fixture
 def env(tmp_path):
     """A throwaway Claude home, Codex home, vault and config built from the fixtures."""
     claude_home = tmp_path / "claude"

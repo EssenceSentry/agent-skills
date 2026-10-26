@@ -488,10 +488,10 @@ _AX_JOB = re.compile(
 
 BACKGROUND = (
     "Pause: background work goes through ax, so it stays visible and wakes you when it "
-    "ends or stops working. Start it as `ax job run --key KEY --expect 15m --label "
+    "ends or stops working. Start it as `ax job run --key KEY --label "
     '"what it does; what you\'ll do next" -- CMD`. Check it started correctly (`ax job '
     "wait KEY --timeout 60`, then its first output) before running `ax job wait KEY` in "
-    "the background; jobs expected to take over 10 minutes get a Haiku look every 5 minutes. "
+    "the background; once a job has run 10 minutes, Haiku looks at it every 5 minutes. "
     "A Runwatch notebook goes the same way (`-- runwatch execute …`): its pauses wake you, "
     "and `--wake-at CELL` wakes you when a cell you want to inspect succeeds. "
     'If this is not job-like work, run it again with AX_INTENT="<why>" in front.'

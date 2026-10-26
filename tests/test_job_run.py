@@ -81,10 +81,20 @@ def test_generated_keys_name_the_command(env):
     assert job.key.startswith("python")
 
 
-def test_cli_run_takes_a_heredoc_and_prints_the_key(env):
+def test_cli_run_takes_a_heredoc_and_prints_the_key(env, no_followers):
     result = CliRunner().invoke(
         app,
-        ["job", "run", "--key", "cli-heredoc", "--", sys.executable, "-"],
+        [
+            "job",
+            "run",
+            "--key",
+            "cli-heredoc",
+            "--label",
+            "Replay a heredoc",
+            "--",
+            sys.executable,
+            "-",
+        ],
         input="print('piped in')\n",
         env={"AX_CONFIG": str(env.config_path)},
     )

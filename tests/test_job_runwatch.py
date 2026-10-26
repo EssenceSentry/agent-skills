@@ -583,29 +583,28 @@ def followers(monkeypatch):
     return started
 
 
-def test_runwatch_jobs_from_an_agent_session_wake_it_by_default(env, rw, followers):
+def test_runwatch_jobs_from_an_agent_session_wake_it(env, rw, followers):
     run = str(rw.run.folder)
-    result = cli(env, "watch", "runwatch", run, "--key", "train", "--runwatch", str(rw.stub),
-                 extra=SESSION)  # fmt: skip
+    result = cli(env, "watch", "runwatch", run, "--key", "train", "--label", "Train",
+                 "--runwatch", str(rw.stub), extra=SESSION)  # fmt: skip
     assert result.exit_code == 0, result.output
     key, args = followers[0]
     assert key == "train" and args[args.index("--wake") + 1] == "auto"
-    result = cli(env, "watch", "runwatch", run, "--key", "quiet", "--runwatch", str(rw.stub),
-                 "--wake", "none", extra=SESSION)  # fmt: skip
-    assert result.exit_code == 0, result.output
-    assert all(key != "quiet" or "--wake" not in args for key, args in followers)
-    assert cli(env, "new", "plain", extra=SESSION).exit_code == 0
-    assert all(key != "plain" for key, _ in followers)  # other jobs keep their opt-in
+    result = cli(env, "watch", "runwatch", run, "--key", "quiet", "--label", "Train",
+                 "--runwatch", str(rw.stub), "--wake", "none", extra=SESSION)  # fmt: skip
+    assert result.exit_code == 0 and "--wake" in result.stderr  # no opting out any more
+    key, args = followers[-1]
+    assert key == "quiet" and args[args.index("--wake") + 1] == "auto"
 
 
 def test_watch_takes_checkpoints_and_refuses_unknown_ones(env, rw, followers):
     run = str(rw.run.folder)
-    result = cli(env, "watch", "runwatch", run, "--key", "train", "--runwatch", str(rw.stub),
-                 "--wake-at", "3,4", "--wake-at", "Release")  # fmt: skip
+    result = cli(env, "watch", "runwatch", run, "--key", "train", "--label", "Train",
+                 "--runwatch", str(rw.stub), "--wake-at", "3,4", "--wake-at", "Release")  # fmt: skip
     assert result.exit_code == 0, result.output
     assert jobs.wake_at(env.config, "train") == ["3", "4", "Release"]
-    result = cli(env, "watch", "runwatch", run, "--key", "typo", "--runwatch", str(rw.stub),
-                 "--wake-at", "Evalute")  # fmt: skip
+    result = cli(env, "watch", "runwatch", run, "--key", "typo", "--label", "Train",
+                 "--runwatch", str(rw.stub), "--wake-at", "Evalute")  # fmt: skip
     assert result.exit_code == 2 and "matches no cell" in result.stderr
 
 

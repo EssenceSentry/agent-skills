@@ -658,13 +658,14 @@ def duration_text(seconds) -> str:
     return f"{seconds:g} s"
 
 
-# Jobs expected to take longer than this get a model look every LOOK_EVERY seconds.
+# A job running longer than this gets a model look every LOOK_EVERY seconds.
 WATCH_OVER = 600.0
 LOOK_EVERY = 300.0
 
 
 def expect(config, key: str, seconds: float) -> None:
-    """Record how long the agent expects the job to take, for pace checks."""
+    """Record how long a job is expected to take, for pace checks. Agents no longer say;
+    jobs registered when they did keep theirs."""
     record_event(config, key, "expect", {"seconds": seconds})
 
 
@@ -674,11 +675,6 @@ def expected(config, key: str) -> float | None:
         if e["type"] == "expect":
             return e["data"].get("seconds")
     return None
-
-
-def looks_every(expected_seconds: float | None) -> float | None:
-    """How often a model should look at a job expected to take this long, if at all."""
-    return LOOK_EVERY if expected_seconds and expected_seconds > WATCH_OVER else None
 
 
 def latest_event(config, key: str, type_: str, *, full: bool = False) -> dict | None:

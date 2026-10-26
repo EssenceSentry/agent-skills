@@ -43,7 +43,9 @@ class FollowOptions:
     dashboard: bool = True
     wake: str | None = None  # auto, claude or codex: resume that session when the job ends
     resumed: bool = False  # restarted by the poller: don't repeat what was already sent
-    check_every: float | None = None  # seconds between model health checks of a running job
+    # Seconds between model health checks of a running job. None is the default: from 10
+    # minutes into the job, every 5 minutes. 0 is none.
+    check_every: float | None = None
     since: int | None = None  # report source events after this one; None: from the start
 
 
@@ -58,7 +60,8 @@ def options_args(options: FollowOptions) -> list[str]:
     if options.stall_after is not None:
         args += ["--stall-after", str(options.stall_after / 60)]
     args += ["--wake", options.wake] if options.wake else []
-    args += ["--check-every", str((options.check_every or 0) / 60)]
+    if options.check_every is not None:
+        args += ["--check-every", str(options.check_every / 60)]
     args += ["--resumed"] if options.resumed else []
     args += ["--since", str(options.since)] if options.since is not None else []
     return args
@@ -106,12 +109,16 @@ def set_check(config, key: str, *, every: float | None = None, now: bool | None 
 
 
 def check_every(config, key: str) -> float | None:
-    """Seconds between a model's looks at the job: what was asked last, else the follower's."""
+    """Seconds between a model's looks at the job: what was asked last, else the follower's,
+    else the default 5 minutes; None when nothing looks at it."""
     asked = read_control(config, key).get("every")
     if isinstance(asked, int | float):
         return asked or None
-    info = running(config, key) or {}
-    return (info.get("options") or {}).get("check_every") or None
+    info = running(config, key)
+    if info is None:
+        return None
+    every = (info.get("options") or {}).get("check_every")
+    return jobs.LOOK_EVERY if every is None else (every or None)
 
 
 def _alive(pid: int) -> bool:
@@ -207,7 +214,7 @@ def follow(
         def alerter(message):
             return job_notify.send(ntfy_alerts, **message)
 
-    if options.wake and diagnoser is None:
+    if diagnoser is None:  # every failure is diagnosed, for the agent or for the user's phone
         from ax import job_triage
 
         def diagnoser(job):
@@ -298,6 +305,16 @@ def follow(
                  event=seen, outcome="slow")  # fmt: skip
             state["slow"] = True
 
+    def tell_user(job) -> None:
+        """A failure no agent will be woken for goes to the user's phone, with its diagnosis."""
+        if options.wake or job.status not in ("failed", "ended"):
+            return
+        title = f"{key} {job.status}"
+        if options.resumed and _already(config, key, "alerted", title):
+            return
+        seen = jobs.latest_event(config, key, "diagnosis") or {}
+        alert(title, "\n".join(filter(None, [job.message, seen.get("text")])) or title)
+
     def surface(job, state: dict) -> None:
         """Wake the agent for what the job's source saw while it runs: each new pause of
         a Runwatch run, each checkpoint reached. Each is handled once, across restarts."""
@@ -355,7 +372,7 @@ def follow(
         relink = server.link if options.dashboard else None
         return _loop(
             config, key, options, job, link, links, share, relink, notify, wake, stopping, clock,
-            sleep, diagnose=diagnose, check=check, surface=surface,
+            sleep, diagnose=diagnose, check=check, surface=surface, tell_user=tell_user,
         )  # fmt: skip
     finally:
         for close in reversed(closers):
@@ -385,10 +402,10 @@ def _surfaced_up_to(config, key: str, options) -> int:
 
 def _loop(
     config, key, options, job, link, links, share, relink, notify, wake, stopping, clock, sleep,
-    *, diagnose=None, check=None, surface=None,
+    *, diagnose=None, check=None, surface=None, tell_user=None,
 ) -> str:  # fmt: skip
     end_at = None
-    checked_at, health = clock(), {}
+    checked_at, looked, health = clock(), False, {}
     sources = {"seen": _surfaced_up_to(config, key, options)}
     last_note, noted = clock(), (job.done, job.stage)
     last_stage = job.stage
@@ -398,8 +415,8 @@ def _loop(
         job = jobs.refresh(config, key, now=datetime.fromtimestamp(now, UTC)) or job
         asked = read_control(config, key)
         every = asked.get("every")
-        if isinstance(every, int | float) and (every or None) != options.check_every:
-            options.check_every = every or None  # `ax job check --every`
+        if isinstance(every, int | float) and every != options.check_every:
+            options.check_every = every  # `ax job check --every`; 0 stops the looks
             _write_info(config, key, links, options)  # a restarted follower keeps it
         look_now = bool(asked.get("now"))
         if look_now:
@@ -421,6 +438,8 @@ def _loop(
                 if diagnose:
                     diagnose(job)
                 wake(job)
+                if tell_user:
+                    tell_user(job)
             if now - end_at >= options.linger:
                 break
         else:
@@ -434,9 +453,9 @@ def _loop(
             ):
                 notify(job_notify.progress(job, link, _eta(config, job, options)))
                 last_note, noted = now, (job.done, job.stage)
-            due = options.check_every and now - checked_at >= options.check_every
+            due = _look_due(job, options.check_every, now, checked_at, looked)
             if check and (look_now or due):
-                checked_at = now
+                checked_at, looked = now, True
                 check(job, health)
             if options.stall_after is not None:
                 quiet = now - jobs.parse_iso(job.changed).timestamp()
@@ -447,6 +466,15 @@ def _loop(
                     stalled_sent = False
         sleep(options.interval)
     return job.status
+
+
+def _look_due(job, every, now: float, last: float, looked: bool) -> bool:
+    """Whether a model should look at the running job now: by default from 10 minutes into
+    it, every 5 minutes; at the interval someone asked for; never at 0."""
+    if every is None:
+        age = now - jobs.parse_iso(job.created).timestamp()
+        return age >= jobs.WATCH_OVER and (not looked or now - last >= jobs.LOOK_EVERY)
+    return bool(every) and now - last >= every
 
 
 def stop(config, key: str, timeout: float = 10) -> bool:

@@ -183,7 +183,7 @@ def cli(env, *args):
 
 def test_cli_starts_a_detached_follower_and_unfollow_stops_it(env, monkeypatch):
     monkeypatch.setenv("AX_CONFIG", str(env.config_path))
-    result = cli(env, "new", "score", "--share", "none")
+    result = cli(env, "new", "score", "--label", "Score rows")
     assert result.exit_code == 0, result.output
     assert result.stdout.strip().endswith("score/events.jsonl")
     assert "dashboard: http://127.0.0.1:" in result.stderr
@@ -199,7 +199,7 @@ def test_cli_starts_a_detached_follower_and_unfollow_stops_it(env, monkeypatch):
 
 def test_forgetting_a_job_stops_its_follower(env, monkeypatch):
     monkeypatch.setenv("AX_CONFIG", str(env.config_path))
-    assert cli(env, "new", "score", "--share", "none").exit_code == 0
+    assert cli(env, "new", "score", "--label", "Score rows").exit_code == 0
     pid = job_follow.running(env.config, "score")["pid"]
     assert cli(env, "forget", "score").exit_code == 0
     import time

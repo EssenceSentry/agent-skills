@@ -64,6 +64,10 @@ class CheckError(RuntimeError):
     """A check could not tell the job's state right now; the last state stands."""
 
 
+class NotFound(CheckError):
+    """AWS has no such job, which may mean it is of another type."""
+
+
 class AwsError(RuntimeError):
     """The aws command line failed; the message is its error output."""
 
@@ -329,7 +333,7 @@ def _aws_options(options) -> dict:
         or os.environ.get("AWS_REGION")
         or os.environ.get("AWS_DEFAULT_REGION")
     )
-    return {"region": region, "profile": options.get("profile")}
+    return {"region": region, "profile": options.get("profile") or os.environ.get("AWS_PROFILE")}
 
 
 def _check_name(name: str) -> str:
@@ -339,8 +343,8 @@ def _check_name(name: str) -> str:
 
 
 def _prepare_sagemaker(ref, options, cwd):
-    type_ = options.get("type", "processing")
-    if type_ not in SAGEMAKER_TYPES:
+    type_ = options.get("type") or "auto"  # found by asking, on the first check
+    if type_ not in (*SAGEMAKER_TYPES, "auto"):
         raise ValueError(f"--type must be one of {', '.join(SAGEMAKER_TYPES)}")
     return ref, {"name": _check_name(ref), "type": type_, **_aws_options(options)}
 
@@ -353,7 +357,7 @@ def _aws_error(exc: AwsError, what: str) -> CheckError:
     if "AccessDenied" in text:
         return CheckError(f"AWS denied the request; check the role: {first}")
     if any(marker in text for marker in _NOT_FOUND):
-        return CheckError(f"SageMaker has no {what}")
+        return NotFound(f"SageMaker has no {what}")
     return CheckError(first)
 
 
@@ -377,9 +381,23 @@ def _status_update(raw, *, secondary=None, message=None) -> Update:
     return Update(status=status, stage=stage, message=_text(message))
 
 
+def _find_type(spec: dict) -> tuple[str, dict]:
+    """Which kind of SageMaker job the name belongs to, by asking for each in turn."""
+    for type_ in SAGEMAKER_TYPES:
+        try:
+            return type_, _describe(spec, type_)
+        except NotFound:
+            continue
+    raise CheckError(f"SageMaker has no processing, training or transform job named {spec['name']}")
+
+
 def _check_sagemaker(job: Job) -> list[Update]:
     type_ = job.spec["type"]
-    desc = _describe(job.spec, type_)
+    if type_ == "auto":
+        type_, desc = _find_type(job.spec)
+        job.spec["type"] = type_
+    else:
+        desc = _describe(job.spec, type_)
     return [
         _status_update(
             desc.get(_STATUS_FIELD[type_]),
@@ -550,7 +568,7 @@ def _executable(path: Path) -> bool:
 
 
 def _runwatch_binary(options: dict, cwd: str) -> str:
-    given = options.get("runwatch") or os.environ.get("AX_RUNWATCH") or shutil.which("runwatch")
+    given = options.get("runwatch") or _find_runwatch("runwatch", cwd, os.environ)
     path = _resolve(given, cwd) if given else None
     if path is None or not _executable(path):
         raise ValueError(

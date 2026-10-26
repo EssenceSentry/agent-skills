@@ -27,10 +27,10 @@ command has `--help`; most take `--json` for agents.
 
 ## Long work (skill: jobs)
 
-- `ax job` (`run`, `watch`, `new`, `wait`, `show`, `describe`, `follow`, …):
-  register anything longer than a couple of minutes, always with `--label` saying
-  what it does and what you'll do when it ends; wait without polling; `--wake auto`
-  brings a note into this conversation when it ends.
+- `ax job` (`run`, `watch`, `new`, `wait`, `show`, `ls`): register anything longer than
+  a couple of minutes with `--key` and `--label` (what it does and what you'll do when
+  it ends), and wait without polling. ax wakes this conversation when the job ends,
+  fails or needs attention, and has Haiku check it every 5 minutes once it has run 10.
 
 ## Delegating (skill: delegation)
 

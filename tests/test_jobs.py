@@ -213,19 +213,19 @@ def cli(env, *args, **kw):
     return runner.invoke(app, ["job", *args], env={"AX_CONFIG": str(env.config_path)}, **kw)
 
 
-def test_cli_new_prints_the_events_file_for_shell_use(env):
-    result = cli(env, "new", "score", "--total", "3")
+def test_cli_new_prints_the_events_file_for_shell_use(env, no_followers):
+    result = cli(env, "new", "score", "--label", "Score rows", "--total", "3")
     assert result.exit_code == 0, result.output
-    path = result.output.strip()
+    path = result.stdout.strip()  # what `F=$(ax job new ...)` captures
     assert path.endswith("score/events.jsonl")
     append(path, {"done": 3})
     shown = json.loads(cli(env, "show", "score", "--json").output)
     assert (shown["key"], shown["done"], shown["total"]) == ("score", 3, 3)
 
 
-def test_cli_list_and_wait_exit_codes(env):
-    cli(env, "new", "a")
-    cli(env, "new", "b")
+def test_cli_list_and_wait_exit_codes(env, no_followers):
+    cli(env, "new", "a", "--label", "Job a")
+    cli(env, "new", "b", "--label", "Job b")
     listed = json.loads(cli(env, "ls", "--json").output)
     assert {j["key"] for j in listed} == {"a", "b"}
     assert cli(env, "wait", "a", "--timeout", "0").exit_code == 124
@@ -237,8 +237,8 @@ def test_cli_list_and_wait_exit_codes(env):
     assert cli(env, "wait", "nope").exit_code == 69
 
 
-def test_cli_forget(env):
-    cli(env, "new", "a")
+def test_cli_forget(env, no_followers):
+    cli(env, "new", "a", "--label", "Job a")
     assert cli(env, "forget", "a").exit_code == 0
     assert cli(env, "show", "a").exit_code == 69
 
@@ -307,13 +307,11 @@ def test_wait_ends_when_a_model_sees_a_problem(env):
     assert jobs.WAIT_CODES["problem"] == 5
 
 
-def test_only_jobs_expected_to_run_long_get_model_looks(env):
+def test_a_job_keeps_the_time_it_was_expected_to_take(env):
     jobs.new(env.config, "score")
     assert jobs.expected(env.config, "score") is None
     jobs.expect(env.config, "score", 1500)
     assert jobs.expected(env.config, "score") == 1500
-    assert jobs.looks_every(1500) == 300
-    assert jobs.looks_every(600) is None and jobs.looks_every(None) is None
 
 
 def test_wait_ends_when_a_model_sees_the_job_fall_behind_and_leaves_it_running(env):
