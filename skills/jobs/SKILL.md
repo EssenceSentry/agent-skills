@@ -83,7 +83,9 @@ costs the whole time you expected it to take. Right after launching:
 With `--wake`, the note reaches your conversation even while it is open: a Codex
 thread open in the app gets it through `codex queue`; a Claude session that is still
 running gets it in a background copy (`claude agents` lists it), and the user gets a
-push saying so. If a job fails, Haiku reads the end of its log first and the note
+push saying so. A note about a job that is still running is a warning, not a go-ahead:
+keep waiting or stop the job, and leave what its description says comes next until it
+ends. If a job fails, Haiku reads the end of its log first and the note
 starts with its diagnosis. While it runs, Haiku looks at the log every 30 minutes with
 `--wake` (`--check-every 45s`, `10m`, `2h`; a bare number is minutes; 0 turns it
 off). Each look leaves a short summary of where the job is, kept even when all is well

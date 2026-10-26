@@ -66,12 +66,18 @@ def _diagnosis(config, job) -> str | None:
 
 def packet(config, job, note: str | None = None) -> str:
     """The note the woken agent reads: what happened and where to look, in a few lines.
-    `note` says what a health check found in a job that is still running."""
+    `note` says what a health check found in a job that is still running. Its
+    description then reads as what the job does, not as what to do now: the next steps
+    it names wait for the job to end."""
     if note:
-        lines = [f"[ax job] {job.key} is still running, but a check found: {note}"]
+        lines = [f"[ax job] {note}"]
+        if job.label:
+            lines.append(f"What it does, and what follows once it ends: {job.label}")
     else:
         lines = [f"[ax job] {job.key} {job.status}" + (f": {job.message}" if job.message else "")]
-    lines.append(job.label or "(no description: add one with `ax job describe KEY --label ...`)")
+        lines.append(
+            job.label or "(no description: add one with `ax job describe KEY --label ...`)"
+        )
     diagnosis = None if note else _diagnosis(config, job)
     if diagnosis:
         lines.append(f"Diagnosis: {diagnosis}")
@@ -84,10 +90,17 @@ def packet(config, job, note: str | None = None) -> str:
     folder = jobs.events_path(config, job.key).parent
     if (folder / "output.log").exists():
         lines.append(f"output: {folder / 'output.log'}")
-    lines.append(
-        f"Details: ax job show {job.key}. This is an automatic notice from the job you "
-        "registered; carry on with whatever was waiting on it."
-    )
+    if note:
+        lines.append(
+            f"Details: ax job show {job.key}. This is an automatic notice from a job you "
+            "registered. It has not finished, so don't start what follows it: decide "
+            "whether to keep waiting or stop it, and tell the user if they should know."
+        )
+    else:
+        lines.append(
+            f"Details: ax job show {job.key}. This is an automatic notice from the job you "
+            "registered; carry on with whatever was waiting on it."
+        )
     return "\n".join(lines)
 
 

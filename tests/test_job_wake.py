@@ -258,3 +258,12 @@ def test_the_plan_shows_the_queue_for_an_open_codex_thread(env):
     found = job_wake.plan(env.config, job, which=on_path, held=lambda thread: True)
     assert found["via"] == "queue" and found["argv"][1:4] == ["queue", "--thread", "th-1"]
     assert job_wake.plan(env.config, job, which=on_path, held=lambda t: False)["via"] == "resume"
+
+
+def test_a_note_on_a_running_job_does_not_say_carry_on(env):
+    jobs.new(env.config, "score", label="Score rows; then build the report", env={})
+    job = jobs.get(env.config, "score")
+    note = job_wake.packet(env.config, job, jobs.still_running(job, "every row errors"))
+    assert note.startswith("[ax job] Every row errors. score is still running")
+    assert "What it does, and what follows once it ends: Score rows" in note
+    assert "don't start what follows it" in note and "carry on" not in note
