@@ -478,6 +478,27 @@ def stop_check(payload: dict) -> str | None:
     )
 
 
+_AX_JOB = re.compile(r"^\s*(?:\S+=\S*\s+)*(?:\S*/)?ax\s+job\b")
+
+BACKGROUND = (
+    "Pause: background work goes through ax, so it stays visible and wakes you when it "
+    "ends or stops working. Start it as `ax job run --key KEY --expect 15m --label "
+    '"what it does; what you\'ll do next" -- CMD`, then run `ax job wait KEY` in the '
+    "background; jobs expected to take over 10 minutes get a Haiku look every 5 minutes. "
+    'If this is not job-like work, run it again with AX_INTENT="<why>" in front.'
+)
+
+
+def background_nudge(given: dict) -> str | None:
+    """The pause for a background Bash command that bypasses `ax job`, if this is one."""
+    if not given.get("run_in_background"):
+        return None
+    command = given.get("command")
+    if not isinstance(command, str) or _AX_JOB.search(code_only(command)):
+        return None
+    return BACKGROUND
+
+
 def _log(data: Path, entry: dict) -> None:
     try:
         log_path(data).parent.mkdir(parents=True, exist_ok=True)
@@ -534,6 +555,23 @@ def _main(argv=None, *, stdin=None, stdout=None) -> int:
         return 0
     if isinstance(payload, dict):
         _probe(data, tool, payload)
+        given = payload.get("tool_input")
+        nudge = (
+            background_nudge(given)
+            if payload.get("tool_name") == "Bash" and isinstance(given, dict)
+            else None
+        )
+        if nudge:
+            entry = {"tool": tool, "cwd": payload.get("cwd"), "session": payload.get("session_id"),
+                     "command": str(given.get("command"))[:300], "rule": "background-via-ax"}  # fmt: skip
+            if intent(str(given.get("command"))):
+                _log(data, {**entry, "kind": "pass", "intent": intent(str(given.get("command")))})
+                return 0
+            _log(data, {**entry, "kind": "pause"})
+            stdout.write(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                "permissionDecisionReason": nudge}}) + "\n")  # fmt: skip
+            return 0
     try:
         rules = json.loads(rules_path(data).read_text())
     except (OSError, ValueError):

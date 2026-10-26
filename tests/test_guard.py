@@ -388,3 +388,31 @@ def test_a_probe_records_who_is_calling_while_its_marker_exists(env):
     assert record["tool"] == "codex" and record["agent_id"] == "a1"
     assert record["agent_type"] == "Explore" and record["transcript"].endswith("agent-a1.jsonl")
     assert "tool_input" in record["keys"] and "secret-ish" not in json.dumps(record)
+
+
+@pytest.mark.parametrize(
+    ("command", "paused"),
+    [
+        ("sleep 600 && echo done", True),
+        ("python score.py", True),
+        ("ax job wait score", False),
+        ("/Users/me/.local/bin/ax job run --key k --expect 20m -- python score.py", False),
+        ('AX_INTENT="dev server" npm run dev', False),
+    ],
+)
+def test_background_commands_go_through_ax_jobs(env, command, paused):
+    payload = json.dumps(
+        {"tool_name": "Bash", "cwd": "/tmp", "session_id": "s1",
+         "tool_input": {"command": command, "run_in_background": True}}
+    )  # fmt: skip
+    code, out = run_main(env, payload)
+    assert code == 0 and bool(out) == paused
+    if paused:
+        decision = json.loads(out)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny"
+        assert "ax job run" in decision["permissionDecisionReason"]
+
+
+def test_foreground_commands_are_not_nudged(env):
+    payload = json.dumps({"tool_name": "Bash", "cwd": "/tmp", "tool_input": {"command": "pytest"}})
+    assert run_main(env, payload) == (0, "")
