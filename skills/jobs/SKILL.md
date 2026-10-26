@@ -50,9 +50,19 @@ With `--wake`, the note reaches your conversation even while it is open: a Codex
 thread open in the app gets it through `codex queue`; a Claude session that is still
 running gets it in a background copy (`claude agents` lists it), and the user gets a
 push saying so. If a job fails, Haiku reads the end of its log first and the note
-starts with its diagnosis. While it runs, Haiku checks the log every 30 minutes
-(`--check-every`, 0 to turn off) and wakes you once per problem it sees, such as the
-same error on every item. If no route reaches you, the user gets a push.
+starts with its diagnosis. While it runs, Haiku looks at the log every 30 minutes with
+`--wake` (`--check-every 45s`, `10m`, `2h`; a bare number is minutes; 0 turns it
+off). Each look leaves a short summary of where the job is, kept even when all is well
+and shown by `ax job show`, the job's dashboard and the app; you are woken once per
+problem it sees, such as the same error on every item. If no route reaches you, the
+user gets a push.
+
+- **When the user names an interval** ("have Haiku check every 10 minutes"): pass
+  `--check-every 10m` to `ax job follow`, or run `ax job check KEY --every 10m` right
+  after `run`, `new` or `watch` starts it, and to change a running job (`--every 0`
+  stops the looks). `ax job check KEY
+  --now` has Haiku look right away, and `ax job check KEY` shows the interval and the
+  last summary. You may run these alone.
 
 `ax job wait` exit codes: 0 done, 1 failed, 2 stopped or ended, 3 stalled (with
 `--until stalled`), 4 the source check kept failing (credentials, a wrong name),
