@@ -274,7 +274,7 @@ export const exampleNow: NowState = {
     {
       id: "code-review-current-state",
       title: "Review the code as it is now, not as it was.",
-      status: "rejected",
+      status: "not-now",
       decided: at(-25),
       decided_by: "accepting ground-in-current-code",
       superseded_by: "ground-in-current-code",
@@ -285,7 +285,7 @@ export const exampleNow: NowState = {
     {
       id: "macos-gnu-timeout",
       title: "Never call timeout on macOS.",
-      status: "rejected",
+      status: "not-now",
       decided: at(-80),
       decided_by: "you",
       superseded_by: null,

@@ -2332,8 +2332,8 @@ def learn_accept(rule_id: str = typer.Argument(...)):
 
 @learn_app.command("reject")
 def learn_reject(rule_id: str = typer.Argument(...)):
-    """Reject a proposal or an accepted rule; its note stays, and the learner proposes it
-    again only if its support doubles."""
+    """Set a proposal or an accepted rule aside for now ("not now"); its note stays, and the
+    learner proposes it again once its support doubles."""
     from ax import learn
 
     try:
@@ -2341,12 +2341,12 @@ def learn_reject(rule_id: str = typer.Argument(...)):
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from None
-    typer.echo(f"rejected {rule_id}; `ax learn restore {rule_id}` brings it back")
+    typer.echo(f"set {rule_id} aside for now; `ax learn restore {rule_id}` brings it back")
 
 
 @learn_app.command("restore")
 def learn_restore(rule_id: str = typer.Argument(...)):
-    """Send an accepted or rejected rule back to the proposals: you changed your mind."""
+    """Send an accepted rule, or one set aside, back to the proposals."""
     from ax import learn
 
     try:

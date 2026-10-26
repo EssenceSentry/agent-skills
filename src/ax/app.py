@@ -234,15 +234,16 @@ def _warning_item(config, w: dict) -> dict:
 
 
 def _decided(config, rules) -> list[dict]:
-    """Rules you accepted or rejected (or that were rejected for you), newest first, each
+    """Rules you accepted or set aside for now (or that were set aside for you), newest
+    first, each
     with the actions that change your mind."""
-    found = [r for r in rules if r.decided and r.status in ("active", "rejected")]
+    found = [r for r in rules if r.decided and r.status in ("active", "not-now")]
     found.sort(key=lambda r: r.decided, reverse=True)
     return [
         {
             "id": r.id,
             "title": r.rule,
-            "status": "accepted" if r.status == "active" else "rejected",
+            "status": "accepted" if r.status == "active" else "not-now",
             "decided": r.decided,
             "decided_by": r.decided_by,
             "superseded_by": r.superseded_by or None,
@@ -366,7 +367,7 @@ def _accept(config, payload, model):
 
 def _reject(config, payload, model):
     learn.reject(config, rule_id := _id(payload))
-    return f"rejected {rule_id}"
+    return f"set {rule_id} aside for now; it waits under Decided"
 
 
 def _dismiss_warning(config, payload, model):

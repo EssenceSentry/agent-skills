@@ -77,11 +77,11 @@ const ACTIONS: Record<ActionName, ActionSpec> = {
     immediate: true,
   },
   reject: {
-    label: "Reject",
+    label: "Not now",
     api: "reject",
     variant: "outline",
-    question: "Reject this rule?",
-    explain: () => "Its note stays, marked rejected, under Decided.",
+    question: "Set this rule aside for now?",
+    explain: () => "It waits under Decided, where you can bring it back.",
     immediate: true,
   },
   dismiss: {
@@ -528,9 +528,9 @@ function decidedBy(d: Decided): string {
 
 const SHOWN_DECIDED = 8
 
-/** Rules you accepted or rejected, and the ones rejected for you, with a way back. */
+/** Rules you accepted or set aside for now, and those set aside for you, with a way back. */
 function DecidedPanel({ decided, refresh }: { decided: Decided[]; refresh: () => void }) {
-  const [tab, setTab] = useState<"all" | "accepted" | "rejected">("all")
+  const [tab, setTab] = useState<"all" | "accepted" | "not-now">("all")
   const [all, setAll] = useState(false)
   const { notice, setNotice, busy, run } = useAct(refresh)
   const shown = decided.filter((d) => tab === "all" || d.status === tab)
@@ -538,14 +538,14 @@ function DecidedPanel({ decided, refresh }: { decided: Decided[]; refresh: () =>
   const tabs = [
     ["all", `All ${decided.length}`],
     ["accepted", `Accepted ${count("accepted")}`],
-    ["rejected", `Rejected ${count("rejected")}`],
+    ["not-now", `Not now ${count("not-now")}`],
   ] as const
   return (
     <section className="panel overflow-hidden">
       <div className="flex flex-wrap items-end justify-between gap-3 border-b px-5 py-4">
         <div className="space-y-1">
           <div className="eyebrow">Decided</div>
-          <h2 className="text-[17px] leading-tight">Rules you accepted or rejected</h2>
+          <h2 className="text-[17px] leading-tight">Rules you accepted or set aside</h2>
         </div>
         <fieldset className="flex gap-1">
           <legend className="sr-only">Which decisions</legend>
@@ -587,7 +587,7 @@ function DecidedPanel({ decided, refresh }: { decided: Decided[]; refresh: () =>
                       : "bg-muted text-ink-2"
                   )}
                 >
-                  {d.status === "accepted" ? "Accepted" : "Rejected"}
+                  {d.status === "accepted" ? "Accepted" : "Not now"}
                 </span>
                 <span className="label-mono truncate text-[11px] text-muted-foreground">
                   {d.id}

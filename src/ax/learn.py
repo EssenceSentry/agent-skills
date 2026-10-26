@@ -942,10 +942,10 @@ def propose(config, candidates, labels, *, max_pending: int = MAX_PENDING) -> Pr
     for rid, group in [t for t in ready if t[0] in pending] + fresh[:room]:
         kinds = Counter(lab["kind"] for _, lab in group.members)
         evidence = [c["id"] for c, _ in group.members][:20]
-        back = next((r for r in rules if r.id == rid and r.status == "rejected"), None)
+        back = next((r for r in rules if r.id == rid and r.status == "not-now"), None)
         if rid in pending or back:
             rule = pending.get(rid) or back
-            if back:  # rejected, and its evidence has since doubled: the same note returns
+            if back:  # set aside, and its evidence has since doubled: the same note returns
                 rule.status, rule.decided, rule.decided_by, rule.superseded_by = (
                     "proposed",
                     "",
@@ -1022,11 +1022,11 @@ def _bring_back(config, rule_id: str) -> None:
     for other in profile.load_rules(config):
         if other.superseded_by != rule_id:
             continue
-        if other.status == "rejected" and other.decided_by != f"accepting {rule_id}":
-            continue  # rejected for another reason, such as the workshop's own list
+        if other.status == "not-now" and other.decided_by != f"accepting {rule_id}":
+            continue  # set aside for another reason, such as the workshop's own list
         if other.status == "retired":
             other.status = "active"
-        elif other.status == "rejected":
+        elif other.status == "not-now":
             other.status, other.decided, other.decided_by = "proposed", "", ""
             _forget_rejection(config, other.id)
         other.superseded_by = ""
@@ -1034,13 +1034,13 @@ def _bring_back(config, rule_id: str) -> None:
 
 
 def accept(config, rule_id: str, *, today: date | None = None, by: str = "you"):
-    """Make a proposal, or a rejected rule, active; `added` becomes the adoption date,
+    """Make a proposal, or a rule set aside, active; `added` becomes the adoption date,
     which separates the evidence that led to the rule from corrections that come back
-    after it. The rules it replaces are retired or rejected, and come back if you change
+    after it. The rules it replaces are retired or set aside, and come back if you change
     your mind (see `restore`)."""
     rule = _rule(config, rule_id)
-    if rule.status not in ("proposed", "rejected"):
-        raise ValueError(f"{rule_id} is {rule.status}: only a proposal or a rejected rule")
+    if rule.status not in ("proposed", "not-now"):
+        raise ValueError(f"{rule_id} is {rule.status}: only a proposal or a rule set aside")
     rule.status, rule.added = "active", (today or date.today()).isoformat()
     rule.decided, rule.decided_by, rule.superseded_by = _now(), by, ""
     profile._write(rule, rule.path)
@@ -1061,7 +1061,8 @@ def accept(config, rule_id: str, *, today: date | None = None, by: str = "you"):
 
 def reject(config, rule_id: str, *, by: str = "you", superseded_by: str = "",
            note: str = "") -> None:  # fmt: skip
-    """Reject a proposal, or an accepted rule. The note stays, marked rejected, and the
+    """Set a proposal, or an accepted rule, aside for now ("not now", which judges nothing).
+    The note stays, marked not-now, and the
     learner proposes it again only if its support doubles."""
     rule = _rule(config, rule_id)
     if rule.status == "active" and not rule.decided:
@@ -1079,19 +1080,19 @@ def reject(config, rule_id: str, *, by: str = "you", superseded_by: str = "",
         "date": date.today().isoformat(),
     }
     _save_ledger(config, "rejected.json", rejected)
-    rule.status, rule.decided, rule.decided_by = "rejected", _now(), by
+    rule.status, rule.decided, rule.decided_by = "not-now", _now(), by
     rule.superseded_by = superseded_by
     if note:
-        rule.why = f"{rule.why}\n\n**Rejected by {by}:** {note}".strip()
+        rule.why = f"{rule.why}\n\n**Set aside by {by}:** {note}".strip()
     profile._write(rule, rule.path)
 
 
 def restore(config, rule_id: str) -> None:
-    """Send an accepted or rejected rule back to the proposals waiting for you."""
+    """Send an accepted rule, or one set aside, back to the proposals waiting for you."""
     rule = _rule(config, rule_id)
     if rule.status == "proposed":
         raise ValueError(f"{rule_id} is already waiting for your decision")
-    if rule.status not in ("rejected", "active") or not rule.decided:
+    if rule.status not in ("not-now", "active") or not rule.decided:
         raise ValueError(f"{rule_id} wasn't decided here, so there's nothing to undo")
     if rule.status == "active":
         _bring_back(config, rule_id)

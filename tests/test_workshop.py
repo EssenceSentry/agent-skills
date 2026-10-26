@@ -148,6 +148,50 @@ def test_every_brief_says_to_check_the_instructions_and_to_generalise(work):
         assert "one session" in text or "one incident" in text, role
 
 
+def set_aside(env, rule_id="tests-before-claims", text="Run the tests before saying they pass."):
+    from ax import learn
+
+    profile.add(env.config, rule_id, rule=text, status="proposed")
+    learn.reject(env.config, rule_id)  # "not now"
+
+
+def test_a_lesson_a_set_aside_rule_covers_does_not_reach_the_designers(rules):
+    env, candidates, labels = rules
+    set_aside(env)
+    found = workshop.load(env.config, candidates=candidates, labels=labels, findings=[])
+    assert [g.topic for g in found.uncovered] == []
+    assert [r.id for r in found.set_aside] == ["tests-before-claims"]
+
+
+def test_the_material_lists_set_aside_rules_as_the_user_s_to_bring_back(work):
+    env, _ = work
+    set_aside(env)
+    found = workshop.load(env.config, candidates=[], labels={}, findings=[])
+    folder = env.root / "run" / "dossier"
+    workshop.write_dossier(folder, found)
+    rules_md = (folder / "rules.md").read_text()
+    section = rules_md.split("# Set aside by the user for now", 1)[1]
+    assert "tests-before-claims" in section and "Run the tests" in section
+    assert "set aside" in workshop.brief(
+        workshop.Agent("claude-designer-1", "designer", "claude", 1)
+    )
+
+
+def test_a_proposal_that_repeats_a_set_aside_rule_is_skipped(work):
+    env, _ = work
+    set_aside(env)
+    found = workshop.load(env.config, candidates=[], labels={}, findings=[])
+    found.evidence = {"c1": ("s1", False), "c2": ("s2", False)}
+    same_id = proposal()
+    same_words = proposal(id="claims-need-runs", rule="Run the tests before saying that they pass.")
+    written = workshop.write(env.config, outcome_of(same_id, same_words), found, now=NOW)
+    skipped = dict(written.skipped)
+    assert written.proposals == []
+    assert (
+        "set aside" in skipped["tests-before-claims"] and "set aside" in skipped["claims-need-runs"]
+    )
+
+
 # How many agents
 
 
@@ -657,7 +701,7 @@ def test_accepting_a_workshop_proposal_retires_or_drops_what_it_replaces(work):
     rules = {r.id: r for r in profile.load_rules(env.config)}
     assert rules["clean-changes"].status == "active"
     assert rules["unrelated-files"].status == "retired"
-    assert rules["say-less"].status == "rejected"  # a proposal it replaced is rejected, kept
+    assert rules["say-less"].status == "not-now"  # a proposal it replaced is rejected, kept
     assert rules["say-less"].superseded_by == "clean-changes"
     assert rules["unrelated-files"].superseded_by == "clean-changes"
     assert "rules workshop" in rules["say-less"].decided_by  # off the list when written
@@ -667,7 +711,7 @@ def test_accepting_a_workshop_proposal_retires_or_drops_what_it_replaces(work):
     assert (
         rules["unrelated-files"].status == "active" and not rules["unrelated-files"].superseded_by
     )
-    assert rules["say-less"].status == "rejected"  # the workshop's withdrawal stands
+    assert rules["say-less"].status == "not-now"  # the workshop's withdrawal stands
 
 
 def test_the_final_list_keeps_replaces_or_withdraws_every_waiting_proposal(work):
@@ -684,10 +728,10 @@ def test_the_final_list_keeps_replaces_or_withdraws_every_waiting_proposal(work)
     ), found, now=NOW)  # fmt: skip
     rules = {r.id: r for r in profile.load_rules(env.config)}
     assert rules["clean-changes"].status == "proposed" and rules["tabs"].status == "proposed"
-    assert rules["say-less"].status == "rejected"
+    assert rules["say-less"].status == "not-now"
     assert rules["say-less"].superseded_by == "clean-changes"
     assert "rules workshop" in rules["say-less"].decided_by
-    assert rules["old-idea"].status == "rejected" and not rules["old-idea"].superseded_by
+    assert rules["old-idea"].status == "not-now" and not rules["old-idea"].superseded_by
     assert "The ax skill already says it." in rules["old-idea"].why
     report = written.report.read_text()
     assert "## Kept" in report and "## Withdrawn" in report and "tabs" in report

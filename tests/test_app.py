@@ -176,7 +176,7 @@ def test_a_budget_over_its_limit_waits_for_the_user_with_the_reason_given(env):
 
 
 def test_decided_rules_are_listed_newest_first_and_can_be_reversed(env, monkeypatch):
-    times = iter(["2026-10-25T18:00-03:00", "2026-10-25T19:00-03:00"])
+    times = iter(["2026-10-25T18:00-03:00", "2026-10-25T19:00-03:00", "2026-10-25T20:00-03:00"])
     monkeypatch.setattr(learn, "_now", lambda: next(times))
     for rid in ("tabs", "spaces"):
         profile.add(env.config, rid, rule=f"Use {rid}.", status="proposed")
@@ -184,12 +184,13 @@ def test_decided_rules_are_listed_newest_first_and_can_be_reversed(env, monkeypa
     learn.accept(env.config, "tabs")
     learn.reject(env.config, "spaces")
     state = app.now_state(env.config, usage_of=fake_usage)
-    assert [(d["id"], d["status"]) for d in state["decided"]] == [("spaces", "rejected"),
+    assert [(d["id"], d["status"]) for d in state["decided"]] == [("spaces", "not-now"),
                                                                     ("tabs", "accepted")]  # fmt: skip
     rejected, accepted = state["decided"]
     assert rejected["actions"] == ["accept", "restore"] and rejected["decided_by"] == "you"
     assert accepted["actions"] == ["reject", "restore"] and accepted["note"].endswith("tabs.md")
     assert not [w for w in state["waiting"] if w["id"] in ("tabs", "spaces")]
+    assert "aside for now" in app.act(env.config, "reject", {"id": "tabs"})
     said = app.act(env.config, "restore", {"id": "spaces"})
     assert "back with the proposals" in said
     assert ("proposal", "spaces") in waiting(app.now_state(env.config, usage_of=fake_usage))
@@ -273,7 +274,7 @@ def test_actions_do_what_their_commands_do(queue):
     app.act(config, "reject", {"id": "second"})
     assert "second" in learn._ledger(config, "rejected.json")
     rejected = profile._read(profile.rules_dir(config) / "second.md")  # kept, to change your mind
-    assert rejected.status == "rejected" and rejected.decided_by == "you"
+    assert rejected.status == "not-now" and rejected.decided_by == "you"
 
     app.act(config, "keep", {"id": "bootstrap"})
     kept = next(r for r in profile.load_rules(config) if r.id == "bootstrap")

@@ -94,11 +94,11 @@ export type Budget = {
   entries: BudgetEntry[]
 }
 
-/** A rule you accepted or rejected, or that was rejected for you. */
+/** A rule you accepted or set aside for now, or that was set aside for you. */
 export type Decided = {
   id: string
   title: string
-  status: "accepted" | "rejected"
+  status: "accepted" | "not-now"
   decided: string
   decided_by: string
   superseded_by: string | null

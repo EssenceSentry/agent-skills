@@ -552,7 +552,7 @@ A weekly window that ends its week with allowance left resets it unused. The wor
   - **One list:** the final agent settles every waiting proposal, the learner's and earlier runs', by keeping, replacing or withdrawing it. Replaced and withdrawn proposals are rejected for the user, kept under Decided where they can be brought back.
   - **Warnings:** agents report instruction files and skills the conversations show to be wrong; they go to the report and to "Instructions to check" in the app.
   - **No runs on its own output:** the workshop's proposals don't count as new work for the next run.
-- **Decisions in the app (2026-10-25):** accepting and rejecting take one click, with an Undo. Rejecting keeps the note (status `rejected`, with when and by whom), and a Decided panel lists accepted and rejected rules with the opposite decision and "Back to proposals" (`ax learn restore`); undoing an acceptance brings back the rules it retired in its place.
+- **Decisions in the app (2026-10-25):** accepting and setting aside (Not now) take one click, with an Undo. A rejection means "not now", never "wrong": the note stays (status `not-now`, with when and by whom), the workshop sees set-aside rules but never proposes them again, and the learner brings one back once its evidence doubles; and a Decided panel lists accepted and set-aside rules with the opposite decision and "Back to proposals" (`ax learn restore`); undoing an acceptance brings back the rules it retired in its place.
 
 ### 19. Friction without walls: pauses, and limits agents set (agreed and built 2026-10-25)
 

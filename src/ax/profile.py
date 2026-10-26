@@ -20,7 +20,7 @@ from pathlib import Path
 import yaml
 
 LEVELS = ("advice", "check", "block")
-STATUSES = ("active", "proposed", "retired", "rejected")
+STATUSES = ("active", "proposed", "retired", "not-now")
 TOOLS = ("claude", "codex")
 # "workers" is opt-in: delegated workers get a rule only when it names them.
 VALID_TOOLS = (*TOOLS, "workers")
@@ -58,7 +58,8 @@ class Rule:
     review: str = ""
     reviewed: str = ""
     # A decision on a proposal: when, by whom ("you", or what decided for you), and the
-    # rule that took its place. Kept, so a decision can be reversed.
+    # rule that took its place. Kept, so a decision can be reversed; "not now" sets a rule
+    # aside without judging it.
     decided: str = ""
     decided_by: str = ""
     superseded_by: str = ""
@@ -145,6 +146,8 @@ def _read(path: Path) -> Rule:
     rule.reviewed = str(rule.reviewed or "")
     rule.last_evidence = str(rule.last_evidence or "")
     rule.decided = str(rule.decided or "")
+    if rule.status == "rejected":  # the name before "not now"
+        rule.status = "not-now"
     return validate(rule)
 
 

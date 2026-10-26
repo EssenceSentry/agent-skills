@@ -84,7 +84,7 @@ export const areas: Area[] = [
     id: "learn",
     area: "Learn",
     title: "Rules proposed from your own corrections",
-    body: "ax learn reads what you wrote in both tools: corrections, requests to remember, praise, refused tool calls, and moments of frustration with the episode behind them. Haiku labels them and proposals wait for you on the Now screen, where accepting or rejecting takes one click and Decided keeps every decision for you to reverse. Each accepted rule keeps its own evidence, confidence and maturity, and asks for review when it keeps being restated or passed.",
+    body: "ax learn reads what you wrote in both tools: corrections, requests to remember, praise, refused tool calls, and moments of frustration with the episode behind them. Haiku labels them and proposals wait for you on the Now screen, where accepting or setting a proposal aside (Not now) takes one click and Decided keeps every decision for you to reverse. Each accepted rule keeps its own evidence, confidence and maturity, and asks for review when it keeps being restated or passed.",
     commands: ["ax learn"],
     proof: "It rediscovered 9 of the 11 rules written by hand.",
   },

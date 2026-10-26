@@ -56,8 +56,10 @@ command has `--help`; most take `--json` for agents.
 - `ax learn` (`scan`, `label`, `propose`, `tidy`, `guards`, `fixes`, `list`,
   `review`, `accept`, `reject`, `restore`, `keep`, `retire`, `guard`): proposes rules
   from the user's corrections and tracks each rule's evidence. Accepting, rejecting,
-  keeping or retiring is the user's decision. A decided rule keeps its note, marked
-  with when and by whom; `restore` sends it back to the proposals.
+  keeping or retiring is the user's decision. Rejecting means "not now": the rule is
+  set aside, never judged wrong, and keeps its note with when and by whom; `restore`
+  sends it back to the proposals, and the learner proposes it again once its evidence
+  doubles.
 - `ax workshop` (`status`, `run`, `stop`): the rules workshop. On a weekly window's
   last day with spare allowance, the scheduled sync starts it by itself: Opus 5.5 or
   Sol 6.1 agents, sized by the rule work and the allowance left, consolidate and

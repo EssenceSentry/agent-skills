@@ -118,6 +118,7 @@ class Load:
     uncovered: list  # learn.Group evidence no rule covers
     conflicts: list  # profile.Finding of kind "conflict"
     evidence: dict = field(default_factory=dict)  # candidate id -> (session, said as standing)
+    set_aside: list = field(default_factory=list)  # rules the user said "not now" to
 
     @property
     def design_items(self) -> list:
@@ -143,9 +144,10 @@ def load(config, *, candidates=None, labels=None, findings=None) -> Load:
     rules = profile.load_rules(config, problems=[])
     active = [r for r in rules if r.status == "active"]
     proposals = [r for r in rules if r.status == "proposed"]
+    set_aside = [r for r in rules if r.status == "not-now"]
     candidates = learn.load_candidates(config) if candidates is None else candidates
     labels = learn.load_labels(config) if labels is None else labels
-    known = active + proposals
+    known = active + proposals + set_aside  # a set-aside rule's lesson is not new work
     uncovered = [
         g
         for g in learn.groups(candidates, labels)
@@ -162,6 +164,7 @@ def load(config, *, candidates=None, labels=None, findings=None) -> Load:
         uncovered=uncovered,
         conflicts=[f for f in findings if f.kind == "conflict"],
         evidence={c["id"]: (c["session"], "explicit" in c["signals"]) for c in candidates},
+        set_aside=set_aside,
     )
 
 
@@ -278,7 +281,9 @@ _COMMON = (
     "pattern that recurs across sessions, never one incident; a lesson from one session is "
     "not a rule unless the user stated it as standing ('from now on', 'remember'). Before "
     "proposing anything, search instructions/ for what already says it: drop a rule an "
-    "instruction file or skill already states, and say which files you checked. Keep each "
+    "instruction file or skill already states, and say which files you checked. Rules the "
+    "user set aside for now are listed at the end of rules.md: never propose them, or "
+    "anything that says the same, again, and never count them against an idea. Keep each "
     "rule to one sentence. Ids are kebab-case; reuse an existing id only to retire or "
     "rewrite that rule."
 )
@@ -340,7 +345,12 @@ def _rule_block(rule) -> str:
 def write_dossier(folder, work: Load, *, config=None) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     rules = "\n".join(_rule_block(r) for r in [*work.active, *work.proposals])
-    (folder / "rules.md").write_text(f"# Rules\n\n{rules or 'No rules yet.'}\n")
+    aside = "\n".join(_rule_block(r) for r in work.set_aside) or "None."
+    (folder / "rules.md").write_text(
+        f"# Rules\n\n{rules or 'No rules yet.'}\n\n# Set aside by the user for now\n\n"
+        'Rules the user said "not now" to. They may bring them back; do not propose them, '
+        f"or anything that says the same, again.\n\n{aside}\n"
+    )
     evidence = "\n".join(_item_line(i) for i in work.design_items) or "Nothing uncovered."
     (folder / "evidence.md").write_text(f"# Evidence\n\n{evidence}\n")
     if config is not None:
@@ -694,7 +704,11 @@ class Written:
     report: object = None
 
 
-def _problem(entry: dict, rules: dict, evidence: dict) -> str | None:
+def _same_words(a, b) -> bool:
+    return learn._overlap(learn._words(str(a or "")), learn._words(str(b or ""))) >= 0.8
+
+
+def _problem(entry: dict, rules: dict, evidence: dict, set_aside=()) -> str | None:
     kind, rid = entry.get("kind"), entry.get("id")
     if kind not in KINDS:
         return f"kind must be one of {', '.join(KINDS)}, not {kind!r}"
@@ -710,6 +724,10 @@ def _problem(entry: dict, rules: dict, evidence: dict) -> str | None:
         return f"scope must be global or repo:NAME, not {entry.get('scope')!r}"
     if (entry.get("level") or "advice") not in ("advice", "check", "block"):
         return f"level must be advice, check or block, not {entry.get('level')!r}"
+    aside = next((r for r in set_aside if r.id == rid or _same_words(r.rule, entry.get("rule"))),
+                  None)  # fmt: skip
+    if aside is not None:
+        return f"it repeats {aside.id}, which you set aside for now (bring it back from Decided)"
     if not str(entry.get("pattern") or "").strip():
         return "a proposal names the recurring pattern it covers"
     if kind == "new":
@@ -747,7 +765,7 @@ def write(config, outcome: Outcome, work: Load, *, now: datetime) -> Written:
     withdrawn: list = []  # (id, why)
     for entry in entries:
         entry = entry if isinstance(entry, dict) else {}
-        problem = _problem(entry, rules, work.evidence)
+        problem = _problem(entry, rules, work.evidence, work.set_aside)
         if problem:
             written.skipped.append((str(entry.get("id")), problem))
             continue
@@ -826,8 +844,8 @@ def _report(outcome: Outcome, written: Written, lines: list, unreviewed: bool, n
     if written.kept:
         parts += ["## Kept", "", *(f"- [[Profile/rules/{rid}]]" for rid in written.kept), ""]
     if written.withdrawn:
-        parts += ["## Withdrawn", "", "Rejected for you, under Decided in the app, where you "
-                  "can bring any of them back.", ""]  # fmt: skip
+        parts += ["## Withdrawn", "", "Set aside for you, under Decided in the app, where "
+                  "you can bring any of them back.", ""]  # fmt: skip
         parts += [f"- [[Profile/rules/{rid}]]: {why}" for rid, why in written.withdrawn] + [""]
     if written.unreviewed:
         parts += ["## Not reviewed", "", "Waiting proposals the final list left as they were.", ""]
