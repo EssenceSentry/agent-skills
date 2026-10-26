@@ -1,6 +1,6 @@
 ---
 name: jobs
-description: Register, watch, wait on and report long-running work with `ax job` instead of sleep loops or repeated status commands. Use whenever a command will run longer than a couple of minutes, when you start or inherit a SageMaker, Seamless, Runwatch or Tools MCP job, when you need to wait for something to finish, or when the user wants progress on their phone.
+description: Register, watch, wait on and report long-running work with `ax job` instead of sleep loops, bare background commands or repeated status checks. Use it by default, before you launch, for any command that may take over a minute, any Bash call you would give run_in_background, any loop over a remote API, any notebook execution (nbconvert --execute, Runwatch), any CI or deploy you wait on, and any SageMaker, Seamless or Tools MCP job you start or inherit; also when you need to wait for something to finish or the user wants progress on their phone.
 ---
 
 # Jobs
@@ -8,6 +8,12 @@ description: Register, watch, wait on and report long-running work with `ax job`
 `ax job` keeps long work visible without spending tokens: it records progress,
 estimates the finish with an 80% interval, ends waits on failure, and can wake your
 session when the job ends. Every command takes `--json`.
+
+**It is the default for long or background work.** Don't guess whether a command is
+long enough to deserve it: anything you would run in the background, loop over a
+remote API, execute as a notebook or wait on remotely goes through `ax job`. A
+background Bash call that bypasses it is paused by the guard; rerun it with
+`AX_INTENT="<why>"` in front only for work that is not a job, such as a dev server.
 
 ## Register the work
 
@@ -27,6 +33,13 @@ session when the job ends. Every command takes `--json`.
 
 Pick a short key that names the work (`score-violence-v5`); runs of one family that
 share a key stem (`score-…`) teach the estimator their usual duration.
+
+**Say how long you expect it to take** with `--expect` (`--expect 25m`) on `run`,
+`watch` or `new`; a rough guess is fine. A job expected to take over 10 minutes gets a
+Haiku look every 5 minutes asking two questions: is it working, and is it working at
+the pace it was expected to take? When it is, Haiku leaves a one-sentence summary
+(`ax job show KEY`, the dashboard and the app show the latest). When it isn't, the
+problem is recorded and `ax job wait` ends with exit 5, which wakes you.
 
 **Always describe the job** with `--label`: what it does and what you will do next
 when it succeeds or fails ("Extract candidate text and embeddings; then build the
@@ -66,7 +79,9 @@ user gets a push.
 
 `ax job wait` exit codes: 0 done, 1 failed, 2 stopped or ended, 3 stalled (with
 `--until stalled`), 4 the source check kept failing (credentials, a wrong name),
-124 timed out, 69 no such job. On 1 or 4, read `ax job show KEY` before acting.
+5 Haiku saw a problem (not working, or well behind its expected pace), 124 timed out,
+69 no such job. On 1, 4 or 5, read `ax job show KEY` before acting; on 5 the job is
+still running, so fix or stop it rather than waiting again.
 
 ## Report
 
