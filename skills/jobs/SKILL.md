@@ -52,6 +52,22 @@ annotation pilot. On failure, fix and relaunch from the saved scores"). The
 dashboard, the notifications and the note that wakes you all carry it. If you forgot,
 `ax job describe KEY --label "…"` adds it to a job already running.
 
+## Check it started before you wait
+
+Many failures land in the first seconds: a typo, a missing file or import, a wrong
+profile or job name, a service that refuses the first request. Waiting on such a job
+costs the whole time you expected it to take. Right after launching:
+
+1. Run `ax job wait KEY --timeout 60 --interval 5` in the foreground. Exit 124 means it
+   is still running after a minute; any other code means it already ended, so read why.
+2. Read what it has done so far: `ax job show KEY` for status, stage, progress and a
+   watched source's state, and for a run job the start of its log (`output.log`, next
+   to the events file `ax job show` prints). Confirm it is doing the work you meant:
+   the right inputs and settings, a first item done or progress moving, no error
+   repeating.
+3. Only then wait on it as below. If its first item takes longer than a minute, wait
+   for that item the same way with a longer `--timeout` rather than skipping the check.
+
 ## Wait without polling
 
 - **Claude Code:** run `ax job wait KEY` as a background command
