@@ -1039,6 +1039,7 @@ def stop(config) -> None:
 def _running(config) -> str | None:
     from ax import jobs
 
+    jobs.refresh_active(config)  # a run that ended while no one watched no longer blocks
     for job in jobs.list_jobs(config, refresh_active=False):
         if job.key.startswith("workshop-") and job.status == "running":
             return job.key

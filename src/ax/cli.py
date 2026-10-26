@@ -1107,6 +1107,12 @@ def sync(quiet: bool = typer.Option(False, "--quiet", "-q", help="Print nothing 
     for path, problem in unreadable:  # the user's to fix; the other rules were refreshed
         typer.echo(f"warning: rule note {path} skipped: {problem}")
     try:
+        from ax import jobs as jobs_module
+
+        jobs_module.refresh_active(config)  # jobs that ended while no one watched
+    except Exception as exc:  # the archive is synced either way
+        typer.echo(f"warning: jobs not refreshed: {type(exc).__name__}: {exc}")
+    try:
         from ax import workshop
 
         started = workshop.maybe_start(config)  # a spare last day: spend it on the rules

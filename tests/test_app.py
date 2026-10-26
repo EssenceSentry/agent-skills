@@ -80,6 +80,27 @@ def test_now_shows_running_jobs_and_recent_conversations_by_handle(queue):
     assert state["last_sync"]
 
 
+def test_the_app_refreshes_jobs_at_most_once_a_minute(env, monkeypatch):
+    calls, now = [], [100.0]
+    monkeypatch.setattr(jobs, "refresh_active", lambda config: calls.append(now[0]))
+    monkeypatch.setattr(serve.time, "monotonic", lambda: now[0])
+    serve._jobs(env.config)
+    now[0] += 30
+    serve._jobs(env.config)
+    now[0] += 31
+    serve._jobs(env.config)
+    assert calls == [100.0, 161.0]
+
+
+def test_a_job_that_ended_while_no_one_watched_leaves_running_now(env):
+    import json
+
+    jobs.new(env.config, "workshop-x", label="Rules workshop")
+    with open(jobs.events_path(env.config, "workshop-x"), "a") as f:
+        f.write(json.dumps({"exit": 0}) + "\n")
+    assert app.now_state(env.config, usage_of=fake_usage)["jobs"] == []
+
+
 def test_usage_shows_every_window_of_both_tools_even_when_one_is_unknown(env):
     def windows(config):
         return [

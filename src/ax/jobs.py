@@ -581,6 +581,19 @@ def list_jobs(config, *, include_finished: bool = False, refresh_active: bool = 
     return [j for j in found if include_finished or not j.terminal]
 
 
+def refresh_active(config) -> None:
+    """Bring every active job up to date: how it ended, from its events file, and its
+    local checks. The slow ones (an AWS call a minute each) are left to `ax job` and the
+    job service, so this is cheap enough for the app and the scheduled sync."""
+    from ax import job_sources
+
+    with connect(config) as db:
+        active = [(r["key"], r["kind"]) for r in db.execute("SELECT key, kind, status FROM jobs")
+                  if r["status"] not in TERMINAL]  # fmt: skip
+    for key, kind in active:
+        refresh(config, key, check=job_sources.MIN_INTERVAL.get(kind, 0) == 0)
+
+
 def poll(config) -> list[Job]:
     """Refresh every active job once; returns the jobs that are still active."""
     return list_jobs(config)

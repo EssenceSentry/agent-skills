@@ -835,6 +835,21 @@ def test_after_a_sync_a_spare_window_with_work_waiting_starts_a_detached_run(wor
     assert len(launched) == 1
 
 
+def test_a_run_that_ended_while_no_one_watched_does_not_block_the_next(work):
+    import json
+
+    from ax import jobs
+
+    env, _ = work
+    jobs.new(env.config, "workshop-20261025-1826", label="Rules workshop")
+    with open(jobs.events_path(env.config, "workshop-20261025-1826"), "a") as f:
+        f.write(json.dumps({"exit": 0}) + "\n")  # it ended; nothing read that
+    started = []
+    workshop.maybe_start(env.config, readings=spare(), now=NOW,
+                         launch=lambda c, k, label: started.append(k))  # fmt: skip
+    assert started
+
+
 def test_nothing_starts_without_a_spare_window_or_when_turned_off(work, monkeypatch):
     env, _ = work
     never = lambda config, key, label: pytest.fail("started a run")  # noqa: E731
@@ -965,5 +980,10 @@ def test_sync_checks_whether_the_workshop_should_start(env, monkeypatch):
 
     monkeypatch.setenv("AX_CONFIG", str(env.config_path))
     monkeypatch.setattr(workshop, "maybe_start", lambda config: "started workshop-x: 3 agents")
+    from ax import jobs
+
+    refreshed = []
+    monkeypatch.setattr(jobs, "refresh_active", lambda config: refreshed.append(1))
     result = CliRunner().invoke(cli, ["sync"])
     assert "rules workshop: started workshop-x" in result.output
+    assert refreshed  # the scheduled sync brings jobs that ended up to date

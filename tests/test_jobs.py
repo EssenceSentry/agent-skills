@@ -256,3 +256,25 @@ def test_an_exit_code_must_be_a_number(env):
     job = jobs.refresh(env.config, "score")
     assert job.status == "running"
     assert any(e["type"] == "bad_line" for e in jobs.events(env.config, "score"))
+
+
+def ended_unread(config, key, code=0):
+    """A job whose runner wrote how it ended, which no one has read yet."""
+    jobs.new(config, key, label="ended while no one watched")
+    with open(jobs.events_path(config, key), "a") as f:
+        f.write(json.dumps({"exit": code}) + "\n")
+
+
+def test_refresh_active_reads_how_jobs_ended_without_the_slow_checks(env, monkeypatch):
+    from ax import job_sources
+
+    ended_unread(env.config, "done-1")
+    ended_unread(env.config, "failed-1", code=1)
+    slow = jobs._register(env.config, "sm-1", "sagemaker", "arn:aws:sagemaker:x", label=None,
+                          spec={}, cwd=None, env=None)  # fmt: skip
+    monkeypatch.setattr(job_sources, "check", lambda *a, **k: pytest.fail("ran a slow check"))
+    jobs.refresh_active(env.config)
+    found = {j.key: j.status for j in jobs.list_jobs(env.config, include_finished=True,
+                                                         refresh_active=False)}  # fmt: skip
+    assert found["done-1"] == "done" and found["failed-1"] == "failed"
+    assert found[slow.key] == "running"

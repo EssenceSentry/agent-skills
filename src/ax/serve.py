@@ -441,10 +441,18 @@ def _usage_rows(config: Config, usage_of) -> list[dict]:
     return rows
 
 
+_JOBS_TTL = 60  # seconds between the app's refreshes of active jobs
+_jobs_refreshed: dict = {}
+
+
 def _jobs(config: Config) -> list[dict]:
-    """Running jobs and those that ended in the last day, as stored: the page never
-    refreshes a job itself, so a view never calls AWS. Followers and the background
-    poller keep them current."""
+    """Running jobs and those that ended in the last day. Active jobs are refreshed at most
+    once a minute, without the slow checks, so a job that ended while no one watched
+    leaves "running" and a view never calls AWS."""
+    tick, data = time.monotonic(), str(config.data)
+    if tick - _jobs_refreshed.get(data, -_JOBS_TTL) >= _JOBS_TTL:
+        _jobs_refreshed[data] = tick
+        jobs.refresh_active(config)
     now = datetime.now(UTC)
     rows = []
     for job in jobs.list_jobs(config, include_finished=True, refresh_active=False):
