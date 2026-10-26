@@ -101,6 +101,20 @@ def test_a_job_that_ended_while_no_one_watched_leaves_running_now(env):
     assert app.now_state(env.config, usage_of=fake_usage)["jobs"] == []
 
 
+def test_a_running_job_shows_haiku_s_interval_and_latest_look(env):
+    from ax import job_follow
+
+    jobs.new(env.config, "score-2", label="Score rows")
+    job_follow.set_check(env.config, "score-2", every=600)
+    jobs.record_event(env.config, "score-2", "look",
+                      {"summary": "Scoring rows, 40 of 100 done.", "problem": None, "every": 600})  # fmt: skip
+    [job] = [
+        j for j in app.now_state(env.config, usage_of=fake_usage)["jobs"] if j["key"] == "score-2"
+    ]
+    assert job["check_every"] == 600
+    assert job["look"]["summary"] == "Scoring rows, 40 of 100 done." and job["look"]["at"]
+
+
 def test_usage_shows_every_window_of_both_tools_even_when_one_is_unknown(env):
     def windows(config):
         return [

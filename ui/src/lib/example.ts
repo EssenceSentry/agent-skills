@@ -306,6 +306,13 @@ export const exampleNow: NowState = {
       check_error: null,
       updated: at(-1),
       link: null,
+      check_every: 600,
+      look: {
+        at: at(-4),
+        summary:
+          "Embedding batch 32 of 49 at about 160 images a minute; no errors since the start.",
+        problem: null,
+      },
     },
     {
       key: "review-leakage",

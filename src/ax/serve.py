@@ -473,6 +473,8 @@ def _jobs(config: Config) -> list[dict]:
                 "check_error": job.check_error,
                 "updated": job.updated,
                 "link": follower.get("link") if follower else None,
+                "check_every": None if job.terminal else job_follow.check_every(config, job.key),
+                "look": jobs.latest_look(config, job.key),
             }
         )
     running = [r for r in rows if r["status"] == "running"]

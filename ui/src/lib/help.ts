@@ -113,7 +113,7 @@ export const areas: Area[] = [
     id: "jobs",
     area: "Long jobs",
     title: "Jobs that wake the conversation that started them",
-    body: "Register anything that runs longer than a few minutes. ax estimates when it ends, follows it with ntfy messages, has Haiku read its log every 30 minutes, and brings a note on how it ended back into the conversation that started it.",
+    body: "Register anything that runs longer than a few minutes. ax estimates when it ends, follows it with ntfy messages, has Haiku look at its log as often as you say (every 30 minutes by default) and keeps each look's summary for you to read, and brings a note on how it ended back into the conversation that started it.",
     commands: ["ax job"],
     proof: "Its 80% finish interval covered 84% of steady simulated runs.",
   },

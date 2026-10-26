@@ -41,7 +41,7 @@ import {
 } from "@/lib/ax"
 import { amount, budgetBar, budgetSummary, budgetTone } from "@/lib/budget"
 import { readHref } from "@/lib/routes"
-import { ago, until } from "@/lib/time"
+import { ago, every, until } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 const GROUPS: { kind: Waiting["kind"]; title: string }[] = [
@@ -674,6 +674,23 @@ function JobRow({ job }: { job: Job }) {
       {job.check_error && (
         <div className="flex items-start gap-1.5 text-xs">
           <TriangleAlert className="mt-px size-3.5 shrink-0 text-warning" /> {job.check_error}
+        </div>
+      )}
+      {(job.check_every || job.look) && (
+        <div className="space-y-1 rounded-lg bg-sunken/70 px-3 py-2">
+          <div className="text-[11.5px] text-muted-foreground">
+            Haiku
+            {job.check_every ? ` · every ${every(job.check_every)}` : " · not looking"}
+            {job.look ? ` · looked ${ago(job.look.at)}` : ""}
+          </div>
+          {job.look?.summary && (
+            <p className="text-[13px] leading-snug text-ink-2">{job.look.summary}</p>
+          )}
+          {job.look?.problem && (
+            <div className="flex items-start gap-1.5 text-xs">
+              <TriangleAlert className="mt-px size-3.5 shrink-0 text-warning" /> {job.look.problem}
+            </div>
+          )}
         </div>
       )}
       {job.link && (

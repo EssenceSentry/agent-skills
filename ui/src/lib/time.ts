@@ -37,3 +37,17 @@ export function clock(iso: string | null | undefined, now = new Date()): string 
     ? time
     : `${when.toLocaleDateString([], { weekday: "short" })} ${time}`
 }
+
+/** An interval in seconds as you would say it: 45 s, 10 min, 90 min, 2 h, 1 d. */
+export function every(seconds: number): string {
+  for (const [size, unit] of [
+    [86_400, "d"],
+    [3_600, "h"],
+    [60, "min"],
+  ] as const) {
+    if (seconds >= size && (seconds % size === 0 || seconds >= 10 * size)) {
+      return `${Number((seconds / size).toFixed(1))} ${unit}`
+    }
+  }
+  return seconds >= 60 ? `${Number((seconds / 60).toFixed(1))} min` : `${seconds} s`
+}
