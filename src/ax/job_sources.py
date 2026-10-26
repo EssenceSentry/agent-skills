@@ -4,8 +4,10 @@ Runwatch notebook run, or a job of the auto-classifier Tools MCP.
 Each source reads a job's `spec` and returns `Update`s for `ax.jobs`. AWS is
 reached through the `aws` command line, so ax needs no boto3 and uses whatever
 credentials the calling shell has; missing or expired ones become a check error,
-never a failed job. Runwatch is read through its own `status` and `events`
-commands, and the Tools MCP through the job.json files its workers keep.
+never a failed job. Runwatch is read through its own `status`, `context` and
+`events` commands; those leave a failed cell's error text out, so that alone comes
+from the run's database, read-only. The Tools MCP is read through the job.json
+files its workers keep.
 """
 
 import copy
@@ -14,13 +16,16 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
 from ax.jobs import Job, Update, normalize_status, number, read_lines
+from ax.redact import redact
 
 # Seconds between checks of one job; AWS calls are spaced out, local ones are free.
 MIN_INTERVAL = {
@@ -297,13 +302,15 @@ def _bar_progress(job: Job) -> list[Update]:
 
 
 def _check_run(job: Job) -> list[Update]:
-    """Progress bars in the output, and the end of a runner killed before its exit line.
+    """Progress bars in the output, or the notebook a `runwatch execute` command runs,
+    and the end of a runner killed before its exit line.
 
     The runner writes that line just before it exits, so lines that arrived after
     this refresh read the events file are read again before calling the job ended.
     """
     if job.spec.get("pid") is None or not _check_pid(job):
-        return _bar_progress(job)
+        rw = runwatch_spec(job)
+        return _launched_run(job, rw) if rw and rw.get("binary") else _bar_progress(job)
     late, job.offset = read_lines(Path(job.spec["events"]), job.offset)
     if any(update.status for update in late):
         return late
@@ -523,18 +530,29 @@ def _check_seamless(job: Job) -> list[Update]:
 
 # runwatch
 
-# A paused run waits for a repair, so it ends the ax job and wakes whoever waits on it.
+# A paused run waits for a repair. The job stays active and keeps watching the run: each
+# new pause is a problem, which ends `ax job wait` and wakes the agent, and the same job
+# follows the run through `runwatch resume` or `restart` to its end.
 _RUNWATCH_STATUS = {"succeeded": "done", "failed": "failed", "cancelled": "stopped"}
 _RUNWATCH_ACTIVE = {"running", "restarting", "finalizing", "waiting_external"}
 # A run still "created" with no controller this long after it was made never started:
 # the command that launched it failed (a taken port, a bad setting) after creating it.
 _RUNWATCH_START_GRACE = 120.0
+# Runwatch prints this line when it starts a run in a folder it picked itself.
+_RUN_ANNOUNCED = re.compile(r"^Runwatch run directory: (\S.*?)\s*$", re.M)
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_OUTPUT_CHARS = 1500
+_ERROR_CHARS = 600
+
+
+def _executable(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
 
 
 def _runwatch_binary(options: dict, cwd: str) -> str:
     given = options.get("runwatch") or os.environ.get("AX_RUNWATCH") or shutil.which("runwatch")
     path = _resolve(given, cwd) if given else None
-    if path is None or not path.is_file() or not os.access(path, os.X_OK):
+    if path is None or not _executable(path):
         raise ValueError(
             "no runwatch command: put it on PATH, set AX_RUNWATCH, or pass --runwatch PATH"
         )
@@ -548,10 +566,79 @@ def _prepare_runwatch(ref, options, cwd):
     return str(run), {"run": str(run), "binary": _runwatch_binary(options, cwd)}
 
 
-def _runwatch(job: Job, command: str) -> str:
+def _find_runwatch(word: str, cwd: str, env) -> str | None:
+    """The runwatch a command line names: a path, or a name on its PATH or in the
+    project's .venv (`uv run runwatch`), else AX_RUNWATCH."""
+    if "/" in word:
+        path = _resolve(word, cwd)
+        return str(path) if _executable(path) else None
+    found = shutil.which(word, path=env.get("PATH")) if env.get("PATH") else shutil.which(word)
+    venv = Path(cwd) / ".venv" / "bin" / word
+    given = env.get("AX_RUNWATCH") or os.environ.get("AX_RUNWATCH")
+    for candidate in (found, venv, given):
+        if candidate and _executable(Path(candidate)):
+            return str(Path(candidate).resolve())
+    return None
+
+
+def runwatch_launch(argv: list[str], cwd: str, env) -> dict | None:
+    """The Runwatch run a command starts when it is `runwatch execute`, however it is
+    wrapped (`uv run`, `env`, a credentials script): the runwatch to read it with, and
+    its run folder when --run-dir names one. None for any other command."""
+    at = next((i for i, word in enumerate(argv[:-1])
+               if os.path.basename(word) == "runwatch" and argv[i + 1] == "execute"), None)  # fmt: skip
+    if at is None:
+        return None
+    run = None
+    rest = argv[at + 2 :]
+    for i, word in enumerate(rest):
+        if word == "--run-dir" and i + 1 < len(rest):
+            run = rest[i + 1]
+        elif word.startswith("--run-dir="):
+            run = word.split("=", 1)[1]
+    binary = _find_runwatch(argv[at], cwd, env)
+    return {"binary": binary, "run": str(_resolve(run, cwd)) if run else None}
+
+
+def _launched_run(job: Job, rw: dict) -> list[Update]:
+    """The run a `runwatch execute` command started, once its folder exists: from
+    --run-dir, or from the line Runwatch prints when it picks the folder itself."""
+    if not rw.get("run"):
+        try:
+            with open(job.spec["log"], "rb") as f:
+                head = f.read(65536).decode("utf-8", "replace")
+        except (OSError, KeyError):
+            return []
+        found = _RUN_ANNOUNCED.search(head)
+        if not found:
+            return []
+        rw["run"] = str(_resolve(found.group(1), job.cwd or os.getcwd()))
+    if not (Path(rw["run"]) / "runwatch.sqlite3").exists():
+        return []  # Runwatch hasn't created it yet
+    return _runwatch_updates(job, rw)
+
+
+def runwatch_spec(job: Job) -> dict | None:
+    """Where a job keeps its Runwatch run: the spec of a watched run, or the run an
+    `ax job run` command launched."""
+    if job.kind == "runwatch":
+        return job.spec
+    found = job.spec.get("runwatch") if job.kind == "run" else None
+    return found if isinstance(found, dict) else None
+
+
+def min_interval(kind: str, spec: dict | None = None) -> float:
+    """Seconds between checks of a job; a run job that launched Runwatch reads it as a
+    watched run does."""
+    if kind == "run" and (spec or {}).get("runwatch"):
+        return MIN_INTERVAL["runwatch"]
+    return MIN_INTERVAL.get(kind, 0)
+
+
+def _runwatch(rw: dict, command: str) -> str:
     try:
         done = subprocess.run(
-            [job.spec["binary"], command, job.spec["run"], "--json"],
+            [rw["binary"], command, rw["run"], "--json"],
             capture_output=True, text=True, timeout=60,
         )  # fmt: skip
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -562,10 +649,20 @@ def _runwatch(job: Job, command: str) -> str:
     return done.stdout
 
 
-def _runwatch_bar(job: Job, cell: int) -> tuple | None:
+def _runwatch_json(rw: dict, command: str) -> dict:
+    try:
+        found = json.loads(_runwatch(rw, command))
+    except ValueError:
+        raise CheckError(f"runwatch {command} gave no JSON") from None
+    if not isinstance(found, dict) or not isinstance(found.get("run"), dict):
+        raise CheckError(f"runwatch {command} gave no run state")
+    return found
+
+
+def _runwatch_bar(rw: dict, cell: int) -> tuple | None:
     """The newest progress bar the current cell drew, from `runwatch events`."""
     found = None
-    for line in _runwatch(job, "events").splitlines():
+    for line in _runwatch(rw, "events").splitlines():
         try:
             event = json.loads(line)
         except ValueError:
@@ -579,25 +676,33 @@ def _runwatch_bar(job: Job, cell: int) -> tuple | None:
 
 
 def _check_runwatch(job: Job) -> list[Update]:
-    try:
-        state = json.loads(_runwatch(job, "status"))
-        run = state["run"]
-    except (ValueError, KeyError, TypeError):
-        raise CheckError("runwatch status gave no run state") from None
+    return _runwatch_updates(job, job.spec)
+
+
+def _runwatch_updates(job: Job, rw: dict) -> list[Update]:
+    state = _runwatch_json(rw, "status")
+    run = state["run"]
     raw, message = run.get("status"), _text(run.get("message"))
+    if raw in _RUNWATCH_ACTIVE and not state.get("controller_live"):
+        raise CheckError(
+            f"Runwatch's controller is not running; `runwatch resume {rw['run']}` restarts the run"
+        )
+    asked = read_wake_at(rw)
+    context = None
+    if asked:
+        context = _runwatch_json(rw, "context")
+    elif raw == "paused":
+        try:
+            context = _runwatch_json(rw, "context")
+        except CheckError:
+            context = None  # the pause is known from its status; the details are a courtesy
+    updates = _checkpoints(job, rw, context, asked) if asked or rw.get("checkpoints") else []
     if raw == "paused":
-        cell = run.get("failed_cell_index")
-        where = f" at cell {cell}" if cell is not None else ""
-        reason = message or "it needs attention"
-        return [
-            Update(
-                status="failed",
-                message=f"paused{where}: {reason}. Repair it, run `runwatch resume "
-                f"{job.spec['run']}`, then watch it again",
-            )
-        ]
+        return [*updates, _paused(job, rw, run, context)]
     if raw in _RUNWATCH_STATUS:
-        return [Update(status=_RUNWATCH_STATUS[raw], message=message)]
+        # A run resumed and finished between two checks would otherwise end "paused".
+        stage = raw if (job.stage or "").startswith("paused") else None
+        return [*updates, Update(status=_RUNWATCH_STATUS[raw], message=message, stage=stage)]
     if raw == "created" and not state.get("controller_live"):
         made = run.get("created_at") or job.created
         try:
@@ -613,17 +718,306 @@ def _check_runwatch(job: Job) -> list[Update]:
                     "that launched it (a taken port, a bad setting), then launch it again",
                 )
             ]
-    if raw in _RUNWATCH_ACTIVE and not state.get("controller_live"):
-        raise CheckError(
-            f"Runwatch's controller is not running; `runwatch resume {job.spec['run']}` "
-            "restarts the run"
-        )
     cell = run.get("current_cell_index")
     update = Update(stage=f"cell {cell}" if cell is not None else raw, message=message)
-    bar = _runwatch_bar(job, cell) if cell is not None else None
+    bar = _runwatch_bar(rw, cell) if cell is not None else None
     if bar:
         update.done, update.total, update.unit = bar
-    return [update]
+    return [*updates, update]
+
+
+def _label(label) -> str:
+    """A cell's section heading as people read it: "# Train" -> "Train"."""
+    return str(label or "").strip().lstrip("#").strip()
+
+
+def _named(cell: dict | None, index=None) -> str:
+    index = cell.get("cell_index", index) if cell else index
+    where = f"cell {index}" if index is not None else "a cell"
+    label = _label(cell.get("label")) if cell else ""
+    return f"{where} ({label})" if label else where
+
+
+def _paused(job: Job, rw: dict, run: dict, context: dict | None) -> Update:
+    """The pause as the job's stage, and a problem the first time this pause is seen."""
+    failed = (context or {}).get("failed_cell") or {}
+    index = failed.get("cell_index", run.get("failed_cell_index"))
+    error_type = failed.get("error_type")
+    text = f"paused at {_named(failed, index)}" + (f": {error_type}" if error_type else "")
+    folder = rw["run"]
+    update = Update(
+        stage=f"paused at cell {index}" if index is not None else "paused",
+        message=f"{text}. Repair it, then `runwatch resume {folder}` or `runwatch restart "
+        f"{folder}`; ax keeps watching the run",
+    )
+    pause = {"epoch": run.get("kernel_epoch"), "cell": index, "attempt": failed.get("attempt")}
+    if _new_pause(rw.get("paused"), pause):
+        details = _pause_details(job, rw, failed, index)
+        pause_id = f"{pause['epoch']}:{index}:{pause['attempt']}"
+        update.events.append(("problem", {"text": text, "details": details, "id": pause_id,
+                                          "source": "runwatch"}))  # fmt: skip
+    if _new_pause(rw.get("paused"), pause) or pause["attempt"] is not None:
+        rw["paused"] = pause
+    return update
+
+
+def _new_pause(seen, pause: dict) -> bool:
+    """Whether this pause is not the one already reported: another kernel epoch or cell,
+    or another attempt at the cell. An attempt unread this time (no context) is the same."""
+    if not isinstance(seen, dict):
+        return True
+    if (seen.get("epoch"), seen.get("cell")) != (pause["epoch"], pause["cell"]):
+        return True
+    known = seen.get("attempt") is not None and pause["attempt"] is not None
+    return known and seen["attempt"] != pause["attempt"]
+
+
+def _clip(text: str, limit: int) -> str:
+    """The end of `text`: an error's decisive line and a cell's latest output come last."""
+    text = text.strip()
+    return text if len(text) <= limit else "…" + text[-limit:]
+
+
+def _cell_error(run: str, cell_id, index) -> tuple[str, str, list] | None:
+    """The failed cell's error and traceback, which Runwatch's JSON commands leave out:
+    read from its database, read-only and best effort."""
+    path = Path(run) / "runwatch.sqlite3"
+    try:
+        db = sqlite3.connect(f"file:{urllib.parse.quote(str(path))}?mode=ro", uri=True, timeout=2)
+        try:
+            row = db.execute(
+                "SELECT error_name, error_value, traceback_json FROM cells "
+                "WHERE cell_id = ? OR cell_index = ? ORDER BY cell_id = ? DESC LIMIT 1",
+                (cell_id, index, cell_id),
+            ).fetchone()
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return None
+    if not row or not row[0]:
+        return None
+    try:
+        traceback = json.loads(row[2] or "[]")
+    except ValueError:
+        traceback = []
+    return row[0], row[1] or "", traceback if isinstance(traceback, list) else []
+
+
+def _joined(value) -> str:
+    return "".join(value) if isinstance(value, list) else str(value or "")
+
+
+def cell_outputs(run: str, cell_id, index) -> str:
+    """What a cell printed and showed, as text, from the run's rolling checkpoint."""
+    for name in ("executed.partial.ipynb", "executed.ipynb"):
+        try:
+            cells = json.loads((Path(run) / name).read_text()).get("cells") or []
+        except (OSError, ValueError, AttributeError):
+            continue
+        cell = next((c for c in cells if cell_id and c.get("id") == cell_id), None)
+        if cell is None and index is not None and 0 <= index < len(cells):
+            cell = cells[index]
+        if cell is not None:
+            break
+    else:
+        return ""
+    parts = []
+    for out in cell.get("outputs") or []:
+        kind = out.get("output_type")
+        if kind == "stream":
+            parts.append(_joined(out.get("text")))
+        elif kind in ("execute_result", "display_data"):
+            data = out.get("data") or {}
+            shown = sorted(m for m in data if m != "text/plain")
+            text = _joined(data.get("text/plain"))
+            parts.append(f"[{', '.join(shown)}] {text}".strip() if shown else text)
+        elif kind == "error":
+            parts.append(f"{out.get('ename')}: {out.get('evalue')}")
+    text = "\n".join(p.rstrip("\n") for p in parts if p.strip())
+    return _clip(_ANSI.sub("", text), _OUTPUT_CHARS)
+
+
+def _pause_details(job: Job, rw: dict, failed: dict, index) -> str:
+    folder = rw["run"]
+    lines = []
+    error = _cell_error(folder, failed.get("cell_id"), index)
+    if error:
+        name, value, traceback = error
+        lines.append(f"Error: {name}: {_clip(_ANSI.sub('', value), _ERROR_CHARS)}")
+        tail = [_ANSI.sub("", line) for line in traceback if str(line).strip()][-6:]
+        if tail:
+            lines.append("Traceback, last lines:\n" + "\n".join(tail))
+    printed = cell_outputs(folder, failed.get("cell_id"), index)
+    if printed:
+        lines.append(f"Last output of the cell:\n{printed}")
+    lines.append(
+        f"Read the run with `runwatch context {folder} --json`; its dashboard shows the full "
+        f"traceback. Repair {folder}/source.ipynb (or the code it imports), then `runwatch "
+        f"resume {folder}`, or `runwatch restart {folder}` after changing earlier cells or "
+        f"imported code. {job.key} keeps watching the run and reports the next pause or the "
+        f"end: wait on it again with `ax job wait {job.key}`; don't register the run anew."
+    )
+    return redact("\n".join(lines))
+
+
+# Checkpoints: cells whose success wakes the agent while the run goes on.
+
+
+def read_wake_at(rw: dict) -> list[str]:
+    """The checkpoints asked for (`ax job wake-at`), kept beside the job's events."""
+    folder = rw.get("folder")
+    if not folder:
+        return []
+    try:
+        found = json.loads((Path(folder) / "wake_at.json").read_text()).get("cells")
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [str(c) for c in found] if isinstance(found, list) else []
+
+
+def split_wake_at(values) -> list[str]:
+    """Checkpoints as given: cell numbers ("12,30"), cell ids or section headings."""
+    found = []
+    for value in values or ():
+        text = str(value).strip()
+        parts = [p.strip() for p in text.split(",")] if re.fullmatch(r"[\d,\s]+", text) else [text]
+        found += [p for p in parts if p and p not in found]
+    return found
+
+
+def _resolve_checkpoint(ask: str, cells: list[dict]) -> dict | None:
+    """The cells a checkpoint waits for: a cell number (zero-based, as `runwatch context
+    --json` counts), a cell id, or every cell of a section, by its heading."""
+    if ask.isdigit():
+        found = [c for c in cells if c.get("cell_index") == int(ask)]
+        return {"ids": [found[0]["cell_id"]], "section": False} if found else None
+    if any(c.get("cell_id") == ask for c in cells):
+        return {"ids": [ask], "section": False}
+    wanted = _label(ask).casefold()
+    ids = [c["cell_id"] for c in cells if wanted and _label(c.get("label")).casefold() == wanted]
+    return {"ids": ids, "section": True} if ids else None
+
+
+def _checkpoint_name(resolved: dict, mine: list[dict]) -> str:
+    last = max(mine, key=lambda c: c.get("cell_index", 0))
+    if resolved["section"]:
+        return f"the end of section {_label(last.get('label'))}"
+    return _named(last)
+
+
+def checkpoint_names(rw: dict, asked: list[str]) -> list[str]:
+    """What each checkpoint waits for, read against the run; ValueError for one that
+    matches no cell."""
+    try:
+        cells = _runwatch_json(rw, "context").get("cells") or []
+    except CheckError as exc:
+        raise ValueError(f"can't read the run's cells: {exc}") from None
+    names, unknown = [], []
+    for ask in asked:
+        resolved = _resolve_checkpoint(ask, cells)
+        if resolved is None:
+            unknown.append(ask)
+            continue
+        by_id = {c["cell_id"]: c for c in cells}
+        names.append(_checkpoint_name(resolved, [by_id[i] for i in resolved["ids"]]))
+    if unknown:
+        raise ValueError(f"{', '.join(unknown)} matches no cell of the run. {_cell_help(cells)}")
+    return names
+
+
+def _cell_help(cells: list[dict]) -> str:
+    sections = list(dict.fromkeys(_label(c.get("label")) for c in cells if _label(c.get("label"))))
+    last = max((c.get("cell_index", 0) for c in cells), default=0)
+    return (f"Give a cell number from 0 to {last} (as `runwatch context --json` counts them), "
+            f"a cell id, or a section: {'; '.join(sections) or 'none'}.")  # fmt: skip
+
+
+def _checkpoints(job: Job, rw: dict, context: dict | None, asked: list[str]) -> list[Update]:
+    """A checkpoint event each time a chosen cell (or every cell of a chosen section)
+    has succeeded in a run of it not reported yet: once per kernel epoch and attempt."""
+    state = rw.setdefault("checkpoints", {"asked": [], "resolved": {}, "fired": {}, "unknown": []})
+    if asked != state["asked"]:
+        state.update(asked=asked, resolved={}, unknown=[],
+                     fired={k: v for k, v in state["fired"].items() if k in asked})  # fmt: skip
+    if not asked or context is None:
+        return []
+    cells = context.get("cells") or []
+    run = context.get("run") or {}
+    by_id = {c.get("cell_id"): c for c in cells}
+    events = []
+    for ask in asked:
+        if ask not in state["resolved"]:
+            resolved = _resolve_checkpoint(ask, cells)
+            if resolved is None:
+                if ask not in state["unknown"]:
+                    state["unknown"].append(ask)
+                    events.append(("problem", {
+                        "text": f"checkpoint {ask!r} matches no cell in the run",
+                        "details": f"{_cell_help(cells)} Set the checkpoints again with "
+                                   f"`ax job wake-at {job.key} ...`.",
+                        "id": f"wake-at:{ask}", "source": "runwatch",
+                    }))  # fmt: skip
+                continue
+            state["resolved"][ask] = resolved
+        resolved = state["resolved"][ask]
+        mine = [by_id[i] for i in resolved["ids"] if i in by_id]
+        statuses = {c.get("status") for c in mine}
+        if not mine or not statuses <= {"succeeded", "skipped"} or "succeeded" not in statuses:
+            continue
+        seen = f"{run.get('kernel_epoch')}:" + ",".join(
+            f"{c['cell_id']}@{c.get('attempt')}" for c in mine
+        )
+        if state["fired"].get(ask) == seen:
+            continue
+        state["fired"][ask] = seen
+        last = max((c for c in mine if c.get("status") == "succeeded"),
+                   key=lambda c: c.get("cell_index", 0))  # fmt: skip
+        name = _checkpoint_name(resolved, mine)
+        events.append(("checkpoint", {
+            "text": f"reached {name}", "cell": last.get("cell_index"),
+            "label": _label(last.get("label")), "source": "runwatch",
+            "details": _checkpoint_details(job, rw, last),
+        }))  # fmt: skip
+    return [Update(events=events)] if events else []
+
+
+def _checkpoint_details(job: Job, rw: dict, cell: dict) -> str:
+    folder, index = rw["run"], cell.get("cell_index")
+    printed = cell_outputs(folder, cell.get("cell_id"), index)
+    lines = [f"Output of cell {index}:\n{printed}" if printed else f"Cell {index} printed nothing."]
+    lines.append(
+        f"The run keeps going. This is a checkpoint you asked for: its full outputs are in "
+        f"{folder}/executed.partial.ipynb (cell {index}) and on the dashboard. Look at the "
+        f"intermediate results now, then wait again with `ax job wait {job.key}`."
+    )
+    return redact("\n".join(lines))
+
+
+def notebook_brief(job: Job) -> str | None:
+    """Where a Runwatch run stands, for a model reading the job: its state, the current
+    and failed cells, and how many cells are done."""
+    rw = runwatch_spec(job)
+    if not rw or not rw.get("binary") or not rw.get("run"):
+        return None
+    try:
+        context = _runwatch_json(rw, "context")
+    except CheckError:
+        return None
+    run, cells = context["run"], context.get("cells") or []
+    by_index = {c.get("cell_index"): c for c in cells}
+    head = f"Runwatch notebook run: {run.get('status')}"
+    lines = [head + (f" ({run['message']})" if run.get("message") else "")]
+    lines.append(f"Kernel epoch {run.get('kernel_epoch')}, {len(cells)} cells")
+    current = run.get("current_cell_index")
+    if current is not None:
+        lines.append(f"Current: {_named(by_index.get(current), current)}")
+    counts: dict[str, int] = {}
+    for c in cells:
+        counts[c.get("status") or "unknown"] = counts.get(c.get("status") or "unknown", 0) + 1
+    lines.append("Cells: " + ", ".join(f"{n} {s}" for s, n in sorted(counts.items())))
+    for c in context.get("failed_cells") or []:
+        lines.append(f"Failed: {_named(c)}: {c.get('error_type') or 'error'}")
+    return "\n".join(lines)
 
 
 # tools: jobs of the auto-classifier Tools MCP

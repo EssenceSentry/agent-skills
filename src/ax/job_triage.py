@@ -73,7 +73,16 @@ class Look:
 
 
 def tail(config, job) -> str:
-    """The end of the job's output log, or its latest events when it has no log."""
+    """The end of the job's output log, or its latest events when it has no log. A
+    Runwatch notebook's state comes first, since its log holds only what cells print."""
+    from ax.job_sources import notebook_brief
+
+    text = _output(config, job)
+    brief = notebook_brief(job)
+    return f"{redact(brief)}\n\nOutput:\n{text}" if brief else text
+
+
+def _output(config, job) -> str:
     log = jobs.events_path(config, job.key).parent / "output.log"
     if log.exists():
         with open(log, "rb") as f:

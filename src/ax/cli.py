@@ -1510,8 +1510,30 @@ _EXPECT = typer.Option(
 _WAKE = typer.Option(
     None,
     "--wake",
-    help="auto, claude or codex: when the job ends, resume the session that registered it.",
+    help="auto, claude, codex or none: when the job ends, resume the session that registered "
+    "it. A Runwatch run registered from an agent session wakes it unless --wake none; it also "
+    "wakes it at every pause and checkpoint.",
 )
+_WAKE_AT = typer.Option(
+    None,
+    "--wake-at",
+    help="Runwatch: wake the agent when this cell succeeds, and let the run go on. A cell "
+    "number counted from 0 (several: 12,30), a cell id, or a section heading (its last cell). "
+    "Repeat for more; change them later with `ax job wake-at`.",
+)
+
+
+def _wake_for(config, key: str, wake: str | None) -> str | None:
+    """--wake as asked; a Runwatch run registered from an agent session wakes it unless
+    told `--wake none`, since its pauses wait on that agent."""
+    if wake == "none":
+        return None
+    if wake:
+        return wake
+    from ax.job_sources import runwatch_spec
+
+    job = jobs_module.get(config, key)
+    return "auto" if job and job.agent and runwatch_spec(job) is not None else None
 
 
 def _start_follower(
@@ -1519,6 +1541,7 @@ def _start_follower(
 ) -> None:
     """Start a detached follower when asked, or when the job is expected to run long enough
     for Haiku's looks; its link goes to stderr, so stdout stays capturable."""
+    wake = _wake_for(config, key, wake)
     seconds = None
     if expect:
         try:
@@ -1534,6 +1557,7 @@ def _start_follower(
     args += ["--show-log"] if show_log else []
     args += ["--wake", wake] if wake else []
     args += ["--check-every", f"{looks / 60:g}"] if looks else []
+    args += ["--since", "0"]  # what the job's source saw at registration counts
     try:
         info = job_follow.start_detached(config, key, args)
     except RuntimeError as exc:
@@ -1632,10 +1656,15 @@ def job_watch(
     share: str = _SHARE,
     notify: bool = _NOTIFY,
     wake: str = _WAKE,
+    wake_at: list[str] = _WAKE_AT,
     expect: str = _EXPECT,
     as_json: bool = _JSON,
 ):
-    """Register a job that ax checks itself, check it once, and print its key."""
+    """Register a job that ax checks itself, check it once, and print its key.
+
+    A Runwatch run stays one job through its pauses: each pause wakes the agent with the
+    failed cell, and the job follows `runwatch resume` or `restart` to the run's end.
+    """
     options = {
         "type": type_, "region": region, "profile": profile, "state_url": state_url,
         "done_key": done_key, "total_key": total_key, "status_key": status_key,
@@ -1643,8 +1672,12 @@ def job_watch(
         "format": format_, "runwatch": runwatch, "state_root": state_root,
     }  # fmt: skip
     config = _jobs_config()
+    from ax.job_sources import split_wake_at
+
     job = _job_or_exit(
-        lambda: jobs_module.watch(config, kind, ref, key=key, label=label, options=options)
+        lambda: jobs_module.watch(
+            config, kind, ref, key=key, label=label, options=options, wake_at=split_wake_at(wake_at)
+        )  # fmt: skip
     )
     if as_json:
         typer.echo(json.dumps(job.to_dict(), indent=2))
@@ -1687,17 +1720,29 @@ def job_run(
         False, "--show-log", help="Show the output's tail on the dashboard."
     ),
     wake: str = _WAKE,
+    wake_at: list[str] = _WAKE_AT,
     expect: str = _EXPECT,
     as_json: bool = _JSON,
 ):
     """Start a command detached, record its exit code, and print the job's key.
 
     A heredoc piped in is replayed to the command: ax job run -- python - <<'PY' ... PY.
-    The command can report progress by appending JSON lines to $AX_JOB_FILE.
+    The command can report progress by appending JSON lines to $AX_JOB_FILE. A
+    `runwatch execute` command, however wrapped, is followed as its notebook run.
     """
     config = _jobs_config()
     stdin = None if no_stdin else _piped_stdin()
-    job = _job_or_exit(lambda: jobs_module.run(config, command, key=key, label=label, stdin=stdin))
+    from ax.job_sources import split_wake_at
+
+    job = _job_or_exit(
+        lambda: jobs_module.run(
+            config, command, key=key, label=label, stdin=stdin, wake_at=split_wake_at(wake_at)
+        )  # fmt: skip
+    )
+    launched = job.spec.get("runwatch")
+    if launched and not launched.get("binary"):
+        typer.echo("warning: ax can't find the runwatch this command runs, so it can't see the "
+                   "run's pauses or checkpoints; set AX_RUNWATCH to its path", err=True)  # fmt: skip
     if as_json:
         typer.echo(json.dumps({**job.to_dict(), "output_log": job.spec["log"]}, indent=2))
     else:
@@ -1755,6 +1800,9 @@ def job_show(
     haiku = _haiku_line(config, key)
     if haiku:
         typer.echo(haiku)
+    asked = jobs_module.wake_at(config, key)
+    if asked:
+        typer.echo(f"{'wake at':<12} {', '.join(asked)}")
     for event in recent:
         typer.echo(f"  {event['ts']} {event['type']} {json.dumps(event['data'])}")
 
@@ -1776,14 +1824,16 @@ def job_wait(
     """Block until the job ends; spends no tokens while waiting.
 
     Exit codes: 0 done, 1 failed, 2 stopped or ended, 3 stalled, 4 its check kept failing,
-    5 Haiku sees it not working, 6 Haiku sees it well behind its expected pace (both leave
-    the job running), 124 timed out, 69 no such job.
+    5 it is not working (Haiku sees it, or a Runwatch run paused), 6 Haiku sees it well
+    behind its expected pace, 7 a checkpoint cell succeeded (5 to 7 leave the job
+    running), 124 timed out, 69 no such job.
     """
     wanted = {part.strip() for part in until.split(",") if part.strip()}
     unknown = wanted - set(jobs_module.STATUSES) - {"stalled"}
     if unknown:
         typer.echo(f"unknown status in --until: {', '.join(sorted(unknown))}", err=True)
         raise typer.Exit(2)
+    since = float(int(time.time()))  # wait's own start, in the whole seconds events carry
     try:
         outcome, job = jobs_module.wait(
             _jobs_config(),
@@ -1802,11 +1852,8 @@ def job_wait(
         note = f" · {job.message}" if job.message else ""
         if outcome == "check_error":
             note = f" · {job.check_error}"
-        if outcome in ("problem", "slow"):
-            seen = jobs_module.latest_event(_jobs_config(), job.key, outcome) or {}
-            what = seen.get("text", "")
-            what = f"behind its expected pace: {what}" if outcome == "slow" else what
-            note = f"\n{jobs_module.still_running(job, what)}"
+        if outcome in ("problem", "slow", "checkpoint"):
+            note = f"\n{jobs_module.wait_note(_jobs_config(), job, outcome, since=since)}"
         typer.echo(f"{job.key}: {outcome} · {_progress(job)}{note}")
     raise typer.Exit(jobs_module.WAIT_CODES.get(outcome, 1))
 
@@ -1940,10 +1987,14 @@ def job_follow_cmd(
     resumed: bool = typer.Option(
         False, "--resumed", hidden=True, help="Restarted by the poller: send nothing twice."
     ),
+    since: int = typer.Option(
+        None, "--since", hidden=True, help="Report source events after this event number."
+    ),
     as_json: bool = _JSON,
 ):
     """Follow a job: a mini dashboard, optional sharing, ntfy messages and a wake-up at the end."""
     config = _jobs_config()
+    wake = None if wake == "none" else wake
     try:
         every_s = jobs_module.parse_duration(every)
         stall_s = None if stall_after is None else jobs_module.parse_duration(stall_after)
@@ -1958,7 +2009,7 @@ def job_follow_cmd(
     options = job_follow.FollowOptions(
         share=share, notify=notify, every=every_s, notify_stages=notify_stages,
         stall_after=stall_s, linger=linger, show_log=show_log, interval=interval, port=port,
-        wake=wake, resumed=resumed, check_every=checks or None,
+        wake=wake, resumed=resumed, check_every=checks or None, since=since,
     )  # fmt: skip
     if detach:
         args = job_follow.options_args(options)
@@ -1986,6 +2037,35 @@ def job_follow_cmd(
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from None
     typer.echo(f"{key}: {status}", err=True)
+
+
+@job_app.command("wake-at")
+def job_wake_at_cmd(
+    key: str = typer.Argument(...),
+    cells: list[str] = typer.Argument(
+        None,
+        help="Cell numbers counted from 0 (12,30), cell ids or section headings; they replace "
+        "the ones set before.",
+    ),
+    clear: bool = typer.Option(False, "--clear", help="Wake at no cell."),
+):
+    """Choose the cells of a Runwatch run whose success wakes the agent, while it runs.
+
+    The run goes on; the woken agent gets the cell's output and can look at the
+    intermediate results. Each checkpoint wakes once per run of its cell.
+    """
+    config = _jobs_config()
+    if not cells and not clear:
+        typer.echo("name the cells to wake at, or pass --clear", err=True)
+        raise typer.Exit(2)
+    try:
+        names = jobs_module.set_wake_at(config, key, [] if clear else cells)
+    except KeyError:
+        _no_such_job(key)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    typer.echo("wakes at: " + ("; ".join(names) if names else "no cell"))
 
 
 @job_app.command("check")

@@ -71,11 +71,13 @@ def _diagnosis(config, job) -> str | None:
     return found[-1]["data"].get("text") if found else None
 
 
-def packet(config, job, note: str | None = None) -> str:
+def packet(config, job, note: str | None = None, details: str | None = None) -> str:
     """The note the woken agent reads: what happened and where to look, in a few lines.
-    `note` says what a health check found in a job that is still running. Its
-    description then reads as what the job does, not as what to do now: the next steps
-    it names wait for the job to end."""
+    `note` says what was seen in a job that is still running: a health check's finding,
+    a paused Runwatch run, a checkpoint reached. Its description then reads as what the
+    job does, not as what to do now: the next steps it names wait for the job to end.
+    `details` (the error, a cell's output, what to do) come last, in place of the
+    general advice."""
     if note:
         lines = [f"[ax job] {note}"]
         if job.label:
@@ -97,7 +99,13 @@ def packet(config, job, note: str | None = None) -> str:
     folder = jobs.events_path(config, job.key).parent
     if (folder / "output.log").exists():
         lines.append(f"output: {folder / 'output.log'}")
-    if note:
+    if details:
+        lines.append(details)
+        lines.append(
+            f"More: ax job show {job.key}. This is an automatic notice from a job you "
+            "registered, and it has not finished, so don't start what follows it."
+        )
+    elif note:
         lines.append(
             f"Details: ax job show {job.key}. This is an automatic notice from a job you "
             "registered. It has not finished, so don't start what follows it: decide "
@@ -225,8 +233,9 @@ def _last_line(log: str, offset: int = 0) -> str:
 
 
 def plan(
-    config, job, agent: str = "auto", *, which=shutil.which, require=True, note=None, held=None
-) -> dict:
+    config, job, agent: str = "auto", *, which=shutil.which, require=True, note=None, held=None,
+    details=None,
+) -> dict:  # fmt: skip
     """What waking would run, without running it: the queue for a Codex thread the app
     holds open, else a resume."""
     agent, session = choose(job, agent)
@@ -236,7 +245,7 @@ def plan(
     binary = binary or agent
     held = held or (lambda thread: codex_held(config, thread))
     queue = agent == "codex" and held(session)
-    argv = command(agent, session, packet(config, job, note), binary, queue=queue)
+    argv = command(agent, session, packet(config, job, note, details), binary, queue=queue)
     cwd = job.cwd if job.cwd and os.path.isdir(job.cwd) else None
     log = jobs.events_path(config, job.key).parent / "wake.log"
     return {"agent": agent, "session": session, "argv": argv, "cwd": cwd, "log": str(log),
@@ -255,6 +264,7 @@ def wake(
     environ=None,
     settle: float = 5.0,
     note: str | None = None,
+    details: str | None = None,
     send=deliver,
     listed=open_sessions,
 ) -> dict:
@@ -264,7 +274,7 @@ def wake(
     session, a thread another process writes), so a background launch is given
     `settle` seconds to fail before it counts.
     """
-    found = plan(config, job, agent, which=which, note=note, held=held)
+    found = plan(config, job, agent, which=which, note=note, held=held, details=details)
     agent = found["agent"]
     environ = os.environ if environ is None else environ
     env = clean_env(environ)

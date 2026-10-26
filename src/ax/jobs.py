@@ -32,7 +32,7 @@ TERMINAL = frozenset({"done", "failed", "stopped", "ended"})
 # `ax job wait` exit codes; 69 (no such job) matches `ax usage guard`'s "unknown".
 WAIT_CODES = {
     "done": 0, "failed": 1, "stopped": 2, "ended": 2, "stalled": 3, "check_error": 4,
-    "problem": 5, "slow": 6, "timeout": 124,
+    "problem": 5, "slow": 6, "checkpoint": 7, "timeout": 124,
 }  # fmt: skip
 SOURCE_KINDS = ("file", "pid", "sagemaker", "seamless", "runwatch", "tools")
 # Kinds ax checks itself: the watchable sources plus `ax job run`, whose runner is a process.
@@ -285,8 +285,14 @@ def new(config, key, *, total=None, unit=None, label=None, cwd=None, env=None) -
     )  # fmt: skip
 
 
-def watch(config, kind, ref, *, key=None, label=None, options=None, cwd=None, env=None) -> Job:
-    """Register a job that a source checks, then check it once."""
+def watch(
+    config, kind, ref, *, key=None, label=None, options=None, cwd=None, env=None, wake_at=None
+) -> Job:
+    """Register a job that a source checks, then check it once.
+
+    `wake_at` names a Runwatch run's checkpoints; they are read against the run first,
+    so one that matches no cell is refused before anything is registered.
+    """
     if kind not in SOURCE_KINDS:
         raise ValueError(f"unknown source {kind!r}; choose one of {', '.join(SOURCE_KINDS)}")
     existing = get(config, check_key(key)) if key else None
@@ -294,19 +300,51 @@ def watch(config, kind, ref, *, key=None, label=None, options=None, cwd=None, en
         raise ValueError(f"job {key!r} already exists as a {existing.kind} job")
     from ax import job_sources
 
-    ref, spec = job_sources.prepare(kind, str(ref), dict(options or {}), cwd or os.getcwd())
+    options = dict(options or {})
+    try:
+        ref, spec = job_sources.prepare(kind, str(ref), options, cwd or os.getcwd())
+    except ValueError as exc:
+        known = _known_runwatch(config) if kind == "runwatch" else None
+        if not known or options.get("runwatch") or "runwatch command" not in str(exc):
+            raise
+        ref, spec = job_sources.prepare(kind, str(ref), {**options, "runwatch": known},
+                                        cwd or os.getcwd())  # fmt: skip
+    if wake_at and kind != "runwatch":
+        raise ValueError("--wake-at applies to Runwatch runs only")
+    if wake_at:
+        job_sources.checkpoint_names(spec, wake_at)
     key = key or job_sources.default_key(kind, ref)
+    if kind == "runwatch":
+        spec["folder"] = str(jobs_dir(config) / check_key(key))
     _register(config, key, kind, ref, label=label, spec=spec, cwd=cwd, env=env)
+    if wake_at:
+        _write_wake_at(config, key, wake_at)
     return refresh(config, key, force=True)
 
 
+def _known_runwatch(config) -> str | None:
+    """The runwatch command an earlier job read its run with, for when none is on PATH."""
+    with connect(config) as db:
+        rows = db.execute("SELECT kind, spec FROM jobs WHERE kind IN ('runwatch', 'run') "
+                          "ORDER BY created DESC").fetchall()  # fmt: skip
+    for row in rows:
+        spec = json.loads(row["spec"] or "{}")
+        found = spec.get("binary") if row["kind"] == "runwatch" else None
+        found = found or (spec.get("runwatch") or {}).get("binary")
+        if found and os.access(found, os.X_OK):
+            return found
+    return None
+
+
 def run(
-    config, argv, *, key=None, label=None, cwd=None, stdin: bytes | None = None, env=None
-) -> Job:
+    config, argv, *, key=None, label=None, cwd=None, stdin: bytes | None = None, env=None,
+    wake_at=None,
+) -> Job:  # fmt: skip
     """Start `argv` detached under a runner that records its exit code, and register it.
 
     `stdin`, such as a heredoc piped into `ax job run`, is saved and replayed to the
-    command. Output goes to the job's output.log.
+    command. Output goes to the job's output.log. A `runwatch execute` command, however
+    wrapped, is followed as the notebook run it starts, which `wake_at` can stop at.
     """
     from ax import job_sources
 
@@ -323,7 +361,16 @@ def run(
         "pid": None,
         "start": None,
     }
+    launched = job_sources.runwatch_launch(list(argv), cwd, os.environ if env is None else env)
+    if launched is not None:
+        if not launched["binary"]:
+            launched["binary"] = _known_runwatch(config)
+        spec["runwatch"] = {**launched, "folder": str(folder)}
+    elif wake_at:
+        raise ValueError("--wake-at applies to `runwatch execute` commands only")
     job = _register(config, key, "run", shlex.join(argv), label=label, spec=spec, cwd=cwd, env=env)
+    if wake_at:
+        _write_wake_at(config, key, wake_at)
     if job.spec.get("pid"):
         return job  # already started under this key
     stdin_file = "-"
@@ -513,7 +560,7 @@ def refresh(
                 and not job.terminal
                 and (force or _due(job, now))
             )
-            slow = due and job_sources.MIN_INTERVAL.get(job.kind, 0) > 0
+            slow = due and job_sources.min_interval(job.kind, job.spec) > 0
             if due:
                 job.checked = ts
                 if not slow:
@@ -532,6 +579,7 @@ def refresh(
             if not job.terminal:
                 if error is None:
                     job.spec = checked.spec
+                    job.offset = max(job.offset, checked.offset)  # a killed runner's last lines
                 _record_check(db, job, ts, updates, error)
                 _save(db, job)
                 job_eta.record(db, job, now)
@@ -563,7 +611,7 @@ def _due(job: Job, now: datetime) -> bool:
 
     if not job.checked:
         return True
-    interval = job_sources.MIN_INTERVAL.get(job.kind, 0)
+    interval = job_sources.min_interval(job.kind, job.spec)
     return (now - parse_iso(job.checked)).total_seconds() >= interval
 
 
@@ -633,12 +681,19 @@ def looks_every(expected_seconds: float | None) -> float | None:
     return LOOK_EVERY if expected_seconds and expected_seconds > WATCH_OVER else None
 
 
-def latest_event(config, key: str, type_: str) -> dict | None:
-    """The job's last event of this type: when, and its data."""
-    for e in reversed(events(config, key, limit=200, latest=True)):
-        if e["type"] == type_:
-            return {"at": e["ts"], **e["data"]}
-    return None
+def latest_event(config, key: str, type_: str, *, full: bool = False) -> dict | None:
+    """The job's last event of this type: when, and its data; with `full`, the event as
+    `events` gives it, with its number."""
+    with connect(config) as db:
+        row = db.execute(
+            "SELECT seq, ts, type, data FROM events WHERE key = ? AND type = ? "
+            "ORDER BY seq DESC LIMIT 1",
+            (key, type_),
+        ).fetchone()
+    if row is None:
+        return None
+    found = {**dict(row), "data": json.loads(row["data"])}
+    return found if full else {"at": found["ts"], **found["data"]}
 
 
 def still_running(job, what: str) -> str:
@@ -659,6 +714,127 @@ def latest_look(config, key: str) -> dict | None:
     return None
 
 
+def last_seq(config, key: str) -> int:
+    """The number of the job's newest event; later ones are new to whoever read up to it."""
+    found = events(config, key, latest=True, limit=1)
+    return found[-1]["seq"] if found else 0
+
+
+@contextmanager
+def waiting(config, key: str, *, env=None, start: datetime | None = None):
+    """Mark that a session is waiting on the job, from `start`, while the block runs."""
+    folder = jobs_dir(config) / check_key(key)
+    if not folder.is_dir():
+        yield
+        return
+    marker = folder / "waiters" / f"{os.getpid()}-{time.monotonic_ns()}.json"
+    marker.parent.mkdir(exist_ok=True)
+    marker.write_text(json.dumps({"pid": os.getpid(), "start": now_iso(start),
+                                  "agent": _agent(_env(env))}))  # fmt: skip
+    try:
+        yield
+    finally:
+        marker.unlink(missing_ok=True)
+
+
+# What `ax job wait` returns for while the job runs; its message lists every one it saw.
+NOTICES = frozenset({"problem", "slow", "checkpoint"})
+
+
+def covered(config, key: str, agent: dict, event: dict, outcome: str) -> bool:
+    """Whether the session that registered the job hears of `event` through its own
+    `ax job wait`: one waiting since before it, or one that has already returned it
+    (its ending, or any notice it saw while the job ran)."""
+    from ax.job_sources import process_alive
+
+    sessions = {v for v in (agent or {}).values() if v}
+    if not sessions:
+        return False
+    for marker in (jobs_dir(config) / key / "waiters").glob("*.json"):
+        try:
+            found = json.loads(marker.read_text())
+            mine = sessions & set((found.get("agent") or {}).values())
+            if mine and process_alive(found["pid"]) and found["start"] <= event["ts"]:
+                return True
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+
+    def reported(data: dict) -> bool:
+        if data.get("outcome") == outcome:
+            return True
+        notices = outcome in NOTICES and data.get("outcome") in NOTICES
+        return notices and str(data.get("start", "~")) <= event["ts"]
+
+    return any(
+        e["type"] == "waited"
+        and sessions & set((e["data"].get("agent") or {}).values())
+        and reported(e["data"])
+        for e in events(config, key, after=event["seq"], limit=500)
+    )
+
+
+def wait_note(config, job: Job, outcome: str, since: float | None = None) -> str:
+    """What `ax job wait` tells the agent when it returns while the job still runs: the
+    notice it returned for, or with `since` (when the wait started) every notice since,
+    such as a checkpoint reached just before the run paused."""
+    found = [latest_event(config, job.key, outcome, full=True)]
+    if since is not None:
+        found = [e for e in events(config, job.key, latest=True, limit=500)
+                 if e["type"] in NOTICES and parse_iso(e["ts"]).timestamp() >= since] or found  # fmt: skip
+    return "\n\n".join(_notice(job, e) for e in found if e)
+
+
+def _notice(job: Job, event: dict) -> str:
+    data = event["data"]
+    what = data.get("text", "")
+    if data.get("details"):
+        return f"{what}\n{data['details']}"
+    if event["type"] == "slow":
+        what = f"behind its expected pace: {what}"
+    return still_running(job, what)
+
+
+def wake_at(config, key: str) -> list[str]:
+    """The checkpoints asked of a Runwatch job."""
+    from ax.job_sources import read_wake_at
+
+    return read_wake_at({"folder": str(jobs_dir(config) / check_key(key))})
+
+
+def _write_wake_at(config, key: str, cells: list[str]) -> None:
+    path = jobs_dir(config) / key / "wake_at.json"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"cells": list(cells)}))
+    tmp.replace(path)
+
+
+def set_wake_at(config, key: str, cells, *, check: bool = True) -> list[str]:
+    """Set the cells whose success wakes the agent while a Runwatch run goes on, and say
+    what each waits for. With `check`, they are read against the run when it exists, and
+    one that matches no cell raises ValueError, leaving the old ones."""
+    from ax import job_sources
+
+    job = get(config, key)
+    if job is None:
+        raise KeyError(key)
+    rw = job_sources.runwatch_spec(job)
+    if rw is None:
+        raise ValueError(f"{key} is not a Runwatch run, so it has no cells to wake at")
+    cells = job_sources.split_wake_at(cells)
+    names = list(cells)
+    if check and cells and rw.get("binary") and rw.get("run"):
+        names = job_sources.checkpoint_names(rw, cells)
+    if not rw.get("folder"):  # registered before checkpoints: tell its source where they are
+        with connect(config) as db, _transaction(db):
+            job = _load(db, key)
+            found = job_sources.runwatch_spec(job)
+            found["folder"] = str(jobs_dir(config) / key)
+            _save(db, job)
+    _write_wake_at(config, key, cells)
+    record_event(config, key, "wake_at", {"cells": cells})
+    return names
+
+
 def refresh_active(config) -> None:
     """Bring every active job up to date: how it ended, from its events file, and its
     local checks. The slow ones (an AWS call a minute each) are left to `ax job` and the
@@ -666,10 +842,11 @@ def refresh_active(config) -> None:
     from ax import job_sources
 
     with connect(config) as db:
-        active = [(r["key"], r["kind"]) for r in db.execute("SELECT key, kind, status FROM jobs")
+        active = [(r["key"], r["kind"], json.loads(r["spec"] or "{}"))
+                  for r in db.execute("SELECT key, kind, spec, status FROM jobs")
                   if r["status"] not in TERMINAL]  # fmt: skip
-    for key, kind in active:
-        refresh(config, key, check=job_sources.MIN_INTERVAL.get(kind, 0) == 0)
+    for key, kind, spec in active:
+        refresh(config, key, check=job_sources.min_interval(kind, spec) == 0)
 
 
 def poll(config) -> list[Job]:
@@ -689,6 +866,7 @@ def wait(
     problems: bool = True,
     clock=time.time,
     sleep=time.sleep,
+    env=None,
 ) -> tuple[str, Job]:
     """Block until the job reaches a status in `until`, ends, stalls or times out.
 
@@ -697,17 +875,36 @@ def wait(
     detection after 30 minutes unless `stall_after` says otherwise. A source check
     that keeps failing for `error_after` seconds, such as a mistyped SageMaker name
     or expired credentials, ends the wait too, since waiting can't fix it. With
-    `problems`, so does what a model sees while the job runs: a problem (it is not
-    working) or a first fall behind its expected pace. The job keeps running either
-    way; the woken agent decides whether to wait again or stop it.
+    `problems`, so does what is seen while the job runs: a problem (a model sees it
+    not working, or a Runwatch run paused), a first fall behind its expected pace, or
+    a checkpoint cell reached. The job keeps running either way; the woken agent
+    decides whether to wait again or stop it.
+
+    While it waits, the job's follower knows that this session (from `env`) will hear
+    of what ends the wait, so it doesn't wake the session a second time.
 
     Returns (outcome, job), where outcome is a status, "stalled", "check_error",
-    "problem", "slow" or "timeout". Raises KeyError for an unknown job.
+    "problem", "slow", "checkpoint" or "timeout". Raises KeyError for an unknown job.
     """
+    start = float(int(clock()))  # whole seconds, as events are stamped
+    with waiting(config, key, env=env, start=datetime.fromtimestamp(start, UTC)):
+        outcome, job = _wait(config, key, until, timeout, interval, stall_after, error_after,
+                             problems, clock, sleep, start)  # fmt: skip
+    record_event(config, key, "waited", {"outcome": outcome, "agent": _agent(_env(env)),
+                                         "start": now_iso(datetime.fromtimestamp(start, UTC))})  # fmt: skip
+    return outcome, job
+
+
+def _env(env):
+    return os.environ if env is None else env
+
+
+def _wait(config, key, until, timeout, interval, stall_after, error_after, problems, clock,
+          sleep, start) -> tuple[str, Job]:  # fmt: skip
     until = set(until or TERMINAL)
     if "stalled" in until and stall_after is None:
         stall_after = 1800.0
-    start, failing_since = clock(), None
+    failing_since = None
     while True:
         now = clock()
         job = refresh(config, key, now=datetime.fromtimestamp(now, UTC))
@@ -715,7 +912,7 @@ def wait(
             raise KeyError(key)
         if job.status in until or job.terminal:
             return job.status, job
-        for kind in ("problem", "slow") if problems else ():
+        for kind in ("problem", "slow", "checkpoint") if problems else ():
             seen = latest_event(config, key, kind)
             if seen and parse_iso(seen["at"]).timestamp() >= start:
                 return kind, job

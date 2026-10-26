@@ -113,12 +113,14 @@ def test_a_runwatch_run_reports_its_cell_and_bar(env, runwatch):
     assert jobs.refresh(env.config, job.key, now=later(60)).status == "done"
 
 
-def test_a_paused_runwatch_run_needs_its_agent(env, runwatch):
+def test_a_paused_runwatch_run_needs_its_agent_but_keeps_its_job(env, runwatch):
     run, stub, state = runwatch
     job = jobs.watch(env.config, "runwatch", str(run), options={"runwatch": str(stub)})
     state(status="paused", cell=None, failed=7, message="Run paused after a cell failure")
     job = jobs.refresh(env.config, job.key, now=later(60))
-    assert job.status == "failed" and "cell 7" in job.message and "runwatch resume" in job.message
+    assert job.status == "running" and job.stage == "paused at cell 7"
+    assert "cell 7" in job.message and "runwatch resume" in job.message
+    assert [e["type"] for e in jobs.events(env.config, job.key)].count("problem") == 1
 
 
 def test_a_run_whose_controller_died_is_a_check_error(env, runwatch):

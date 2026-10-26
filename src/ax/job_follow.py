@@ -1,5 +1,6 @@
 """Follow one job: refresh it, serve its mini dashboard, share it, send ntfy messages,
-and wake the agent that registered it when it ends.
+and wake the agent that registered it when it ends, or while it runs when its source
+reports a problem (a paused Runwatch run) or a checkpoint the agent asked for.
 
 There is one follower per job. Its links and options live in the job's
 follower.json, so a second `ax job follow` reuses the running follower and the
@@ -43,6 +44,7 @@ class FollowOptions:
     wake: str | None = None  # auto, claude or codex: resume that session when the job ends
     resumed: bool = False  # restarted by the poller: don't repeat what was already sent
     check_every: float | None = None  # seconds between model health checks of a running job
+    since: int | None = None  # report source events after this one; None: from the start
 
 
 def options_args(options: FollowOptions) -> list[str]:
@@ -58,6 +60,7 @@ def options_args(options: FollowOptions) -> list[str]:
     args += ["--wake", options.wake] if options.wake else []
     args += ["--check-every", str((options.check_every or 0) / 60)]
     args += ["--resumed"] if options.resumed else []
+    args += ["--since", str(options.since)] if options.since is not None else []
     return args
 
 
@@ -196,8 +199,8 @@ def follow(
     if options.wake and waker is None:
         from ax import job_wake
 
-        def waker(job, note=None):
-            return job_wake.wake(config, job, options.wake, note=note)
+        def waker(job, note=None, details=None):
+            return job_wake.wake(config, job, options.wake, note=note, details=details)
 
     if alerter is None and (ntfy_alerts := job_notify.settings(config)):
 
@@ -223,15 +226,28 @@ def follow(
         error = alerter({"title": title, "message": text, "tags": ("warning",), "priority": 4})
         jobs.record_event(config, key, "alert_failed" if error else "alerted", {"title": title})
 
-    def wake(job, note=None) -> None:
+    def wake(job, note=None, details=None, event=None, outcome=None) -> None:
+        """Wake the agent, unless its own `ax job wait` already tells it of `event`."""
         if not options.wake or waker is None:
             return
         if note is None and options.resumed and _already(config, key, "woke"):
             return
+        if event is None and note is None:
+            event, outcome = jobs.latest_event(config, key, "status", full=True), job.status
+        if event and jobs.covered(config, key, job.agent, event, outcome):
+            jobs.record_event(config, key, "wake_skipped",
+                              {"seq": event["seq"], "outcome": outcome,
+                               "reason": "the session's own `ax job wait` reports it"})  # fmt: skip
+            return
         from ax.job_wake import WakeError
 
         try:
-            found = waker(job) if note is None else waker(job, note)
+            if note is None:
+                found = waker(job)
+            elif details is None:
+                found = waker(job, note)
+            else:
+                found = waker(job, note, details)
         except (WakeError, OSError) as exc:
             jobs.record_event(config, key, "wake_failed", {"error": str(exc)})
             what = note or f"{job.key} {job.status}"
@@ -271,13 +287,34 @@ def follow(
                                                 "every": options.check_every})  # fmt: skip
         if problem and problem != state.get("problem"):
             jobs.record_event(config, key, "problem", {"text": problem})
-            wake(job, jobs.still_running(job, problem))
+            seen = jobs.latest_event(config, key, "problem", full=True)
+            wake(job, jobs.still_running(job, problem), event=seen, outcome="problem")
             alert(f"{key}: looks wrong", problem)
         state["problem"] = problem
         if look.slow and not state.get("slow") and not jobs.latest_event(config, key, "slow"):
             jobs.record_event(config, key, "slow", {"text": look.slow})
-            wake(job, jobs.still_running(job, f"behind its expected pace: {look.slow}"))
+            seen = jobs.latest_event(config, key, "slow", full=True)
+            wake(job, jobs.still_running(job, f"behind its expected pace: {look.slow}"),
+                 event=seen, outcome="slow")  # fmt: skip
             state["slow"] = True
+
+    def surface(job, state: dict) -> None:
+        """Wake the agent for what the job's source saw while it runs: each new pause of
+        a Runwatch run, each checkpoint reached. Each is handled once, across restarts."""
+        found = jobs.events(config, key, after=state["seen"], limit=200)
+        for event in found:
+            state["seen"] = event["seq"]
+            data = event["data"]
+            if event["type"] not in ("problem", "checkpoint") or not data.get("source"):
+                continue
+            jobs.record_event(config, key, "surfaced", {"seq": event["seq"]})
+            if job.terminal and event["type"] == "checkpoint":
+                continue  # the end's own wake says more
+            if not options.wake:
+                if event["type"] == "problem":
+                    alert(f"{key}: needs attention", data.get("text", ""))
+                continue
+            wake(job, data.get("text"), data.get("details"), event=event, outcome=event["type"])
 
     stopping = threading.Event()
     previous = None
@@ -318,7 +355,7 @@ def follow(
         relink = server.link if options.dashboard else None
         return _loop(
             config, key, options, job, link, links, share, relink, notify, wake, stopping, clock,
-            sleep, diagnose=diagnose, check=check,
+            sleep, diagnose=diagnose, check=check, surface=surface,
         )  # fmt: skip
     finally:
         for close in reversed(closers):
@@ -336,12 +373,23 @@ def _eta(config, job, options) -> dict | None:
     return job_eta.estimate(config, job)
 
 
+def _surfaced_up_to(config, key: str, options) -> int:
+    """The last source event an earlier follower of this job handled, else where this one
+    starts: `since`, or the job's newest event for a follower started on its own."""
+    handled = [e["data"].get("seq", 0) for e in jobs.events(config, key, latest=True, limit=500)
+               if e["type"] == "surfaced"]  # fmt: skip
+    if handled:
+        return max(handled)
+    return options.since if options.since is not None else jobs.last_seq(config, key)
+
+
 def _loop(
     config, key, options, job, link, links, share, relink, notify, wake, stopping, clock, sleep,
-    *, diagnose=None, check=None,
+    *, diagnose=None, check=None, surface=None,
 ) -> str:  # fmt: skip
     end_at = None
     checked_at, health = clock(), {}
+    sources = {"seen": _surfaced_up_to(config, key, options)}
     last_note, noted = clock(), (job.done, job.stage)
     last_stage = job.stage
     stalled_sent = False
@@ -356,6 +404,8 @@ def _loop(
         look_now = bool(asked.get("now"))
         if look_now:
             set_check(config, key, now=False)
+        if surface:
+            surface(job, sources)
         if share is not None:
             replaced = share.tick()
             if replaced:

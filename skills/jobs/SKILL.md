@@ -30,6 +30,21 @@ background Bash call that bypasses it is paused by the guard; rerun it with
   - `ax job watch file PATH` (a JSON progress file)
 - **A producer you write:** `F=$(ax job new KEY --total N --unit rows)`, then append
   JSON lines to `$F`, ending with `{"status": "done"}` or `{"exit": CODE}`.
+- **A Runwatch notebook:** `ax job run --key KEY -- runwatch execute NB --run-dir RUN_DIR
+  …`, wrapped as it needs to be (`uv run`, `env`, a credentials script). ax follows the
+  notebook, not only the process, and keeps one job for the run's whole life: each
+  pause (a failed cell) wakes you with the cell, its error and the end of its output,
+  and the job stays active through `runwatch resume` or `restart` to the run's end.
+  Don't register it again after a resume. A run started elsewhere: `ax job watch
+  runwatch RUN_DIR`. Registered from your session, either wakes you by default (`--wake
+  none` opts out).
+- **Checkpoints:** `--wake-at CELL` on that `run` or `watch` wakes you when the cell
+  succeeds, with its output, while the run goes on: use it to look at intermediate
+  results instead of polling the run. A cell is a number counted from 0 (`--wake-at
+  12,30`), a cell id, or a section heading (`--wake-at "Evaluate"`, its last cell);
+  repeat the option for more. `ax job wake-at KEY CELL…` changes them while the run
+  goes (`--clear` drops them). Each wakes you once per run of its cell, again after a
+  restart.
 
 Pick a short key that names the work (`score-violence-v5`); runs of one family that
 share a key stem (`score-…`) teach the estimator their usual duration.
@@ -80,6 +95,9 @@ costs the whole time you expected it to take. Right after launching:
 - **Overnight or unattended:** add `--wake auto` to `run`, `watch` or `new`; it resumes
   the session that registered the job once it ends.
 
+Your own `ax job wait` and `--wake` don't both wake you: while a wait from your session
+is running, or after it has returned what happened, the follower skips its note.
+
 With `--wake`, the note reaches your conversation even while it is open: a Codex
 thread open in the app gets it through `codex queue`; a Claude session that is still
 open gets it as a message from another session, through the inbox Claude Code opens
@@ -105,10 +123,13 @@ reaches you, the user gets a push.
 
 `ax job wait` exit codes: 0 done, 1 failed, 2 stopped or ended, 3 stalled (with
 `--until stalled`), 4 the source check kept failing (credentials, a wrong name),
-5 Haiku sees it not working, 6 Haiku sees it well behind its expected pace, 124 timed
-out, 69 no such job. On 1, 4, 5 or 6, read `ax job show KEY` before acting. On 5 and 6
-the job is still running and ax leaves it so: decide whether to wait again (`ax job
-wait KEY`; a pace warning comes once) or stop it yourself, as the message says.
+5 it is not working (Haiku sees it, or a Runwatch run paused), 6 Haiku sees it well
+behind its expected pace, 7 a checkpoint cell succeeded, 124 timed out, 69 no such
+job. On 1, 4, 5 or 6, read `ax job show KEY` before acting. On 5 to 7 the job is
+still running and ax leaves it so: the message says what was seen and what to do.
+After repairing a paused run and resuming it, or looking at a checkpoint, wait again
+with `ax job wait KEY`; otherwise decide whether to wait again (a pace warning comes
+once) or stop it yourself.
 
 ## Report
 
@@ -126,8 +147,8 @@ wait KEY`; a pace warning comes once) or stop it yourself, as the message says.
 ## Rules
 
 - Never stop, forget or re-register a job you did not start without asking.
-- A paused Runwatch run ends its ax job as failed: repair it, `runwatch resume`, then
-  watch it again under a new key. So does a run still at "created" with no controller
-  two minutes after it was made: it never started, and the output of the command that
+- A paused Runwatch run keeps its ax job: repair it, `runwatch resume` or `restart`, and
+  wait on the same key. A run still at "created" with no controller two minutes after
+  it was made fails its job: it never started, and the output of the command that
   launched it says why (a taken port, a bad setting).
 - AWS checks use the calling shell's credentials; a check error is not a failed job.

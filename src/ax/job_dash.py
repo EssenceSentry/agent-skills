@@ -38,7 +38,8 @@ _HEADERS = {
 _LOG_BYTES = 16_000
 # Progress rows can number thousands; the bar shows them, the list skips them. Stored
 # estimates come every five minutes; the page shows the current one instead.
-_QUIET_EVENTS = {"progress", "eta", "look"}  # looks have their own list
+# Looks have their own list; the rest is the follower's and `ax job wait`'s bookkeeping.
+_QUIET_EVENTS = {"progress", "eta", "look", "surfaced", "waited"}
 _CONSOLE_PATHS = {
     "processing": "processing-jobs",
     "training": "jobs",

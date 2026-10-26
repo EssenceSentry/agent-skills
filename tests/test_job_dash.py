@@ -128,6 +128,16 @@ def test_events_and_a_console_link_are_included(dash, env, monkeypatch):
     assert data.get("console_url") is None
 
 
+def test_the_followers_bookkeeping_stays_off_the_page(dash, env):
+    jobs.new(env.config, "other")
+    jobs.record_event(env.config, "other", "checkpoint", {"text": "reached cell 3 (Evaluate)"})
+    jobs.record_event(env.config, "other", "surfaced", {"seq": 2})
+    jobs.record_event(env.config, "other", "waited", {"outcome": "checkpoint", "agent": {}})
+    server = dash("other")
+    data = json.loads(request(server, "/api/job", token=server.token)[2])
+    assert [e["type"] for e in data["events"]] == ["created", "checkpoint"]
+
+
 def test_the_page_shows_haiku_s_looks_newest_first(dash, env):
     from ax import job_follow
 
