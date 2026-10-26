@@ -1,6 +1,7 @@
 import { ArrowLeft } from "lucide-react"
 import { useEffect, useRef } from "react"
 
+import { Composer } from "@/blocks/composer"
 import { JobCard } from "@/blocks/job-card"
 import { Markdown } from "@/blocks/markdown"
 import { StatusBadge } from "@/blocks/primitives"
@@ -73,12 +74,26 @@ export function SessionScreen({ provider, id }: { provider: string; id: string }
       </main>
     )
 
-  const cards = shownCards(view.session, view.cards)
-  const working = view.session.state === "working"
-  const running = runningNow(view.session, view)
+  const chat = view.chat
+  // A session ax holds says itself whether it works; the listing lags a few seconds.
+  const session =
+    chat?.holder === "ax"
+      ? {
+          ...view.session,
+          state: chat.approval
+            ? ("waiting" as const)
+            : chat.busy
+              ? ("working" as const)
+              : ("idle" as const),
+        }
+      : view.session
+  const cards = shownCards(session, view.cards)
+  const working = session.state === "working"
+  const running = runningNow(session, view)
+  const streaming = chat?.busy && chat.partial ? chat.partial : null
   return (
     <main className="mx-auto max-w-[860px] space-y-5 p-4 md:p-6">
-      <Header session={view.session} />
+      <Header session={session} />
       {view.earlier > 0 && (
         <p className="text-center text-xs text-muted-foreground">
           {view.earlier === 1 ? "1 earlier message" : `${view.earlier} earlier messages`} not shown
@@ -89,7 +104,12 @@ export function SessionScreen({ provider, id }: { provider: string; id: string }
           <Message key={event.i} event={event} />
         ))}
       </div>
-      {working && (
+      {streaming && (
+        <div className="space-y-1">
+          <Markdown className="text-[14px] leading-relaxed">{streaming}</Markdown>
+        </div>
+      )}
+      {working && !streaming && (
         <div
           className="flex min-w-0 items-center gap-2 pl-1 text-xs text-muted-foreground"
           role="status"
@@ -110,6 +130,8 @@ export function SessionScreen({ provider, id }: { provider: string; id: string }
           ))}
         </section>
       )}
+      {chat && <Composer session={session} chat={chat} />}
+      {/* After the composer, so following the newest message never leaves it under the box. */}
       <div ref={end} />
     </main>
   )

@@ -1,7 +1,14 @@
 // Example state, shown when no ax is behind the page (`npm run dev`, `npm run check`).
 // The status in the bar says "Example data" whenever these are on screen.
 import type { Folder, Found, Note, NowState } from "@/lib/ax"
-import type { Card, Session, Sessions, SessionView, TranscriptEvent } from "@/lib/sessions"
+import type {
+  Card,
+  ChatState,
+  Session,
+  Sessions,
+  SessionView,
+  TranscriptEvent,
+} from "@/lib/sessions"
 
 const MINUTE = 60_000
 const at = (minutes: number) => new Date(Date.now() + minutes * MINUTE).toISOString()
@@ -721,5 +728,45 @@ export function exampleSession(provider: string, id: string): SessionView {
     running: session.state === "working" ? [RUNNING] : [],
     earlier: 0,
     cards: mine ? CARDS : [],
+    chat: exampleChat(session),
   }
+}
+
+function exampleChat(session: Session): ChatState {
+  const base: ChatState = {
+    holder: null,
+    can_send: true,
+    take_over: false,
+    pending: false,
+    busy: false,
+    partial: "",
+    approval: null,
+    error: null,
+    note: "",
+  }
+  if (session.id === SESSIONS[0]?.id)
+    return {
+      ...base,
+      holder: "elsewhere",
+      can_send: false,
+      take_over: true,
+      note: "Open in the Claude app or a terminal. Take over to write here: close it there, and ax continues it in the background.",
+    }
+  if (session.state === "working")
+    return {
+      ...base,
+      holder: "ax",
+      can_send: false,
+      busy: true,
+      partial: "The retry now backs off **0.5 s, 1 s, 2 s**; running the tests to",
+      approval: {
+        id: "perm-1",
+        tool: "Bash",
+        summary: "run `uv run pytest -q tests/test_fetch.py`",
+        reason: null,
+        detail: '{\n  "command": "uv run pytest -q tests/test_fetch.py"\n}',
+      },
+      note: "Running in the background through ax, so the Claude app doesn't show it. Hand it back to continue it elsewhere, such as `claude --resume 0b8e6f55-fetch` in a terminal.",
+    }
+  return { ...base, note: "Your message continues this thread in the background through ax." }
 }

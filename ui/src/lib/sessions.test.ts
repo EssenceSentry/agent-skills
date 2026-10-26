@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest"
 import { parseRoute, sessionHref } from "@/lib/routes"
 import {
   type Card,
+  type ChatState,
+  canSend,
+  composerMode,
   groupSessions,
   mergePage,
   runningNow,
@@ -145,5 +148,37 @@ describe("sessions", () => {
     expect(mergePage(now, { ...shown, next: 13, first: 12 }).running).toEqual([]) // it finished
     expect(runningNow(session({ state: "working" }), now)).toEqual(tool)
     expect(runningNow(session({ state: "idle" }), now)).toBeNull()
+  })
+})
+
+describe("the composer", () => {
+  const chat = (over: Partial<ChatState> = {}): ChatState => ({
+    holder: null,
+    can_send: true,
+    take_over: false,
+    pending: false,
+    busy: false,
+    partial: "",
+    approval: null,
+    error: null,
+    note: "",
+    ...over,
+  })
+
+  it("offers what the session allows now", () => {
+    expect(composerMode(chat())).toBe("send")
+    expect(composerMode(chat({ holder: "ax", busy: true, can_send: false }))).toBe("busy")
+    expect(composerMode(chat({ holder: "elsewhere", can_send: false, take_over: true }))).toBe(
+      "take-over"
+    )
+    expect(
+      composerMode(chat({ holder: "elsewhere", can_send: false, take_over: true, pending: true }))
+    ).toBe("waiting")
+  })
+
+  it("sends only words, and only when it may", () => {
+    expect(canSend(chat(), "  hi ")).toBe(true)
+    expect(canSend(chat(), "   ")).toBe(false)
+    expect(canSend(chat({ busy: true, can_send: false }), "hi")).toBe(false)
   })
 })

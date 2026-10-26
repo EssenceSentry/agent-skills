@@ -302,7 +302,7 @@ export function useSessions(every = 5_000) {
  * One session: its state and job cards, and its transcript, to which each reading adds
  * what happened since the last one.
  */
-export function useSession(provider: string, id: string, every = 3_000) {
+export function useSession(provider: string, id: string, every = 3_000, streaming = 1_000) {
   const [found, setFound] = useState<{ data?: SessionView; error?: string }>(() =>
     LIVE ? {} : { data: exampleSession(provider, id) }
   )
@@ -316,17 +316,64 @@ export function useSession(provider: string, id: string, every = 3_000) {
       getJson<SessionView>(`${base}&after=${shown?.next ?? 0}`).then(
         (page) => {
           if (!current) return
-          shown = shown ? { ...page, ...mergePage(shown, page) } : page
+          if (shown) {
+            // The transcript adds up; the session, its cards and the chat are the latest.
+            const { events, next, first, running, earlier } = mergePage(shown, page)
+            shown = { ...page, events, next, first, running, earlier }
+          } else shown = page
           setFound({ data: shown })
         },
         (error: Error) => current && setFound((was) => ({ ...was, error: error.message }))
       )
-    load()
-    const timer = setInterval(load, every)
+    // Every few seconds, and every second while a reply streams in or a send settles.
+    let timer: ReturnType<typeof setTimeout>
+    const tick = () => {
+      load().finally(() => {
+        if (!current) return
+        const quick = shown?.chat?.busy || Date.now() < hurryUntil
+        timer = setTimeout(tick, quick ? streaming : every)
+      })
+    }
+    tick()
+    const hurry = () => {
+      hurryUntil = Date.now() + 30_000
+      clearTimeout(timer)
+      tick()
+    }
+    window.addEventListener("ax:hurry", hurry)
     return () => {
       current = false
-      clearInterval(timer)
+      clearTimeout(timer)
+      window.removeEventListener("ax:hurry", hurry)
     }
-  }, [provider, id, every])
+  }, [provider, id, every, streaming])
   return found
+}
+
+let hurryUntil = 0
+
+/** Ask the open session page to read again now, and quickly for a while. */
+export const hurry = () => window.dispatchEvent(new Event("ax:hurry"))
+
+/** What `/api/chat` answers: done, or (through a shared link) a question to confirm. */
+export type ChatAnswer = {
+  ok: boolean
+  message?: string
+  via?: string
+  waiting?: boolean
+  confirm?: string
+  question?: string
+}
+
+/** Send, answer, stop, take over or hand back; the server says why not as an error. */
+export async function chatAct(payload: Record<string, unknown>): Promise<ChatAnswer> {
+  if (!LIVE) return { ok: true, message: "This is example data; nothing was sent." }
+  const response = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(payload),
+  })
+  const body = await response.json().catch(() => null)
+  if (!response.ok) throw new Error(body?.error ?? `${response.status} ${response.statusText}`)
+  return body as ChatAnswer
 }

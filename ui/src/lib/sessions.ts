@@ -78,7 +78,34 @@ export type TranscriptPage = {
   earlier: number
 }
 
-export type SessionView = TranscriptPage & { session: Session; cards: Card[] }
+/** An approval a session ax holds waits on. */
+export type Approval = {
+  id: string
+  tool: string
+  summary: string
+  reason: string | null
+  detail: string | null
+}
+
+/**
+ * Who holds the conversation and whether you can write to it now: "ax" (in the
+ * background), "codex app", "elsewhere" (the Claude app or a terminal: take it over
+ * first), or nobody yet.
+ */
+export type ChatState = {
+  holder: "ax" | "codex app" | "elsewhere" | null
+  can_send: boolean
+  take_over: boolean
+  pending: boolean
+  busy: boolean
+  /** The reply streaming in. */
+  partial: string
+  approval: Approval | null
+  error: string | null
+  note: string
+}
+
+export type SessionView = TranscriptPage & { session: Session; cards: Card[]; chat?: ChatState }
 
 export const PROVIDERS: { provider: Provider; label: string }[] = [
   { provider: "claude", label: "Claude Code" },
@@ -132,4 +159,15 @@ export function mergePage(shown: TranscriptPage, page: TranscriptPage): Transcri
 export function runningNow(session: Session | null, page: TranscriptPage): TranscriptEvent | null {
   if (session?.state !== "working") return null
   return page.running[page.running.length - 1] ?? null
+}
+
+export type ComposerMode = "send" | "busy" | "take-over" | "waiting"
+
+export function composerMode(chat: ChatState): ComposerMode {
+  if (chat.take_over) return chat.pending ? "waiting" : "take-over"
+  return chat.busy ? "busy" : "send"
+}
+
+export function canSend(chat: ChatState, text: string): boolean {
+  return chat.can_send && !chat.busy && text.trim().length > 0
 }
