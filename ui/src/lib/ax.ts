@@ -318,8 +318,8 @@ export function useSession(provider: string, id: string, every = 3_000, streamin
           if (!current) return
           if (shown) {
             // The transcript adds up; the session, its cards and the chat are the latest.
-            const { events, next, first, running, earlier } = mergePage(shown, page)
-            shown = { ...page, events, next, first, running, earlier }
+            const { events, next, first, running, earlier, shots } = mergePage(shown, page)
+            shown = { ...page, events, next, first, running, earlier, shots }
           } else shown = page
           setFound({ data: shown })
         },

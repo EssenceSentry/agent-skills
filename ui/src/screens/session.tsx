@@ -1,9 +1,10 @@
 import { ArrowLeft } from "lucide-react"
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { Composer } from "@/blocks/composer"
 import { JobCard } from "@/blocks/job-card"
 import { Markdown } from "@/blocks/markdown"
+import { Lightbox, Pictures } from "@/blocks/pictures"
 import { StatusBadge } from "@/blocks/primitives"
 import { useSession } from "@/lib/ax"
 import {
@@ -15,15 +16,33 @@ import {
   type TranscriptEvent,
 } from "@/lib/sessions"
 
-/** Your messages on the right, the agent's answers as text: the conversation alone. */
-function Message({ event }: { event: TranscriptEvent }) {
+/**
+ * Your messages on the right, with the pictures you pasted; the agent's answers as text,
+ * with the screenshots its tools took on the way below them.
+ */
+function Message({ event, onOpen }: { event: TranscriptEvent; onOpen: (url: string) => void }) {
+  const images = (event.images ?? []).map((p) => p.url)
   if (event.kind === "user")
     return (
-      <div className="ml-auto max-w-[85%] rounded-xl bg-primary-soft px-3.5 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap break-words">
-        {event.text}
+      <div className="ml-auto flex max-w-[85%] flex-col items-end gap-2">
+        <Pictures urls={images} onOpen={onOpen} label="Pictures you sent" className="justify-end" />
+        {event.text && (
+          <div className="rounded-xl bg-primary-soft px-3.5 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap break-words">
+            {event.text}
+          </div>
+        )}
       </div>
     )
-  return <Markdown className="text-[14px] leading-relaxed">{event.text}</Markdown>
+  return (
+    <div className="space-y-2.5">
+      <Markdown className="text-[14px] leading-relaxed">{event.text}</Markdown>
+      <Pictures
+        urls={(event.shots ?? []).map((p) => p.url)}
+        onOpen={onOpen}
+        label="Screenshots it took"
+      />
+    </div>
+  )
 }
 
 function Header({ session }: { session: Session }) {
@@ -53,6 +72,7 @@ export function SessionScreen({ provider, id }: { provider: string; id: string }
   const found = useSession(provider, id)
   const view = found.data
   const end = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState<string | null>(null)
   const seen = useRef(0)
   const count = view?.events.length ?? 0
 
@@ -101,8 +121,13 @@ export function SessionScreen({ provider, id }: { provider: string; id: string }
       )}
       <div className="space-y-4">
         {view.events.map((event) => (
-          <Message key={event.i} event={event} />
+          <Message key={event.i} event={event} onOpen={setOpen} />
         ))}
+        <Pictures
+          urls={(view.shots ?? []).map((p) => p.url)}
+          onOpen={setOpen}
+          label="Screenshots it took since its last answer"
+        />
       </div>
       {streaming && (
         <div className="space-y-1">
@@ -131,6 +156,7 @@ export function SessionScreen({ provider, id }: { provider: string; id: string }
         </section>
       )}
       {chat && <Composer session={session} chat={chat} />}
+      <Lightbox url={open} onClose={() => setOpen(null)} />
       {/* After the composer, so following the newest message never leaves it under the box. */}
       <div ref={end} />
     </main>

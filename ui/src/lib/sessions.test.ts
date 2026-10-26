@@ -176,9 +176,19 @@ describe("the composer", () => {
     ).toBe("waiting")
   })
 
-  it("sends only words, and only when it may", () => {
+  it("sends words or pictures, and only when it may", () => {
     expect(canSend(chat(), "  hi ")).toBe(true)
     expect(canSend(chat(), "   ")).toBe(false)
+    expect(canSend(chat(), "", 1)).toBe(true) // a picture alone is a message
     expect(canSend(chat({ busy: true, can_send: false }), "hi")).toBe(false)
+  })
+
+  it("keeps the latest screenshots still waiting for an answer", () => {
+    const shot = { url: "/api/session/image?line=3&n=0", media: "image/png", line: 3, n: 0 }
+    const shown: TranscriptPage = { events: [], next: 4, first: 0, running: [], earlier: 0 }
+    expect(mergePage(shown, { ...shown, shots: [shot] }).shots).toEqual([shot])
+    expect(mergePage({ ...shown, shots: [shot] }, { ...shown, next: 6, first: 4 }).shots).toEqual(
+      []
+    )
   })
 })

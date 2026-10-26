@@ -55,6 +55,9 @@ export type Card = {
   updated: string
 }
 
+/** A picture in a conversation, read from the transcript by its place. */
+export type Picture = { url: string; media: string; line: number; n: number }
+
 export type TranscriptEvent = {
   i: number
   kind: "user" | "assistant" | "tool" | "notice" | string
@@ -63,6 +66,10 @@ export type TranscriptEvent = {
   ok: boolean | null
   output: string
   ts: string | null
+  /** Pictures the user pasted into this message. */
+  images?: Picture[]
+  /** Screenshots and pictures the agent's tools took before this answer. */
+  shots?: Picture[]
 }
 
 /**
@@ -76,6 +83,8 @@ export type TranscriptPage = {
   first: number
   running: TranscriptEvent[]
   earlier: number
+  /** Screenshots taken since the last answer, still waiting for one. */
+  shots?: Picture[]
 }
 
 /** An approval a session ax holds waits on. */
@@ -150,9 +159,13 @@ const same = (a: TranscriptEvent[], b: TranscriptEvent[]) =>
 export function mergePage(shown: TranscriptPage, page: TranscriptPage): TranscriptPage {
   if (page.first > shown.next || page.next < shown.next) return page
   const running = page.running ?? []
-  if (page.next === shown.next) return same(shown.running, running) ? shown : { ...shown, running }
+  const shots = page.shots ?? []
+  if (page.next === shown.next)
+    return same(shown.running, running) && (shown.shots ?? []).length === shots.length
+      ? shown
+      : { ...shown, running, shots }
   const fresh = page.events.filter((e) => e.i >= shown.next)
-  return { ...shown, events: [...shown.events, ...fresh], next: page.next, running }
+  return { ...shown, events: [...shown.events, ...fresh], next: page.next, running, shots }
 }
 
 /** The one command worth a line: the one running now, while the session works. */
@@ -168,6 +181,6 @@ export function composerMode(chat: ChatState): ComposerMode {
   return chat.busy ? "busy" : "send"
 }
 
-export function canSend(chat: ChatState, text: string): boolean {
-  return chat.can_send && !chat.busy && text.trim().length > 0
+export function canSend(chat: ChatState, text: string, images = 0): boolean {
+  return chat.can_send && !chat.busy && (text.trim().length > 0 || images > 0)
 }

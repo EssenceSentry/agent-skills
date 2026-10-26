@@ -660,6 +660,24 @@ const EVENTS: TranscriptEvent[] = [
   ts: at(-40 + i * 6),
 }))
 
+// check-colours: off. Example pictures: a pasted chart and a browser screenshot; they are
+// picture content, not interface colour.
+const svg = (body: string) =>
+  `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200" viewBox="0 0 320 200">${body}</svg>`)}`
+const PASTED = svg(
+  `<rect width="320" height="200" fill="#f7f7f5"/><path d="M30 170 L90 120 L150 140 L210 70 L290 40" stroke="#3665e4" stroke-width="5" fill="none"/><path d="M30 20 V170 H300" stroke="#9aa0a6" stroke-width="2" fill="none"/>`
+)
+const SHOT = svg(
+  `<rect width="320" height="200" fill="#ffffff"/><rect width="320" height="34" fill="#1f2937"/><circle cx="18" cy="17" r="5" fill="#f87171"/><circle cx="34" cy="17" r="5" fill="#fbbf24"/><rect x="24" y="56" width="180" height="16" rx="4" fill="#d1d5db"/><rect x="24" y="84" width="272" height="88" rx="8" fill="#e5e7eb"/><rect x="190" y="40" width="110" height="40" rx="6" fill="#3665e4" opacity="0.85"/>`
+)
+// check-colours: on
+
+const picture = (url: string, line: number) => ({ url, media: "image/svg+xml", line, n: 0 })
+const first = EVENTS[0]
+if (first) first.images = [picture(PASTED, 1)]
+const answer = EVENTS[2]
+if (answer) answer.shots = [picture(SHOT, 4)]
+
 const RUNNING: TranscriptEvent = {
   i: 15,
   kind: "tool",
