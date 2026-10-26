@@ -122,5 +122,7 @@ wait KEY`; a pace warning comes once) or stop it yourself, as the message says.
 
 - Never stop, forget or re-register a job you did not start without asking.
 - A paused Runwatch run ends its ax job as failed: repair it, `runwatch resume`, then
-  watch it again under a new key.
+  watch it again under a new key. So does a run still at "created" with no controller
+  two minutes after it was made: it never started, and the output of the command that
+  launched it says why (a taken port, a bad setting).
 - AWS checks use the calling shell's credentials; a check error is not a failed job.

@@ -17,7 +17,7 @@ import shutil
 import subprocess
 import sys
 import urllib.request
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ax.jobs import Job, Update, normalize_status, number, read_lines
@@ -526,6 +526,9 @@ def _check_seamless(job: Job) -> list[Update]:
 # A paused run waits for a repair, so it ends the ax job and wakes whoever waits on it.
 _RUNWATCH_STATUS = {"succeeded": "done", "failed": "failed", "cancelled": "stopped"}
 _RUNWATCH_ACTIVE = {"running", "restarting", "finalizing", "waiting_external"}
+# A run still "created" with no controller this long after it was made never started:
+# the command that launched it failed (a taken port, a bad setting) after creating it.
+_RUNWATCH_START_GRACE = 120.0
 
 
 def _runwatch_binary(options: dict, cwd: str) -> str:
@@ -595,6 +598,21 @@ def _check_runwatch(job: Job) -> list[Update]:
         ]
     if raw in _RUNWATCH_STATUS:
         return [Update(status=_RUNWATCH_STATUS[raw], message=message)]
+    if raw == "created" and not state.get("controller_live"):
+        made = run.get("created_at") or job.created
+        try:
+            age = (datetime.now(UTC) - datetime.fromisoformat(made)).total_seconds()
+        except (TypeError, ValueError):
+            age = 0.0
+        if age > _RUNWATCH_START_GRACE:
+            return [
+                Update(
+                    status="failed",
+                    message=f"never started: Runwatch created the run {round(age / 60)} min "
+                    "ago, but no controller is running it. Read the output of the command "
+                    "that launched it (a taken port, a bad setting), then launch it again",
+                )
+            ]
     if raw in _RUNWATCH_ACTIVE and not state.get("controller_live"):
         raise CheckError(
             f"Runwatch's controller is not running; `runwatch resume {job.spec['run']}` "

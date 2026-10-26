@@ -75,10 +75,12 @@ def runwatch(tmp_path):
     )
     stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
 
-    def state(status="running", cell=3, failed=None, live=True, message=None, progress=()):
+    def state(status="running", cell=3, failed=None, live=True, message=None, progress=(),
+              created=None):  # fmt: skip
         payload = {
             "run": {"name": "Train", "status": status, "message": message,
-                    "current_cell_index": cell, "failed_cell_index": failed},
+                    "current_cell_index": cell, "failed_cell_index": failed,
+                    "created_at": (created or datetime.now(UTC)).isoformat()},
             "controller_live": live,
         }  # fmt: skip
         (run / "status.json").write_text(json.dumps(payload))
@@ -125,6 +127,17 @@ def test_a_run_whose_controller_died_is_a_check_error(env, runwatch):
     state(live=False)
     job = jobs.refresh(env.config, job.key, now=later(60))
     assert job.status == "running" and "controller" in job.check_error
+
+
+def test_a_run_that_never_left_created_is_a_failed_start(env, runwatch):
+    run, stub, state = runwatch
+    state(status="created", cell=None, live=False, message="Run created")
+    job = jobs.watch(env.config, "runwatch", str(run), options={"runwatch": str(stub)})
+    assert job.status == "running" and job.stage == "created"  # still launching
+    state(status="created", cell=None, live=False, message="Run created", created=later(-600))
+    job = jobs.refresh(env.config, job.key, now=later(60))
+    assert job.status == "failed" and job.message.startswith("never started")
+    assert "10 min ago" in job.message and "launched it" in job.message
 
 
 def test_runwatch_needs_a_run_folder_and_its_command(env, runwatch, tmp_path):
