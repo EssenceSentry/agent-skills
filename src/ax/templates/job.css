@@ -60,8 +60,6 @@ p { margin: 6px 0 0; }
 .bar { height: 10px; border-radius: 999px; background: var(--track); overflow: hidden; }
 .fill { height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .6s ease; }
 .bar[data-status="failed"] .fill { background: var(--failed); }
-.bar[data-unknown="true"] .fill { width: 30%; animation: slide 1.6s ease-in-out infinite; }
-@keyframes slide { from { margin-left: -30%; } to { margin-left: 100%; } }
 
 .row { display: flex; justify-content: space-between; align-items: baseline; margin-top: 8px; gap: 8px; }
 .row strong { font-size: 22px; }
@@ -77,5 +75,7 @@ dd { margin: 2px 0 0; word-break: break-word; }
 .events li { display: flex; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 14px; }
 .events li:first-child { border-top: 0; }
 .events time { flex: none; color: var(--quiet); font-variant-numeric: tabular-nums; }
+.looks .warning { margin: 6px 0 0; }
+h2 .quiet { text-transform: none; letter-spacing: 0; margin-left: 6px; }
 
 pre { margin: 0; max-height: 360px; overflow: auto; font-size: 12px; white-space: pre-wrap; word-break: break-all; }

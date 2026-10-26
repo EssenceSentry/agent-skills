@@ -126,3 +126,18 @@ def test_events_and_a_console_link_are_included(dash, env, monkeypatch):
     ]  # progress rows are summarized
     assert data["progress_text"] == "3"
     assert data.get("console_url") is None
+
+
+def test_the_page_shows_haiku_s_looks_newest_first(dash, env):
+    from ax import job_follow
+
+    server = dash()
+    job_follow.set_check(env.config, "score", every=600)  # as `ax job check --every 10m` does
+    for summary in ("Downloading shards.", "Scoring rows, 40 of 100 done."):
+        jobs.record_event(env.config, "score", "look",
+                          {"summary": summary, "problem": None, "every": 600})  # fmt: skip
+    data = json.loads(request(server, "/api/job", token=server.token)[2])
+    assert [x["summary"] for x in data["looks"]] == ["Scoring rows, 40 of 100 done.",
+                                                     "Downloading shards."]  # fmt: skip
+    assert data["check_every"] == 600
+    assert "look" not in [e["type"] for e in data["events"]]  # shown in their own list

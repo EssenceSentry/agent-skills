@@ -25,6 +25,16 @@ function duration(seconds) {
   return `${s} s`;
 }
 
+// An interval as you would say it: 45 s, 10 min, 90 min, 2 h, 1 d.
+function every(seconds) {
+  for (const [size, unit] of [[86400, "d"], [3600, "h"], [60, "min"]]) {
+    if (seconds >= size && (seconds % size === 0 || seconds >= 10 * size)) {
+      return `${Number((seconds / size).toFixed(1))} ${unit}`;
+    }
+  }
+  return seconds >= 60 ? `${Number((seconds / 60).toFixed(1))} min` : `${seconds} s`;
+}
+
 function ago(iso) {
   if (!iso) return "-";
   return `${duration((Date.now() - Date.parse(iso)) / 1000)} ago`;
@@ -95,7 +105,8 @@ function render(data) {
 
   const known = data.total && data.done !== null;
   const pct = known ? Math.min(100, (100 * data.done) / data.total) : null;
-  $("bar").dataset.unknown = String(!known && data.status === "running");
+  // No bar when the job reports no total: an endless sliding bar says nothing.
+  $("bar").hidden = !known && data.status !== "done";
   $("fill").style.width = known ? `${pct}%` : data.status === "done" ? "100%" : "";
   $("pct").textContent = known ? `${pct.toFixed(0)}%` : "";
   $("counts").textContent = counts(data);
@@ -122,6 +133,29 @@ function render(data) {
       when.textContent = stamp(event.ts);
       const what = document.createElement("span");
       what.textContent = describe(event);
+      item.append(when, what);
+      return item;
+    }),
+  );
+
+  const looks = data.looks || [];
+  $("looks-card").hidden = !looks.length && !data.check_every;
+  $("looks-every").textContent = data.check_every ? `every ${every(data.check_every)}` : "";
+  $("looks").replaceChildren(
+    ...looks.map((look) => {
+      const item = document.createElement("li");
+      const when = document.createElement("time");
+      when.textContent = stamp(look.at);
+      const what = document.createElement("div");
+      const summary = document.createElement("span");
+      summary.textContent = look.summary || "(no summary)";
+      what.append(summary);
+      if (look.problem) {
+        const problem = document.createElement("p");
+        problem.className = "warning";
+        problem.textContent = look.problem;
+        what.append(problem);
+      }
       item.append(when, what);
       return item;
     }),

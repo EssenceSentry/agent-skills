@@ -17,11 +17,18 @@ def test_the_diagnosis_reads_the_end_of_the_log(env):
     assert "row 0 ok" not in asked[0]  # only the tail
 
 
-def test_a_health_check_returns_the_problem_or_nothing(env):
-    job = started(env, ["KeyError: 'video_id'"] * 5)
-    assert job_triage.check(env.config, job, model=lambda p: "OK") is None
-    found = job_triage.check(env.config, job, model=lambda p: "PROBLEM: every row raises KeyError")
-    assert found == "every row raises KeyError"
+def test_a_health_check_summarises_the_state_and_names_any_problem(env):
+    job = started(env, ["row 40 of 100 ok"] * 5)
+    asked = []
+    healthy = job_triage.check(env.config, job, model=lambda p: asked.append(p) or
+                               "STATE: Scoring rows, 40 of 100 done.\nHEALTH: OK")  # fmt: skip
+    assert healthy == job_triage.Look("Scoring rows, 40 of 100 done.", None)
+    assert "STATE:" in asked[0] and "HEALTH:" in asked[0]
+    sick = job_triage.check(env.config, job, model=lambda p: "STATE: Retrying row 41.\n"
+                            "HEALTH: PROBLEM: every row raises KeyError")  # fmt: skip
+    assert sick == job_triage.Look("Retrying row 41.", "every row raises KeyError")
+    bare = job_triage.check(env.config, job, model=lambda p: "OK")
+    assert bare.problem is None
 
 
 def test_a_job_without_a_log_is_read_from_its_events(env):

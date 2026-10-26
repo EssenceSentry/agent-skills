@@ -1731,6 +1731,9 @@ def job_show(
     typer.echo(f"{'events file':<12} {data['events_file']}")
     if data["follower"]:
         typer.echo(f"{'dashboard':<12} {data['follower']['link']}")
+    haiku = _haiku_line(config, key)
+    if haiku:
+        typer.echo(haiku)
     for event in recent:
         typer.echo(f"  {event['ts']} {event['type']} {json.dumps(event['data'])}")
 
@@ -1891,17 +1894,21 @@ def job_follow_cmd(
     key: str = typer.Argument(...),
     share: str = typer.Option("none", help="Dashboard reach: none (this Mac), lan or cloudflare."),
     notify: bool = typer.Option(False, "--notify", help="Send ntfy messages."),
-    every: float = typer.Option(15.0, help="Minutes between progress messages; 0 for none."),
+    every: str = typer.Option(
+        "15m", help="Time between progress messages (45s, 10m, 2h); 0 for none."
+    ),
     notify_stages: bool = typer.Option(False, "--notify-stages", help="Message each new stage."),
-    stall_after: float = typer.Option(None, help="Minutes without change before a stall message."),
+    stall_after: str = typer.Option(None, help="Time without change before a stall message (2h)."),
     linger: float = typer.Option(120.0, help="Seconds the dashboard stays up after the job ends."),
     show_log: bool = typer.Option(False, "--show-log", help="Show output.log's tail on the page."),
     port: int = typer.Option(0, help="Local port for the dashboard; 0 picks a free one."),
     interval: float = typer.Option(3.0, help="Seconds between refreshes."),
     detach: bool = typer.Option(False, "--detach", help="Run in the background; print the link."),
     wake: str = _WAKE,
-    check_every: float = typer.Option(
-        None, help="Minutes between Haiku health checks of the log; 30 with --wake, 0 for none."
+    check_every: str = typer.Option(
+        None,
+        help="Time between Haiku's looks at the log (45s, 10m, 2h; a bare number is minutes); "
+        "30m with --wake, 0 for none. Change it later with `ax job check`.",
     ),
     resumed: bool = typer.Option(
         False, "--resumed", hidden=True, help="Restarted by the poller: send nothing twice."
@@ -1910,11 +1917,21 @@ def job_follow_cmd(
 ):
     """Follow a job: a mini dashboard, optional sharing, ntfy messages and a wake-up at the end."""
     config = _jobs_config()
+    try:
+        every_s = jobs_module.parse_duration(every)
+        stall_s = None if stall_after is None else jobs_module.parse_duration(stall_after)
+        checks = None if check_every is None else jobs_module.parse_duration(check_every)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    if checks is None:
+        checks = 1800.0 if wake else 0.0
+    elif not resumed and jobs_module.get(config, key) is not None:
+        job_follow.set_check(config, key, every=checks)  # what you asked now wins
     options = job_follow.FollowOptions(
-        share=share, notify=notify, every=every * 60, notify_stages=notify_stages,
-        stall_after=None if stall_after is None else stall_after * 60, linger=linger,
-        show_log=show_log, interval=interval, port=port, wake=wake, resumed=resumed,
-        check_every=(30.0 if wake and check_every is None else check_every or 0) * 60 or None,
+        share=share, notify=notify, every=every_s, notify_stages=notify_stages,
+        stall_after=stall_s, linger=linger, show_log=show_log, interval=interval, port=port,
+        wake=wake, resumed=resumed, check_every=checks or None,
     )  # fmt: skip
     if detach:
         args = job_follow.options_args(options)
@@ -1942,6 +1959,65 @@ def job_follow_cmd(
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from None
     typer.echo(f"{key}: {status}", err=True)
+
+
+@job_app.command("check")
+def job_check_cmd(
+    key: str = typer.Argument(...),
+    every: str = typer.Option(
+        None,
+        help="How often Haiku looks at the log: 45s, 10m, 2h (a bare number is minutes); 0 stops.",
+    ),
+    now: bool = typer.Option(False, "--now", help="Have Haiku look right away."),
+):
+    """Haiku's looks at a job's log: how often, a look now, or what it saw last."""
+    config = _jobs_config()
+    job = jobs_module.refresh(config, key)
+    if job is None:
+        _no_such_job(key)
+    try:
+        seconds = None if every is None else jobs_module.parse_duration(every)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    follower = job_follow.running(config, key)
+    if seconds is not None:
+        job_follow.set_check(config, key, every=seconds)
+        when = ("from its follower's next loop" if follower
+                else f"once a follower runs it (`ax job follow {key}`)")  # fmt: skip
+        typer.echo(f"Haiku looks at {key} every {jobs_module.duration_text(seconds)} {when}"
+                   if seconds else f"Haiku's looks at {key} are off")  # fmt: skip
+    if now and follower:
+        job_follow.set_check(config, key, now=True)
+        typer.echo(f"its follower asks Haiku now; `ax job show {key}` shows the answer")
+    elif now:  # no follower: look here
+        from ax import job_triage
+
+        look = job_triage.check(config, job)
+        jobs_module.record_event(config, key, "look",
+                                 {"summary": look.summary, "problem": look.problem, "every": None})  # fmt: skip
+        typer.echo(look.summary or "(no summary)")
+        if look.problem:
+            typer.echo(f"problem: {look.problem}")
+    if seconds is None and not now:
+        typer.echo(_haiku_line(config, key) or f"Haiku doesn't look at {key}")
+
+
+def _haiku_line(config, key: str) -> str:
+    """Haiku's interval and last look at a job, for `ax job show` and `ax job check`."""
+    every = job_follow.check_every(config, key)
+    look = jobs_module.latest_look(config, key)
+    if not every and not look:
+        return ""
+    head = f"every {jobs_module.duration_text(every)}" if every else "looks off"
+    if look:
+        head += f", last at {jobs_module.parse_iso(look['at']).astimezone():%H:%M}"
+    lines = [f"{'haiku':<12} {head}"]
+    if look and look.get("summary"):
+        lines.append(f"{'':<12} {look['summary']}")
+    if look and look.get("problem"):
+        lines.append(f"{'':<12} problem: {look['problem']}")
+    return "\n".join(lines)
 
 
 @job_app.command("wake")

@@ -73,6 +73,44 @@ def follower_path(config, key: str):
     return jobs.events_path(config, key).parent / "follower.json"
 
 
+def control_path(config, key: str):
+    """What `ax job check` asks of a running follower: a new interval, or a check now."""
+    return jobs.events_path(config, key).parent / "check.json"
+
+
+def read_control(config, key: str) -> dict:
+    try:
+        found = json.loads(control_path(config, key).read_text())
+    except (OSError, ValueError):
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
+def set_check(config, key: str, *, every: float | None = None, now: bool | None = None) -> dict:
+    """Set how often a model looks at the job's log (seconds; 0 stops), or ask for a look
+    now. A running follower applies it at its next loop; a later one starts with it."""
+    control = read_control(config, key)
+    if every is not None:
+        control["every"] = float(every)
+    if now is not None:
+        control["now"] = bool(now)
+    path = control_path(config, key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(control))
+    tmp.replace(path)
+    return control
+
+
+def check_every(config, key: str) -> float | None:
+    """Seconds between a model's looks at the job: what was asked last, else the follower's."""
+    asked = read_control(config, key).get("every")
+    if isinstance(asked, int | float):
+        return asked or None
+    info = running(config, key) or {}
+    return (info.get("options") or {}).get("check_every") or None
+
+
 def _alive(pid: int) -> bool:
     from ax.job_sources import process_alive  # counts an unreaped, finished child as gone
 
@@ -172,7 +210,7 @@ def follow(
         def diagnoser(job):
             return job_triage.diagnose(config, job)
 
-    if options.check_every and checker is None:
+    if checker is None:  # an interval can be set while the job runs (`ax job check`)
         from ax import job_triage
 
         def checker(job):
@@ -218,12 +256,16 @@ def follow(
             jobs.record_event(config, key, "diagnosis", {"text": text})
 
     def check(job, state: dict) -> None:
-        """Ask the model whether a running job looks wrong; wake the agent once per problem."""
+        """Ask the model where a running job is and whether it looks wrong. Every look is
+        kept, healthy or not; the agent is woken once per problem."""
         try:
-            problem = checker(job)
+            look = checker(job)
         except Exception as exc:
             jobs.record_event(config, key, "check_failed", {"error": str(exc)[-300:]})
             return
+        problem = look.problem
+        jobs.record_event(config, key, "look", {"summary": look.summary, "problem": problem,
+                                                "every": options.check_every})  # fmt: skip
         if problem and problem != state.get("problem"):
             jobs.record_event(config, key, "problem", {"text": problem})
             wake(job, problem)
@@ -269,7 +311,7 @@ def follow(
         relink = server.link if options.dashboard else None
         return _loop(
             config, key, options, job, link, links, share, relink, notify, wake, stopping, clock,
-            sleep, diagnose=diagnose, check=check if checker else None,
+            sleep, diagnose=diagnose, check=check,
         )  # fmt: skip
     finally:
         for close in reversed(closers):
@@ -299,6 +341,14 @@ def _loop(
     while not stopping.is_set():
         now = clock()
         job = jobs.refresh(config, key, now=datetime.fromtimestamp(now, UTC)) or job
+        asked = read_control(config, key)
+        every = asked.get("every")
+        if isinstance(every, int | float) and (every or None) != options.check_every:
+            options.check_every = every or None  # `ax job check --every`
+            _write_info(config, key, links, options)  # a restarted follower keeps it
+        look_now = bool(asked.get("now"))
+        if look_now:
+            set_check(config, key, now=False)
         if share is not None:
             replaced = share.tick()
             if replaced:
@@ -327,7 +377,8 @@ def _loop(
             ):
                 notify(job_notify.progress(job, link, _eta(config, job, options)))
                 last_note, noted = now, (job.done, job.stage)
-            if check and options.check_every and now - checked_at >= options.check_every:
+            due = options.check_every and now - checked_at >= options.check_every
+            if check and (look_now or due):
                 checked_at = now
                 check(job, health)
             if options.stall_after is not None:

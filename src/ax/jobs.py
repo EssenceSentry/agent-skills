@@ -581,6 +581,43 @@ def list_jobs(config, *, include_finished: bool = False, refresh_active: bool = 
     return [j for j in found if include_finished or not j.terminal]
 
 
+_DURATION = re.compile(
+    r"\s*(\d+(?:\.\d+)?)\s*(s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?|d|days?)?\s*",
+    re.I,
+)
+_UNIT = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def parse_duration(text) -> float:
+    """Seconds in "45s", "10m", "2h" or "1d"; a bare number is minutes, and 0 is none."""
+    found = _DURATION.fullmatch(str(text or ""))
+    if not found:
+        raise ValueError(
+            f"{text!r} isn't a duration: say 45s, 10m, 2h or 1d (a bare number is minutes)"
+        )
+    unit = (found.group(2) or "m")[0].lower()
+    return float(found.group(1)) * _UNIT[unit]
+
+
+def duration_text(seconds) -> str:
+    """600 -> "10 min", 45 -> "45 s", 7200 -> "2 h", 86400 -> "1 d"."""
+    seconds = float(seconds or 0)
+    for size, unit in ((86400, "d"), (3600, "h"), (60, "min")):
+        if seconds >= size and (seconds % size == 0 or seconds >= 10 * size):
+            return f"{seconds / size:g} {unit}"
+    if seconds >= 60:
+        return f"{seconds / 60:g} min"
+    return f"{seconds:g} s"
+
+
+def latest_look(config, key: str) -> dict | None:
+    """The last time a model looked at the job: when, its summary, and any problem."""
+    for e in reversed(events(config, key, limit=200, latest=True)):
+        if e["type"] == "look":
+            return {"at": e["ts"], **e["data"]}
+    return None
+
+
 def refresh_active(config) -> None:
     """Bring every active job up to date: how it ended, from its events file, and its
     local checks. The slow ones (an AWS call a minute each) are left to `ax job` and the

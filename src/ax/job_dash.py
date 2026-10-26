@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from ax import job_eta, jobs
+from ax import job_eta, job_follow, jobs
 
 COOKIE = "ax_job_token"
 _TEMPLATES = Path(__file__).parent / "templates"
@@ -38,7 +38,7 @@ _HEADERS = {
 _LOG_BYTES = 16_000
 # Progress rows can number thousands; the bar shows them, the list skips them. Stored
 # estimates come every five minutes; the page shows the current one instead.
-_QUIET_EVENTS = {"progress", "eta"}
+_QUIET_EVENTS = {"progress", "eta", "look"}  # looks have their own list
 _CONSOLE_PATHS = {
     "processing": "processing-jobs",
     "training": "jobs",
@@ -130,7 +130,14 @@ class Dashboard:
             "console_url": _console_url(job),
             "eta": job_eta.estimate(self.config, job),
             "events": recent,
-        }
+            "looks": [
+                {"at": e["ts"], "summary": e["data"].get("summary") or "",
+                 "problem": e["data"].get("problem")}
+                for e in reversed(jobs.events(self.config, self.key, limit=200, latest=True))
+                if e["type"] == "look"
+            ][:12],
+            "check_every": job_follow.check_every(self.config, self.key),
+        }  # fmt: skip
         for private in ("spec", "agent", "cwd"):
             data.pop(private, None)
         if self.show_log:

@@ -268,13 +268,86 @@ def test_a_finished_job_needs_no_diagnosis(env):
 
 def test_the_health_check_wakes_the_agent_once_per_problem(env):
     jobs.new(env.config, "score", env={"CODEX_THREAD_ID": "th-1"})
+    from ax.job_triage import Look
+
     problems = iter([None, "every row errors with KeyError", "every row errors with KeyError",
                      "disk is full"])  # fmt: skip
     woken, alerts = [], []
     follow_with(env, {15: [{"status": "done"}]}, check_every=180,
-                checker=lambda job: next(problems, None), alerter=alerts.append,
-                waker=lambda job, note=None: woken.append(note))  # fmt: skip
+                checker=lambda job: Look("Scoring rows.", next(problems, None)),
+                alerter=alerts.append, waker=lambda job, note=None: woken.append(note))  # fmt: skip
     looks_wrong = [n for n in woken if n]
     assert len(looks_wrong) == 2 and "every row errors" in looks_wrong[0]
     assert "disk is full" in looks_wrong[1] and len(alerts) == 2
     assert [e["type"] for e in jobs.events(env.config, "score")].count("problem") == 2
+
+
+def test_every_check_is_kept_even_when_the_job_looks_fine(env):
+    from ax.job_triage import Look
+
+    jobs.new(env.config, "score", env={"CODEX_THREAD_ID": "th-1"})
+    woken, alerts = [], []
+    follow_with(env, {7: [{"status": "done"}]}, check_every=120,
+                checker=lambda job: Look("Scoring rows, 40 of 100 done.", None),
+                alerter=alerts.append, waker=lambda job, note=None: woken.append(note))  # fmt: skip
+    looks = [e for e in jobs.events(env.config, "score") if e["type"] == "look"]
+    assert len(looks) == 3 and looks[0]["data"]["summary"] == "Scoring rows, 40 of 100 done."
+    assert looks[0]["data"]["problem"] is None and looks[0]["data"]["every"] == 120
+    assert alerts == [] and [n for n in woken if n] == []  # nothing woken for a healthy job
+    assert jobs.latest_look(env.config, "score")["summary"] == "Scoring rows, 40 of 100 done."
+
+
+def test_the_interval_changes_while_the_job_runs_and_a_check_can_run_now(env):
+    from ax.job_triage import Look
+
+    jobs.new(env.config, "score", env={"CODEX_THREAD_ID": "th-1"})
+    timeline = Timeline(jobs.events_path(env.config, "score"), {12: [{"status": "done"}]})
+    looked = []
+
+    def sleep(seconds):
+        timeline.sleep(seconds)
+        if timeline.sleeps == 2:  # started without checks; asked for one every two minutes
+            job_follow.set_check(env.config, "score", every=120)
+        if timeline.sleeps == 7:
+            job_follow.set_check(env.config, "score", now=True)
+        if timeline.sleeps == 8:
+            job_follow.set_check(env.config, "score", every=0)  # and then to stop
+
+    def checker(job):
+        looked.append(timeline.sleeps)
+        return Look("Scoring rows.", None)
+
+    opts = job_follow.FollowOptions(dashboard=False, interval=60, linger=60, wake="auto")
+    job_follow.follow(env.config, "score", opts, clock=timeline, sleep=sleep, checker=checker,
+                      waker=lambda job, note=None: None)  # fmt: skip
+    assert looked == [2, 4, 6, 7]
+
+
+def test_the_check_command_sets_the_interval_and_shows_what_haiku_saw(env, monkeypatch):
+    from ax import job_triage
+
+    monkeypatch.setenv("AX_CONFIG", str(env.config_path))
+    jobs.new(env.config, "score", label="Score rows")
+    monkeypatch.setattr(job_triage, "_model", lambda model: lambda prompt:
+                        "STATE: Scoring rows, 40 of 100 done.\nHEALTH: OK")  # fmt: skip
+    now = cli(env, "check", "score", "--now")  # no follower: it looks right away, here
+    assert now.exit_code == 0 and "Scoring rows, 40 of 100 done." in now.stdout
+    later = cli(env, "check", "score", "--every", "10m")
+    assert later.exit_code == 0 and "10 min" in later.stdout and "follower" in later.stdout
+    assert json.loads(job_follow.control_path(env.config, "score").read_text())["every"] == 600
+    shown = cli(env, "show", "score")
+    assert "Scoring rows, 40 of 100 done." in shown.stdout and "haiku" in shown.stdout
+    assert cli(env, "check", "score", "--every", "soon").exit_code == 2
+
+
+def test_follow_takes_intervals_with_units(env, monkeypatch):
+    monkeypatch.setenv("AX_CONFIG", str(env.config_path))
+    jobs.new(env.config, "score")
+    seen = []
+    monkeypatch.setattr(job_follow, "follow", lambda config, key, options, **kw:
+                        seen.append(options) or "done")  # fmt: skip
+    result = cli(env, "follow", "score", "--check-every", "45s", "--every", "2h",
+                 "--stall-after", "1d")  # fmt: skip
+    assert result.exit_code == 0, result.output
+    [options] = seen
+    assert (options.check_every, options.every, options.stall_after) == (45, 7200, 86400)

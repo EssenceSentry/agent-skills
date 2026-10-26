@@ -8,6 +8,7 @@ that means nothing. Both read at most the last lines of output, redacted first.
 """
 
 import json
+from dataclasses import dataclass
 
 from ax import jobs
 from ax.redact import redact
@@ -26,14 +27,24 @@ the output shows no failure, say so in one line.
 
 _CHECK = """A long-running job that a coding agent started is still running.
 {label}
-Below is the end of its output. Reply with exactly OK if nothing looks wrong. If
-something does (the same error on every item, a retry loop, a crash being retried,
-progress that isn't progressing, results that are clearly empty or wrong), reply with
-one line that starts with PROBLEM: and says what, quoting the log. Routine warnings
-and normal slow progress are OK.
+Below is the end of its output. Answer in exactly two parts:
+STATE: one or two short lines on where the job is: what it is doing now, how far it has
+got, and its pace when the output shows them.
+HEALTH: OK if nothing looks wrong. If something does (the same error on every item, a
+retry loop, a crash being retried, progress that isn't progressing, results that are
+clearly empty or wrong), PROBLEM: and one line on what, quoting the log. Routine
+warnings and normal slow progress are OK.
 
 {tail}
 """
+
+
+@dataclass(frozen=True)
+class Look:
+    """What a model saw in a running job: where it is, and what looks wrong, if anything."""
+
+    summary: str
+    problem: str | None = None
 
 
 def tail(config, job) -> str:
@@ -69,9 +80,13 @@ def diagnose(config, job, *, model=None) -> str:
     return _model(model)(prompt).strip()
 
 
-def check(config, job, *, model=None) -> str | None:
-    """What looks wrong with a running job, or None when it looks fine."""
+def check(config, job, *, model=None) -> Look:
+    """Where a running job is, and what looks wrong with it, if anything."""
     answer = _model(model)(_CHECK.format(label=_label(job), tail=tail(config, job))).strip()
-    if "PROBLEM:" not in answer:
-        return None
-    return answer.split("PROBLEM:", 1)[1].strip().splitlines()[0] or None
+    state, _, health = answer.partition("HEALTH:")
+    summary = state.split("STATE:", 1)[1] if "STATE:" in state else ""
+    summary = " ".join(summary.split())[:600]
+    problem = None
+    if "PROBLEM:" in answer:
+        problem = answer.split("PROBLEM:", 1)[1].strip().splitlines()[0][:600] or None
+    return Look(summary, problem)

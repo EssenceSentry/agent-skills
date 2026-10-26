@@ -278,3 +278,16 @@ def test_refresh_active_reads_how_jobs_ended_without_the_slow_checks(env, monkey
                                                          refresh_active=False)}  # fmt: skip
     assert found["done-1"] == "done" and found["failed-1"] == "failed"
     assert found[slow.key] == "running"
+
+
+@pytest.mark.parametrize(("text", "seconds"), [("45s", 45), ("10m", 600), ("2h", 7200),
+                                               ("1d", 86400), ("1.5h", 5400), ("5", 300),
+                                               ("0", 0), (" 90 sec ", 90), ("3 min", 180)])  # fmt: skip
+def test_durations_take_units_and_a_bare_number_is_minutes(text, seconds):
+    assert jobs.parse_duration(text) == seconds
+
+
+@pytest.mark.parametrize("text", ["soon", "-5m", "10x", ""])
+def test_a_duration_that_is_not_one_says_how_to_write_it(text):
+    with pytest.raises(ValueError, match="45s, 10m, 2h"):
+        jobs.parse_duration(text)
