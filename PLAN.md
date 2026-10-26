@@ -627,12 +627,12 @@ The user works in four Claude and four Codex sessions at once, and neither deskt
   - **Claude, started in ax:** continues by id in a terminal (`claude --resume <id>`, checked with its history intact) or back in ax. It does not appear in the desktop app's sidebar, which lists only sessions the app started.
   - **Claude, started in the desktop app:** the view shows it and its state. While the app has it open, ax only reads it, since driving it would split it into a copy. Once the app has closed it, ax may resume it by id; whether the app then shows ax's turns when reopened is still to check, on a session the user is willing to experiment on.
 - **Not in the first version:** the apps' diff, file, terminal and browser panes, plan mode, slash commands, image paste, and artifacts or previews. A diff view may come later.
-- **Security, to decide before building chat:** through the shared link, anyone holding it could instruct the user's agents. The proposal is that reading works everywhere and sending and approving work only on this Mac, unless the user turns remote sending on (`[chat] remote_send = true`) or each remote send asks a second confirmation.
+- **Sending from the phone (decided 2026-10-26):** sending messages and answering approvals work through the shared link too, since anyone holding the link could otherwise only read. Each send or approval that arrives through the link asks a second confirmation before it reaches the agent: a step that shows exactly what will be sent or approved, and to which session. On this Mac it goes straight through. Reading needs no confirmation anywhere.
 - **Build order, test-first, each stage usable alone:**
   1. **Sessions view:** list and state from both tools, live transcripts, "waiting for you", from fakes of `claude agents` and of an app-server in tests.
   2. **Codex chat:** a client for the app-server protocol (start, resume, turn, steer, interrupt, deltas), tested against a fake server.
   3. **Claude chat:** a driver for the headless stream-json process (handshake, turns, partial messages, interrupt), tested against a fake process.
-  4. **Approvals and interrupts in the view,** for both tools, with the security choice above.
+  4. **Approvals and interrupts in the view,** for both tools, with the second confirmation for anything sent through the shared link.
   5. **Handover helpers:** "open in the Codex app", "continue in a terminal", and the check of desktop-app Claude sessions resumed in ax.
 
 ## Schedule
