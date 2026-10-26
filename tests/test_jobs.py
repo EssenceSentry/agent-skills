@@ -291,3 +291,25 @@ def test_durations_take_units_and_a_bare_number_is_minutes(text, seconds):
 def test_a_duration_that_is_not_one_says_how_to_write_it(text):
     with pytest.raises(ValueError, match="45s, 10m, 2h"):
         jobs.parse_duration(text)
+
+
+def test_wait_ends_when_a_model_sees_a_problem(env):
+    jobs.new(env.config, "score")
+    clock = FakeClock()
+
+    def sleep(seconds):
+        clock.sleep(seconds)
+        jobs.record_event(env.config, "score", "problem", {"text": "every row raises KeyError"})
+
+    outcome, job = jobs.wait(env.config, "score", interval=5, sleep=sleep)
+    assert outcome == "problem" and job.status == "running"
+    assert jobs.WAIT_CODES["problem"] == 5
+
+
+def test_only_jobs_expected_to_run_long_get_model_looks(env):
+    jobs.new(env.config, "score")
+    assert jobs.expected(env.config, "score") is None
+    jobs.expect(env.config, "score", 1500)
+    assert jobs.expected(env.config, "score") == 1500
+    assert jobs.looks_every(1500) == 300
+    assert jobs.looks_every(600) is None and jobs.looks_every(None) is None

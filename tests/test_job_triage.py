@@ -35,3 +35,13 @@ def test_a_job_without_a_log_is_read_from_its_events(env):
     jobs.new(env.config, "remote", env={})
     tail = job_triage.tail(env.config, jobs.get(env.config, "remote"))
     assert "created" in tail
+
+
+def test_a_health_check_asks_about_pace_against_the_expected_duration(env):
+    job = started(env, ["row 40 of 100 ok"])
+    jobs.expect(env.config, "mine", 1200)
+    asked = []
+    job_triage.check(env.config, job, model=lambda p: asked.append(p) or "STATE: ok\nHEALTH: OK")
+    assert "expected to take about 20 min" in asked[0]
+    assert "is this process working" in asked[0] and "pace" in asked[0]
+    assert "faster than expected is fine" in asked[0]

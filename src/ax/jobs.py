@@ -32,7 +32,7 @@ TERMINAL = frozenset({"done", "failed", "stopped", "ended"})
 # `ax job wait` exit codes; 69 (no such job) matches `ax usage guard`'s "unknown".
 WAIT_CODES = {
     "done": 0, "failed": 1, "stopped": 2, "ended": 2, "stalled": 3, "check_error": 4,
-    "timeout": 124,
+    "problem": 5, "timeout": 124,
 }  # fmt: skip
 SOURCE_KINDS = ("file", "pid", "sagemaker", "seamless", "runwatch", "tools")
 # Kinds ax checks itself: the watchable sources plus `ax job run`, whose runner is a process.
@@ -610,6 +610,37 @@ def duration_text(seconds) -> str:
     return f"{seconds:g} s"
 
 
+# Jobs expected to take longer than this get a model look every LOOK_EVERY seconds.
+WATCH_OVER = 600.0
+LOOK_EVERY = 300.0
+
+
+def expect(config, key: str, seconds: float) -> None:
+    """Record how long the agent expects the job to take, for pace checks."""
+    record_event(config, key, "expect", {"seconds": seconds})
+
+
+def expected(config, key: str) -> float | None:
+    """How long the job was expected to take, in seconds, if anyone said."""
+    for e in reversed(events(config, key, limit=200, latest=True)):
+        if e["type"] == "expect":
+            return e["data"].get("seconds")
+    return None
+
+
+def looks_every(expected_seconds: float | None) -> float | None:
+    """How often a model should look at a job expected to take this long, if at all."""
+    return LOOK_EVERY if expected_seconds and expected_seconds > WATCH_OVER else None
+
+
+def latest_problem(config, key: str) -> dict | None:
+    """The last problem a model saw in the job: when, and what."""
+    for e in reversed(events(config, key, limit=200, latest=True)):
+        if e["type"] == "problem":
+            return {"at": e["ts"], **e["data"]}
+    return None
+
+
 def latest_look(config, key: str) -> dict | None:
     """The last time a model looked at the job: when, its summary, and any problem."""
     for e in reversed(events(config, key, limit=200, latest=True)):
@@ -645,6 +676,7 @@ def wait(
     interval: float = 15.0,
     stall_after: float | None = None,
     error_after: float | None = 600.0,
+    problems: bool = True,
     clock=time.time,
     sleep=time.sleep,
 ) -> tuple[str, Job]:
@@ -654,10 +686,12 @@ def wait(
     since nothing else can happen to it. "stalled" in `until` turns on stall
     detection after 30 minutes unless `stall_after` says otherwise. A source check
     that keeps failing for `error_after` seconds, such as a mistyped SageMaker name
-    or expired credentials, ends the wait too, since waiting can't fix it.
+    or expired credentials, ends the wait too, since waiting can't fix it. So does a
+    problem a model sees in the job while it runs (with `problems`), so the waiting
+    agent is woken to deal with it instead of waiting on a job that is not working.
 
-    Returns (outcome, job), where outcome is a status, "stalled", "check_error" or
-    "timeout". Raises KeyError for an unknown job.
+    Returns (outcome, job), where outcome is a status, "stalled", "check_error",
+    "problem" or "timeout". Raises KeyError for an unknown job.
     """
     until = set(until or TERMINAL)
     if "stalled" in until and stall_after is None:
@@ -670,6 +704,9 @@ def wait(
             raise KeyError(key)
         if job.status in until or job.terminal:
             return job.status, job
+        seen = latest_problem(config, key) if problems else None
+        if seen and parse_iso(seen["at"]).timestamp() >= start:
+            return "problem", job
         if (
             stall_after is not None
             and job.status == "running"

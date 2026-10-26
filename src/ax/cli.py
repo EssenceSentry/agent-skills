@@ -1500,6 +1500,12 @@ _SHARE = typer.Option(
     None, "--share", help="Start a follower with a dashboard: none (this Mac), lan or cloudflare."
 )
 _NOTIFY = typer.Option(False, "--notify", help="Start a follower that sends ntfy messages.")
+_EXPECT = typer.Option(
+    None,
+    "--expect",
+    help="How long you expect the job to take (25m, 2h). Over 10 minutes, Haiku looks every "
+    "5 minutes at whether it is working at that pace; `ax job wait` ends if not.",
+)
 _WAKE = typer.Option(
     None,
     "--wake",
@@ -1508,14 +1514,25 @@ _WAKE = typer.Option(
 
 
 def _start_follower(
-    config, key: str, share: str | None, notify: bool, show_log=False, wake=None
+    config, key: str, share: str | None, notify: bool, show_log=False, wake=None, expect=None
 ) -> None:
-    """Start a detached follower when asked; its link goes to stderr, so stdout stays capturable."""
-    if share is None and not notify and not wake:
+    """Start a detached follower when asked, or when the job is expected to run long enough
+    for Haiku's looks; its link goes to stderr, so stdout stays capturable."""
+    seconds = None
+    if expect:
+        try:
+            seconds = jobs_module.parse_duration(expect)
+        except ValueError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(2) from None
+        jobs_module.expect(config, key, seconds)
+    looks = jobs_module.looks_every(seconds)
+    if share is None and not notify and not wake and not looks:
         return
     args = ["--share", share or "none"] + (["--notify"] if notify else [])
     args += ["--show-log"] if show_log else []
     args += ["--wake", wake] if wake else []
+    args += ["--check-every", f"{looks / 60:g}"] if looks else []
     try:
         info = job_follow.start_detached(config, key, args)
     except RuntimeError as exc:
@@ -1573,6 +1590,7 @@ def job_new(
     share: str = _SHARE,
     notify: bool = _NOTIFY,
     wake: str = _WAKE,
+    expect: str = _EXPECT,
     as_json: bool = _JSON,
 ):
     """Register a job fed through its events file, and print that file's path.
@@ -1586,7 +1604,7 @@ def job_new(
         typer.echo(json.dumps({"key": job.key, "events_file": str(path)}))
     else:
         typer.echo(str(path))
-    _start_follower(config, job.key, share, notify, wake=wake)
+    _start_follower(config, job.key, share, notify, wake=wake, expect=expect)
 
 
 @job_app.command("watch")
@@ -1613,6 +1631,7 @@ def job_watch(
     share: str = _SHARE,
     notify: bool = _NOTIFY,
     wake: str = _WAKE,
+    expect: str = _EXPECT,
     as_json: bool = _JSON,
 ):
     """Register a job that ax checks itself, check it once, and print its key."""
@@ -1632,7 +1651,7 @@ def job_watch(
     typer.echo(job.key)
     if job.check_error:
         typer.echo(f"warning: {job.check_error}", err=True)
-    _start_follower(config, job.key, share, notify, wake=wake)
+    _start_follower(config, job.key, share, notify, wake=wake, expect=expect)
 
 
 def _piped_stdin() -> bytes | None:
@@ -1667,6 +1686,7 @@ def job_run(
         False, "--show-log", help="Show the output's tail on the dashboard."
     ),
     wake: str = _WAKE,
+    expect: str = _EXPECT,
     as_json: bool = _JSON,
 ):
     """Start a command detached, record its exit code, and print the job's key.
@@ -1681,7 +1701,7 @@ def job_run(
         typer.echo(json.dumps({**job.to_dict(), "output_log": job.spec["log"]}, indent=2))
     else:
         typer.echo(job.key)
-    _start_follower(config, job.key, share, notify, show_log, wake)
+    _start_follower(config, job.key, share, notify, show_log, wake, expect)
 
 
 @job_app.command("ls")
@@ -1755,7 +1775,8 @@ def job_wait(
     """Block until the job ends; spends no tokens while waiting.
 
     Exit codes: 0 done, 1 failed, 2 stopped or ended, 3 stalled, 4 its check kept failing,
-    124 timed out, 69 no such job.
+    5 Haiku saw a problem (not working, or well behind its expected pace), 124 timed out,
+    69 no such job.
     """
     wanted = {part.strip() for part in until.split(",") if part.strip()}
     unknown = wanted - set(jobs_module.STATUSES) - {"stalled"}
@@ -1780,6 +1801,9 @@ def job_wait(
         note = f" · {job.message}" if job.message else ""
         if outcome == "check_error":
             note = f" · {job.check_error}"
+        if outcome == "problem":
+            seen = jobs_module.latest_problem(_jobs_config(), job.key) or {}
+            note = f" · {seen.get('text', '')}"
         typer.echo(f"{job.key}: {outcome} · {_progress(job)}{note}")
     raise typer.Exit(jobs_module.WAIT_CODES.get(outcome, 1))
 

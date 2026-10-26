@@ -27,16 +27,32 @@ the output shows no failure, say so in one line.
 
 _CHECK = """A long-running job that a coding agent started is still running.
 {label}
-Below is the end of its output. Answer in exactly two parts:
-STATE: one or two short lines on where the job is: what it is doing now, how far it has
-got, and its pace when the output shows them.
-HEALTH: OK if nothing looks wrong. If something does (the same error on every item, a
+{pace}
+Below is the end of its output. Answer two questions: is this process working, and is
+it working at the pace it was expected to take? Reply in exactly two parts:
+STATE: one sentence on where the job is and how fast it is going.
+HEALTH: OK if it is working at about the expected pace. Otherwise PROBLEM: and one line
+on what is wrong, quoting the log: it is not working (the same error on every item, a
 retry loop, a crash being retried, progress that isn't progressing, results that are
-clearly empty or wrong), PROBLEM: and one line on what, quoting the log. Routine
-warnings and normal slow progress are OK.
+clearly empty or wrong), or it is clearly behind its expected pace (on track to take
+well over the expected time). Running faster than expected is fine, not a problem, and
+so are routine warnings and normal variation.
 
 {tail}
 """
+
+
+def _pace(job, expected: float | None, now: float) -> str:
+    """Elapsed time, progress and the expected duration, for judging pace."""
+    elapsed = max(0.0, now - jobs.parse_iso(job.created).timestamp())
+    parts = [f"It has run {jobs.duration_text(round(elapsed))}"]
+    if job.done is not None and job.total:
+        unit = f" {job.unit}" if job.unit else ""
+        parts.append(f"{job.done:g} of {job.total:g}{unit} done ({job.done / job.total:.0%})")
+    text = ", ".join(parts) + "."
+    if expected:
+        text = f"It was expected to take about {jobs.duration_text(round(expected))}. {text}"
+    return text
 
 
 @dataclass(frozen=True)
@@ -80,12 +96,17 @@ def diagnose(config, job, *, model=None) -> str:
     return _model(model)(prompt).strip()
 
 
-def check(config, job, *, model=None) -> Look:
-    """Where a running job is, and what looks wrong with it, if anything."""
-    answer = _model(model)(_CHECK.format(label=_label(job), tail=tail(config, job))).strip()
+def check(config, job, *, model=None, now: float | None = None) -> Look:
+    """Where a running job is, and whether it is working at the pace it was expected
+    to take; a problem names what is wrong."""
+    import time
+
+    pace = _pace(job, jobs.expected(config, job.key), time.time() if now is None else now)
+    prompt = _CHECK.format(label=_label(job), pace=pace, tail=tail(config, job))
+    answer = _model(model)(prompt).strip()
     state, _, health = answer.partition("HEALTH:")
     summary = state.split("STATE:", 1)[1] if "STATE:" in state else ""
-    summary = " ".join(summary.split())[:600]
+    summary = " ".join(summary.split()).strip("*_ ")[:600]  # models sometimes add emphasis
     problem = None
     if "PROBLEM:" in answer:
         problem = answer.split("PROBLEM:", 1)[1].strip().splitlines()[0][:600] or None
