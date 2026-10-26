@@ -72,9 +72,12 @@ user gets a push.
 
 - `ax job show KEY` prints status, progress, the estimate ("~12 min left (8–20 min)")
   and recent events; `ax job ls` lists active jobs.
-- For the user's phone: `--share cloudflare --notify` on `run`, `watch` or `new` (or
+- For the user's phone: every job's dashboard is also in the ax app, at
+  `/jobs/KEY/` and on its card, so when the app is shared (`ax app service --share
+  cloudflare --notify`) its one link reaches every job; don't start a tunnel per job
+  then. Without it, `--share cloudflare --notify` on `run`, `watch` or `new` (or
   `ax job follow KEY --share cloudflare --notify --detach`) starts a dashboard and ntfy
-  messages. The link carries an access token: give it to the user in your reply only,
+  messages. A link carries an access token: give it to the user in your reply only,
   never in commits, docs or other messages, and only share publicly when asked.
 - Seamless jobs have their own dashboard; link to it rather than sharing an ax page.
 
