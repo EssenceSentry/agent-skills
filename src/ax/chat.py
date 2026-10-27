@@ -34,6 +34,7 @@ from pathlib import Path
 
 from ax import job_wake
 from ax.sources import claude as claude_source
+from ax.sources.common import first_line
 
 CONFIRM_TTL = 120.0  # seconds a confirmation from a shared link stays good
 CODEX_RESUME = {"excludeTurns": True}  # what resuming a thread changes: nothing it runs with
@@ -140,8 +141,15 @@ class CodexDriver(Driver):
                                  "capabilities": None})  # fmt: skip
         self._write({"method": "initialized"})
         # The thread keeps its own approval settings, as in the Codex app: approvals
-        # that would come to the user there come to the page here.
-        self.call("thread/resume", {"threadId": sid, **CODEX_RESUME})
+        # that would come to the user there come to the page here. A new one starts in
+        # its folder with the user's settings.
+        if sid is None:
+            started = self.call("thread/start", {"cwd": cwd})
+            self.sid = (started.get("thread") or {}).get("id") or ""
+            if not self.sid:
+                raise ValueError("codex started no thread")
+        else:
+            self.call("thread/resume", {"threadId": sid, **CODEX_RESUME})
 
     def call(self, method: str, params: dict, timeout: float = 30.0):
         with self.lock:
@@ -300,13 +308,14 @@ def _as_request(summary: str) -> str:
     return f"{_PRESENT.get(first, first)} {rest}".strip()
 
 
-def claude_command(sid: str) -> list[str]:
-    """Continue a session headlessly, its tools asking here before they run."""
+def claude_command(sid: str, new: bool = False) -> list[str]:
+    """Continue a session headlessly, or start one with this id when `new`, its tools
+    asking here before they run."""
     return [
         shutil.which("claude") or "claude", "-p", "--input-format", "stream-json",
         "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-        "--resume", sid, "--permission-mode", "default", "--permission-prompts", "host",
-        "--permission-prompt-tool", "stdio",
+        "--session-id" if new else "--resume", sid, "--permission-mode", "default",
+        "--permission-prompts", "host", "--permission-prompt-tool", "stdio",
     ]  # fmt: skip
 
 
@@ -342,6 +351,17 @@ class Chats:
         with self.lock:
             self.drivers[(provider, sid)] = driver
             self.pending.pop((provider, sid), None)
+        return driver
+
+    def start(self, provider: str, *, cwd: str, name: str | None) -> Driver:
+        """A new session in `cwd`, held by ax from its first message."""
+        if provider == "codex":
+            driver: Driver = CodexDriver(None, name, cwd, self.codex_command())
+        else:
+            sid = str(uuid.uuid4())
+            driver = ClaudeDriver(sid, name, cwd, self.claude_command(sid, new=True))
+        with self.lock:
+            self.drivers[(provider, driver.sid)] = driver
         return driver
 
     def release(self, provider: str, sid: str) -> bool:
@@ -443,7 +463,7 @@ def state(config, provider: str, sid: str) -> dict:
 
 
 def _fingerprint(payload: dict) -> str:
-    keys = ("action", "provider", "id", "text", "request", "allow")
+    keys = ("action", "provider", "id", "cwd", "text", "request", "allow")
     pictures = [i.get("data") for i in payload.get("images") or [] if isinstance(i, dict)]
     return hashlib.sha256(
         json.dumps([[payload.get(k) for k in keys], pictures]).encode()
@@ -452,11 +472,15 @@ def _fingerprint(payload: dict) -> str:
 
 def _question(payload: dict) -> str:
     name = payload.get("name") or str(payload.get("id"))[:8]
-    if payload.get("action") == "send":
+    if payload.get("action") in ("send", "start"):
         text = str(payload.get("text") or "").strip()
         shown = text if len(text) <= 300 else text[:300] + "…"
         count = len(payload.get("images") or [])
         pictures = f"\n\nwith {count} image{'s' if count != 1 else ''}" if count else ""
+        if payload.get("action") == "start":
+            tool = "Codex" if payload.get("provider") == "codex" else "Claude Code"
+            return (f"Start a new {tool} session in {payload.get('cwd')} from the shared "
+                    f"link?\n\n“{shown}”{pictures}")  # fmt: skip
         return f"Send this to {name} from the shared link?\n\n“{shown}”{pictures}"
     driver = CHATS.get(payload.get("provider"), payload.get("id"))
     approval = (driver.approval if driver else None) or {}
@@ -487,16 +511,22 @@ def act(config, payload: dict, *, remote: bool = False) -> dict:
     From a shared link (`remote`), sending and answering need a second request carrying
     the confirmation the first one returns."""
     action, provider, sid = payload.get("action"), payload.get("provider"), payload.get("id")
-    if provider not in ("claude", "codex") or not isinstance(sid, str) or not sid:
-        raise ValueError("say which session: provider (claude or codex) and id")
-    images = _images(payload) if action == "send" else []
-    if action == "send" and not str(payload.get("text") or "").strip() and not images:
+    if provider not in ("claude", "codex"):
+        raise ValueError("say which tool: provider is claude or codex")
+    if action != "start" and (not isinstance(sid, str) or not sid):
+        raise ValueError("say which session: its id")
+    folder = _folder(payload.get("cwd")) if action == "start" else None
+    images = _images(payload) if action in ("send", "start") else []
+    if action in ("send", "start") and not str(payload.get("text") or "").strip() and not images:
         raise ValueError("there is nothing to send: no text and no image")
-    if remote and action in ("send", "answer"):
+    if remote and action in ("send", "answer", "start"):
         ask = _confirmed(payload)
         if ask:
             return ask
     cwd, name = payload.get("cwd"), payload.get("name")
+    if action == "start":
+        return _start(config, provider, folder, str(payload.get("text") or "").strip(), name,
+                      images)  # fmt: skip
     if action == "send":
         text = str(payload.get("text") or "").strip()
         return _send(config, provider, sid, text, cwd, name, images)
@@ -564,6 +594,27 @@ def _saved(config, images: list[dict]) -> list[dict]:
         path.write_bytes(image["bytes"])
         image["path"] = str(path)
     return images
+
+
+def _folder(given) -> str:
+    """The folder a new session starts in: an existing directory, given in full."""
+    if not isinstance(given, str) or not given.strip():
+        raise ValueError("say which folder the session starts in")
+    folder = Path(given.strip()).expanduser()
+    if not folder.is_absolute():
+        raise ValueError(f"give the folder in full, from the root: {given!r}")
+    if not folder.is_dir():
+        raise ValueError(f"there is no folder {folder}")
+    return str(folder.resolve())
+
+
+def _start(config, provider: str, folder: str, text: str, name, images) -> dict:
+    """A new session in `folder`, held by ax, its first message sent."""
+    title = name or first_line(text, 60) or "New session"
+    driver = CHATS.start(provider, cwd=folder, name=title)
+    driver.send(text, _saved(config, list(images)) if provider == "codex" else images)
+    return {"ok": True, "provider": provider, "id": driver.sid,
+            "message": "Started in the background through ax."}  # fmt: skip
 
 
 def _send(config, provider: str, sid: str, text: str, cwd, name, images=()) -> dict:

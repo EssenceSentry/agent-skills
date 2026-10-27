@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,8 @@ for line in sys.stdin:
         say({"id": message["id"], "result": {"userAgent": "fake"}})
     elif method == "thread/resume":
         say({"id": message["id"], "result": {"thread": {"id": message["params"]["threadId"]}}})
+    elif method == "thread/start":
+        say({"id": message["id"], "result": {"thread": {"id": "t-new"}}})
     elif method == "turn/start":
         say({"id": message["id"], "result": {"turn": {"id": "turn-1", "status": "inProgress"}}})
         say({"method": "turn/started", "params": {"turn": {"id": "turn-1"}}})
@@ -69,7 +72,7 @@ for line in sys.stdin:
         if subtype == "interrupt":
             say({"type": "result", "subtype": "error_during_execution"})
     elif message.get("type") == "user":
-        text = message["message"]["content"][0]["text"]
+        text = " ".join(b.get("text", "") for b in message["message"]["content"])
         delta("Looking")
         delta(" at it.")
         if "approve" in text:
@@ -111,7 +114,13 @@ def chats(env, tmp_path, monkeypatch):
     claude = script(tmp_path, "claude.py", FAKE_CLAUDE)
     registry = chat.Chats(
         codex_command=lambda: [sys.executable, str(codex), str(codex_log)],
-        claude_command=lambda sid: [sys.executable, str(claude), str(claude_log), sid],
+        claude_command=lambda sid, new=False: [
+            sys.executable,
+            str(claude),
+            str(claude_log),
+            sid,
+            "new" if new else "resume",
+        ],
     )
     monkeypatch.setattr(chat, "CHATS", registry)
     monkeypatch.setattr(chat, "codex_open_in_app", lambda config, tid: False)
@@ -438,3 +447,97 @@ def test_the_app_takes_a_message_with_a_screenshot_in_it(env, served):
             "images": [big]}  # fmt: skip
     status, said = post(f"{served}/api/chat", body)
     assert status == 200 and said["ok"], said
+
+
+# New sessions
+
+
+def test_a_new_claude_session_starts_in_a_folder_held_by_ax(env, chats, tmp_path):
+    registry, _, claude_log = chats
+    said = chat.act(env.config, {"action": "start", "provider": "claude", "cwd": str(tmp_path),
+                                 "text": "Plan the release\nwith its tests", "images": [image()]})  # fmt: skip
+    assert said["ok"] and said["provider"] == "claude"
+    sid = said["id"]
+    assert str(uuid.UUID(sid)) == sid
+    until(lambda: not chat.state(env.config, "claude", sid)["busy"])
+    assert json.loads(claude_log.read_text().splitlines()[0]) == [sid, "new"]
+    assert [b["type"] for b in logged(claude_log)[1]["message"]["content"]] == ["image", "text"]
+    [held] = chat.held()
+    assert (held["id"], held["name"], held["cwd"], held["kind"]) == (
+        sid, "Plan the release", str(tmp_path), "ax (background)",
+    )  # fmt: skip
+    assert chat.state(env.config, "claude", sid)["holder"] == "ax"
+
+
+def test_a_new_claude_session_gets_its_own_id_not_a_resume():
+    command = chat.claude_command("s-9", new=True)
+    assert command[command.index("--session-id") + 1] == "s-9" and "--resume" not in command
+
+
+def test_a_new_codex_thread_starts_in_a_folder_held_by_ax(env, chats, tmp_path):
+    registry, codex_log, _ = chats
+    said = chat.act(env.config, {"action": "start", "provider": "codex", "cwd": str(tmp_path),
+                                 "text": "Review the model card"})  # fmt: skip
+    assert said["id"] == "t-new"
+    until(lambda: not chat.state(env.config, "codex", "t-new")["busy"])
+    sent = logged(codex_log)
+    start = next(m for m in sent if m.get("method") == "thread/start")
+    assert start["params"] == {"cwd": str(tmp_path)}  # its own settings, as in the app
+    assert not any(m.get("method") == "thread/resume" for m in sent)
+    turn = next(m for m in sent if m.get("method") == "turn/start")
+    assert turn["params"]["threadId"] == "t-new"
+
+
+@pytest.mark.parametrize("cwd", [None, "relative/folder", "/no/such/folder/anywhere"])
+def test_a_new_session_needs_a_folder_that_exists(env, chats, cwd):
+    with pytest.raises(ValueError, match="folder"):
+        chat.act(env.config, {"action": "start", "provider": "claude", "cwd": cwd, "text": "hi"})
+    assert chat.held() == []
+
+
+def test_a_new_session_needs_something_to_say(env, chats, tmp_path):
+    with pytest.raises(ValueError, match="nothing to send"):
+        chat.act(env.config, {"action": "start", "provider": "codex", "cwd": str(tmp_path)})
+
+
+def test_starting_a_session_through_a_shared_link_waits_for_a_second_yes(env, chats, tmp_path):
+    ask = {"action": "start", "provider": "codex", "cwd": str(tmp_path), "text": "Look into it"}
+    first = chat.act(env.config, dict(ask), remote=True)
+    assert (
+        first["ok"] is False and "Codex" in first["question"] and str(tmp_path) in first["question"]
+    )
+    assert chat.held() == []
+    second = chat.act(env.config, {**ask, "confirm": first["confirm"]}, remote=True)
+    assert second["ok"] and second["id"] == "t-new"
+
+
+def test_a_just_started_session_shows_before_its_transcript_exists(
+    env, chats, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(live_sessions, "listing", lambda config: {"sessions": [], "errors": []})
+    said = chat.act(env.config, {"action": "start", "provider": "claude", "cwd": str(tmp_path),
+                                 "text": "Start here"})  # fmt: skip
+    view = live_sessions.session_view(env.config, "claude", said["id"])
+    assert view["events"] == [] and view["next"] == 0
+    assert (view["session"]["name"], view["session"]["cwd"]) == ("Start here", str(tmp_path))
+    assert view["chat"]["holder"] == "ax"
+
+
+def test_the_app_starts_a_session_and_answers_with_its_id(env, served, tmp_path):
+    status, said = post(f"{served}/api/chat", {"action": "start", "provider": "codex",
+                                               "cwd": str(tmp_path), "text": "Go"})  # fmt: skip
+    assert status == 200 and said["ok"] and said["id"] == "t-new"
+
+
+def test_a_session_ax_started_keeps_the_name_of_its_first_message(env, chats, tmp_path):
+    said = chat.act(env.config, {"action": "start", "provider": "claude", "cwd": str(tmp_path),
+                                 "text": "Fix the flaky test\nin the fetch helper"})  # fmt: skip
+    row = {"pid": 9, "cwd": str(tmp_path), "kind": "interactive", "sessionId": said["id"],
+           "name": "new-live-b4", "status": "idle"}  # Claude's own placeholder  # fmt: skip
+    listed = live_sessions.listing(
+        env.config,
+        claude_of=lambda c: live_sessions.claude(c, run=lambda argv: json.dumps([row])),
+        codex_of=lambda c: [],
+    )
+    [found] = listed["sessions"]
+    assert (found["name"], found["kind"]) == ("Fix the flaky test", "ax (background)")

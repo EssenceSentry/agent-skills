@@ -318,7 +318,8 @@ def listing(config, *, claude_of=claude, codex_of=codex) -> dict:
     for mine in chat.held():  # what ax holds itself: its state is the true one
         found = listed.get((mine["provider"], mine["id"]))
         if found:
-            found.update(state=mine["state"], waiting_for=mine["waiting_for"], kind=mine["kind"])
+            found.update(state=mine["state"], waiting_for=mine["waiting_for"], kind=mine["kind"],
+                         name=mine["name"])  # its first words, over the tool's placeholder  # fmt: skip
         else:
             sessions.append(mine)
     counts = job_card.counts(config)
@@ -470,12 +471,20 @@ def image(config, provider: str, sid: str, line: int, n: int) -> tuple[bytes, st
 
 
 def session_view(config, provider: str, sid: str, *, after: int = 0) -> dict:
-    """One session for the app: its state, its transcript from `after`, and its job cards."""
-    found = transcript(config, provider, sid, after=after)
+    """One session for the app: its state, its transcript from `after`, and its job cards.
+    One ax has just started shows before its tool has written a transcript."""
+    from ax import chat
+
+    held = next((s for s in chat.held() if s["provider"] == provider and s["id"] == sid), None)
+    try:
+        found = transcript(config, provider, sid, after=after)
+    except NotFound:
+        if held is None:
+            raise
+        found = {"events": [], "running": [], "shots": [], "next": 0, "first": 0, "earlier": 0}
     listed = cached_listing(config)["sessions"]
     session = next((s for s in listed if s["provider"] == provider and s["id"] == sid),
-                   {"provider": provider, "id": sid, "name": sid[:8], "state": None})  # fmt: skip
-    from ax import chat
+                   held or {"provider": provider, "id": sid, "name": sid[:8], "state": None})  # fmt: skip
 
     return {"session": session, **found, "cards": job_card.session_cards(config, provider, sid),
             "chat": chat.state(config, provider, sid)}  # fmt: skip
