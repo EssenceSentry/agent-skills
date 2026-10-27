@@ -1,7 +1,9 @@
 /** The HTML of a session tab: the app's conversation page, bundled, with a strict policy. */
 
+import type { Provider } from "./tree"
+
 export type View =
-  | { screen: "session"; provider: string; id: string }
+  | { screen: "session"; provider: Provider; id: string }
   | { screen: "new"; folders: string[] }
 
 export type Page = {

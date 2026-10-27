@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { allowed, forward, linkTarget } from "./bridge"
+import { allowed, call, forward, linkTarget } from "./bridge"
 
 const SERVER = "http://127.0.0.1:8765"
 
@@ -125,6 +125,21 @@ describe("forwarding a request", () => {
       fakeFetch(200, "{}", calls)
     )
     expect(calls[0]?.url).toBe("http://127.0.0.1:8765/api/sessions")
+  })
+})
+
+describe("the extension's own requests", () => {
+  it("reach what the page may not ask for, such as usage", async () => {
+    const calls: Call[] = []
+    const answer = await call(
+      SERVER,
+      "GET",
+      "/api/usage",
+      undefined,
+      fakeFetch(200, '{"usage": []}', calls)
+    )
+    expect(answer).toEqual({ status: 200, body: { usage: [] } })
+    expect(calls[0]?.url).toBe("http://127.0.0.1:8765/api/usage")
   })
 })
 

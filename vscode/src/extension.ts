@@ -1,8 +1,14 @@
 import { randomBytes } from "node:crypto"
+import { homedir } from "node:os"
 import * as vscode from "vscode"
 
-import { type BridgeRequest, forward, linkTarget } from "./bridge"
+import { type BridgeRequest, call, forward, linkTarget } from "./bridge"
+import type { Base } from "./changes"
+import { BEFORE_SCHEME, BeforeFiles, openFile, type Shown, showChanges } from "./editor"
 import { pageHtml, type View } from "./html"
+import { fileTarget } from "./links"
+import { newlyWaiting, notice } from "./notify"
+import { UsageBar } from "./status"
 import { type Listing, sessionTree, type TreeNode, waitingCount } from "./tree"
 
 const server = () =>
@@ -19,12 +25,7 @@ class SessionsTree implements vscode.TreeDataProvider<TreeNode> {
 
   /** The latest listing, or null while ax doesn't answer. */
   async read(): Promise<Listing | null> {
-    const reply = await forward(server(), {
-      type: "request",
-      id: 0,
-      method: "GET",
-      path: "/api/sessions",
-    })
+    const reply = await call(server(), "GET", "/api/sessions")
     const listing = reply.status === 200 ? (reply.body as Listing) : null
     const error = (reply.body as { error?: string } | null)?.error ?? `ax answered ${reply.status}`
     this.nodes = sessionTree(listing ?? { error }, Date.now())
@@ -65,7 +66,7 @@ class SessionsTree implements vscode.TreeDataProvider<TreeNode> {
 
 /** Session tabs: one webview per session, reused when it is open already. */
 class Tabs {
-  private readonly open = new Map<string, vscode.WebviewPanel>()
+  private readonly open = new Map<string, { panel: vscode.WebviewPanel; shown: Shown }>()
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -87,7 +88,7 @@ class Tabs {
     name?: string,
     column = vscode.ViewColumn.Active
   ) {
-    const shown = this.open.get(`${provider}:${id}`)
+    const shown = this.open.get(`${provider}:${id}`)?.panel
     if (shown) return shown.reveal(shown.viewColumn)
     const panel = vscode.window.createWebviewPanel(
       "ax.session",
@@ -125,9 +126,21 @@ class Tabs {
   /** Keep each open tab named as ax names its session. */
   retitle(listing: Listing) {
     for (const s of listing.sessions) {
-      const panel = this.open.get(`${s.provider}:${s.id}`)
-      if (panel && panel.title !== s.name) panel.title = s.name
+      const open = this.open.get(`${s.provider}:${s.id}`)
+      if (open && open.panel.title !== s.name) open.panel.title = s.name
+      if (open) open.shown.name = s.name
     }
+  }
+
+  /** The session whose tab has the focus, if one has. */
+  active(): Shown | undefined {
+    return [...this.open.values()].find((o) => o.panel.active)?.shown
+  }
+
+  /** Whether the user is looking at this session's tab now. */
+  inFront(provider: string, id: string): boolean {
+    const panel = this.open.get(`${provider}:${id}`)?.panel
+    return Boolean(panel?.active && panel.visible && vscode.window.state.focused)
   }
 
   private attach(panel: vscode.WebviewPanel, view: View) {
@@ -145,8 +158,11 @@ class Tabs {
     })
     if (view.screen === "session") {
       const key = `${view.provider}:${view.id}`
-      this.open.set(key, panel)
-      panel.onDidDispose(() => this.open.get(key) === panel && this.open.delete(key))
+      this.open.set(key, {
+        panel,
+        shown: { provider: view.provider, id: view.id, name: panel.title },
+      })
+      panel.onDidDispose(() => this.open.get(key)?.panel === panel && this.open.delete(key))
     }
     panel.webview.onDidReceiveMessage((message) => this.receive(panel, message))
   }
@@ -157,8 +173,10 @@ class Tabs {
       const reply = await forward(server(), m as BridgeRequest)
       await panel.webview.postMessage(reply)
     } else if (m.type === "open" && typeof m.href === "string") {
-      const target = linkTarget(m.href, server())
-      if (target) await vscode.env.openExternal(vscode.Uri.parse(target))
+      const web = linkTarget(m.href, server())
+      if (web) return void vscode.env.openExternal(vscode.Uri.parse(web))
+      const file = fileTarget(m.href, typeof m.cwd === "string" ? m.cwd : null, homedir())
+      if (file) await openFile(file)
     } else if (m.type === "started" && isProvider(m.provider) && typeof m.id === "string") {
       // The form's tab becomes the session's.
       const column = panel.viewColumn
@@ -169,9 +187,28 @@ class Tabs {
   }
 }
 
+/** A notice for each session that starts waiting, unless its tab is in front of the user. */
+function announce(tabs: Tabs, before: Listing | null, now: Listing) {
+  if (!vscode.workspace.getConfiguration("ax").get<boolean>("notifications", true)) return
+  const fresh = newlyWaiting(before, now).filter((s) => !tabs.inFront(s.provider, s.id))
+  if (fresh.length > 3) {
+    void vscode.window
+      .showInformationMessage(`${fresh.length} sessions wait for you`, "Show them")
+      .then((choice) => choice && vscode.commands.executeCommand("ax.sessions.focus"))
+    return
+  }
+  for (const s of fresh)
+    void vscode.window
+      .showInformationMessage(notice(s), "Open")
+      .then((choice) => choice && tabs.session(s.provider, s.id, s.name))
+}
+
 export function activate(context: vscode.ExtensionContext) {
   const tree = new SessionsTree()
   const view = vscode.window.createTreeView("ax.sessions", { treeDataProvider: tree })
+  const usage = new UsageBar(server)
+  const before = new BeforeFiles(server)
+  let last: Listing | null = null
   const refresh = async () => {
     const listing = await tree.read()
     const waiting = listing ? waitingCount(listing) : 0
@@ -181,9 +218,26 @@ export function activate(context: vscode.ExtensionContext) {
           tooltip: waiting === 1 ? "1 session waits for you" : `${waiting} sessions wait for you`,
         }
       : undefined
-    if (listing) tabs.retitle(listing)
+    if (!listing) return
+    tabs.retitle(listing)
+    announce(tabs, last, listing)
+    last = listing
   }
   const tabs = new Tabs(context, () => void refresh())
+
+  // The session a diff command means: the sidebar's row it was run on, else the tab in front.
+  const changes = (base: Base) => (node?: TreeNode) => {
+    const session =
+      node?.kind === "session"
+        ? { provider: node.provider, id: node.id, name: node.label }
+        : tabs.active()
+    if (!session) return void vscode.window.showInformationMessage("Open a session's tab first.")
+    return showChanges(before, server(), session, base)
+  }
+
+  // Usage moves slowly: once a minute.
+  void usage.refresh()
+  const usageTimer = setInterval(() => void usage.refresh(), 60_000)
 
   // Every 5 seconds while the sidebar shows, every 20 otherwise: the badge still counts.
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -199,7 +253,18 @@ export function activate(context: vscode.ExtensionContext) {
     view,
     view.onDidChangeVisibility((e) => e.visible && tick()),
     { dispose: () => clearTimeout(timer) },
-    vscode.commands.registerCommand("ax.refresh", tick),
+    { dispose: () => clearInterval(usageTimer) },
+    usage,
+    vscode.workspace.registerTextDocumentContentProvider(BEFORE_SCHEME, before),
+    vscode.commands.registerCommand("ax.changesThisTurn", changes("turn")),
+    vscode.commands.registerCommand("ax.changesSinceCommit", changes("commit")),
+    vscode.commands.registerCommand("ax.openUsage", () =>
+      vscode.env.openExternal(vscode.Uri.parse(`${server().replace(/\/+$/, "")}/#/usage`))
+    ),
+    vscode.commands.registerCommand("ax.refresh", () => {
+      tick()
+      void usage.refresh()
+    }),
     vscode.commands.registerCommand("ax.newSession", () => tabs.newSession()),
     vscode.commands.registerCommand(
       "ax.openSession",
@@ -211,7 +276,11 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.registerWebviewPanelSerializer("ax.session", {
       deserializeWebviewPanel: async (panel, state) => tabs.restore(panel, state),
     }),
-    vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration("ax.server") && tick())
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration("ax.server")) return
+      tick()
+      void usage.refresh()
+    })
   )
 }
 

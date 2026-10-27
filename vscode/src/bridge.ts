@@ -34,41 +34,53 @@ export function allowed(method: string, path: string): boolean {
 const offline = (server: string) =>
   `ax isn't answering at ${server}: start it with \`ax app start\``
 
+export type Answer = { status: number; body: unknown }
+
+/** One request to the ax server, from the extension itself: its status and JSON. */
+export async function call(
+  server: string,
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown,
+  fetchFn: typeof fetch = fetch
+): Promise<Answer> {
+  const base = server.replace(/\/+$/, "")
+  const post = method === "POST"
+  let response: Response
+  try {
+    response = await fetchFn(base + path, {
+      method,
+      headers: post
+        ? { Accept: "application/json", "Content-Type": "application/json" }
+        : { Accept: "application/json" },
+      body: post ? JSON.stringify(body ?? {}) : undefined,
+      // Starting a session waits for the tool to come up.
+      signal: AbortSignal.timeout(90_000),
+    })
+  } catch {
+    return { status: 502, body: { error: offline(base) } }
+  }
+  const text = await response.text()
+  try {
+    return { status: response.status, body: JSON.parse(text) }
+  } catch {
+    return { status: response.status, body: { error: `${response.status} ${response.statusText}` } }
+  }
+}
+
+/** A page's request, if the page may make it. */
 export async function forward(
   server: string,
   request: BridgeRequest,
   fetchFn: typeof fetch = fetch
 ): Promise<BridgeReply> {
-  const reply = (status: number, body: unknown): BridgeReply => ({
-    type: "reply",
-    id: request.id,
-    status,
-    body,
-  })
-  if (!allowed(request.method, request.path))
-    return reply(403, { error: `the page may not ask ax for ${request.method} ${request.path}` })
-  const base = server.replace(/\/+$/, "")
-  const post = request.method === "POST"
-  let response: Response
-  try {
-    response = await fetchFn(base + request.path, {
-      method: request.method,
-      headers: post
-        ? { Accept: "application/json", "Content-Type": "application/json" }
-        : { Accept: "application/json" },
-      body: post ? JSON.stringify(request.body ?? {}) : undefined,
-      // Starting a session waits for the tool to come up.
-      signal: AbortSignal.timeout(90_000),
-    })
-  } catch {
-    return reply(502, { error: offline(base) })
-  }
-  const text = await response.text()
-  try {
-    return reply(response.status, JSON.parse(text))
-  } catch {
-    return reply(response.status, { error: `${response.status} ${response.statusText}` })
-  }
+  const answer = allowed(request.method, request.path)
+    ? await call(server, request.method, request.path, request.body, fetchFn)
+    : {
+        status: 403,
+        body: { error: `the page may not ask ax for ${request.method} ${request.path}` },
+      }
+  return { type: "reply", id: request.id, ...answer }
 }
 
 /**

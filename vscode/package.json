@@ -57,6 +57,23 @@
         "command": "ax.openSession",
         "title": "Open Session",
         "category": "ax"
+      },
+      {
+        "command": "ax.changesThisTurn",
+        "title": "Show Changes This Turn",
+        "category": "ax",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "ax.changesSinceCommit",
+        "title": "Show Changes Since the Last Commit",
+        "category": "ax",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "ax.openUsage",
+        "title": "Open Usage",
+        "category": "ax"
       }
     ],
     "menus": {
@@ -76,6 +93,43 @@
         {
           "command": "ax.openSession",
           "when": "false"
+        },
+        {
+          "command": "ax.changesThisTurn",
+          "when": "activeWebviewPanelId == 'ax.session'"
+        },
+        {
+          "command": "ax.changesSinceCommit",
+          "when": "activeWebviewPanelId == 'ax.session'"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "ax.changesThisTurn",
+          "when": "activeWebviewPanelId == 'ax.session'",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ax.changesSinceCommit",
+          "when": "activeWebviewPanelId == 'ax.session'",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ax.changesThisTurn",
+          "when": "view == ax.sessions && viewItem == session",
+          "group": "inline@1"
+        },
+        {
+          "command": "ax.changesThisTurn",
+          "when": "view == ax.sessions && viewItem == session",
+          "group": "1_changes@1"
+        },
+        {
+          "command": "ax.changesSinceCommit",
+          "when": "view == ax.sessions && viewItem == session",
+          "group": "1_changes@2"
         }
       ]
     },
@@ -86,6 +140,11 @@
           "type": "string",
           "default": "http://127.0.0.1:8765",
           "description": "The local ax app (`ax serve`) that lists the sessions and drives them."
+        },
+        "ax.notifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a notification when a session starts waiting for you, for an approval or a question."
         }
       }
     }
