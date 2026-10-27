@@ -5,6 +5,13 @@ an editor tab: the app's conversation page, in VS Code's colours, with the messa
 box, streamed replies, approvals, pictures and job cards. New sessions start from the
 sidebar's `+` in a workspace folder.
 
+A tab looks like the Codex panel rather than the web page: VS Code's font at its size,
+one column with no frames, your words in a soft bubble with a date after a pause,
+Markdown at Codex's rhythm (its full-width tables included), and the message box with
+`+` and a round send button. LaTeX between `\[ … \]`, `\( … \)` or `$$` is typeset
+with KaTeX; single dollars stay text. The look lives in `ui/src/vscode.css`, under the
+`data-host="vscode"` mark, so the web page keeps its own.
+
 Inside VS Code the tabs also:
 
 - **Open files:** a link or a path in code in an answer (`src/a.ts:42`, `/abs/x.py#L3`)

@@ -161,6 +161,11 @@
     .callout:where([data-callout="quote"], [data-callout="cite"], [data-callout="example"]) {
     --callout: var(--border-strong);
   }
+  /* A wide formula scrolls on its own instead of widening the page. */
+  .note-prose .math[data-math="display"] {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
   /* Property values: one line of Markdown, no paragraph spacing. */
   .note-prose.note-inline {
     font-size: inherit;

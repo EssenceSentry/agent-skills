@@ -74,4 +74,13 @@ describe("Markdown", () => {
     )
     expect(inEditor("[a site](https://example.com)")).not.toContain("data-file")
   })
+
+  it("renders the math agents write, inline and on its own lines", () => {
+    const inline = html("so \\(x^2\\) grows")
+    expect(inline).toContain('data-math="inline"')
+    expect(inline).toContain("x^2")
+    const display = html("\\[ \\frac{a}{b} \\]")
+    expect(display).toContain('data-math="display"')
+    expect(html("It costs $5 and $10.")).not.toContain("data-math")
+  })
 })

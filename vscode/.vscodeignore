@@ -6,3 +6,5 @@ tsconfig.json
 **/*.test.ts
 .gitignore
 biome.json
+media/webview/assets/*.ttf
+media/webview/assets/*.woff

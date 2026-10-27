@@ -3,11 +3,12 @@ import { atelierTheme } from "@atelier/theme/vite"
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
+import { katexWoff2Only } from "./katex-fonts.ts"
 
 // The conversation page for the VS Code extension's tabs: one script and one stylesheet
 // with fixed names, which the extension's own HTML loads, and the font files beside them.
 export default defineConfig({
-  plugins: [react(), tailwindcss(), atelierTheme()],
+  plugins: [react(), tailwindcss(), atelierTheme(), katexWoff2Only()],
   base: "./",
   // The app's icons, manifest and service worker belong to the web app, not a tab.
   publicDir: false,
@@ -21,6 +22,9 @@ export default defineConfig({
     rolldownOptions: {
       input: resolve(import.meta.dirname, "src/vscode-main.tsx"),
       output: {
+        // The tab runs only its one nonce-marked script, so lazily loaded code (KaTeX)
+        // is bundled into it rather than fetched as a chunk the policy would refuse.
+        codeSplitting: false,
         entryFileNames: "webview.js",
         assetFileNames: (asset) =>
           asset.names.some((n) => n.endsWith(".css")) ? "webview.css" : "assets/[name][extname]",
