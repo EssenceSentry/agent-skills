@@ -1,0 +1,112 @@
+{
+  "name": "ax-sessions",
+  "displayName": "ax sessions",
+  "description": "Every Claude Code and Codex session ax sees, in a sidebar, each one opening as a tab you can write to.",
+  "version": "0.1.0",
+  "publisher": "ax-local",
+  "private": true,
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/EssenceSentry/agent-skills"
+  },
+  "engines": {
+    "vscode": "^1.134.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onWebviewPanel:ax.session"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ax",
+          "title": "ax",
+          "icon": "media/ax.svg"
+        }
+      ]
+    },
+    "views": {
+      "ax": [
+        {
+          "id": "ax.sessions",
+          "name": "Sessions",
+          "icon": "media/ax.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "ax.newSession",
+        "title": "New Session",
+        "category": "ax",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ax.refresh",
+        "title": "Refresh Sessions",
+        "category": "ax",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ax.openSession",
+        "title": "Open Session",
+        "category": "ax"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ax.newSession",
+          "when": "view == ax.sessions",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ax.refresh",
+          "when": "view == ax.sessions",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "ax.openSession",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ax",
+      "properties": {
+        "ax.server": {
+          "type": "string",
+          "default": "http://127.0.0.1:8765",
+          "description": "The local ax app (`ax serve`) that lists the sessions and drives them."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build:page": "npm --prefix ../ui run build:vscode",
+    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --outfile=dist/extension.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "verify": "biome check && tsc --noEmit && vitest run",
+    "package": "npm run build:page && npm run build && vsce package --no-dependencies --skip-license --out ax-sessions.vsix",
+    "install-local": "npm run package && node scripts/install.mjs ax-sessions.vsix",
+    "lint": "biome check"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@types/node": "^24",
+    "@types/vscode": "1.134.0",
+    "@vscode/vsce": "4.0.0",
+    "esbuild": "0.28.2",
+    "typescript": "~6.0.2",
+    "vitest": "^5.0.5"
+  }
+}

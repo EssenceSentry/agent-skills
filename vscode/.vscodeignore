@@ -1,0 +1,8 @@
+src/**
+scripts/**
+node_modules/**
+tsconfig.json
+*.vsix
+**/*.test.ts
+.gitignore
+biome.json
