@@ -184,3 +184,15 @@ export function composerMode(chat: ChatState): ComposerMode {
 export function canSend(chat: ChatState, text: string, images = 0): boolean {
   return chat.can_send && !chat.busy && (text.trim().length > 0 || images > 0)
 }
+
+/** The folders the sessions work in, the most recently active first, once each. */
+export function folderSuggestions(sessions: Session[]): string[] {
+  const dated = sessions
+    .filter((s): s is Session & { cwd: string } => Boolean(s.cwd))
+    .sort((a, b) => (b.updated ?? "").localeCompare(a.updated ?? ""))
+  return [...new Set(dated.map((s) => s.cwd))]
+}
+
+export function canStart(folder: string, text: string, images = 0): boolean {
+  return folder.trim().length > 0 && (text.trim().length > 0 || images > 0)
+}

@@ -1,9 +1,13 @@
-import { Activity, TriangleAlert } from "lucide-react"
+import { Activity, Plus, TriangleAlert } from "lucide-react"
+import { useState } from "react"
+
+import { NewSession } from "@/blocks/new-session"
 
 import { Eyebrow, StatusBadge } from "@/blocks/primitives"
+import { Button } from "@/components/ui/button"
 import { useSessions } from "@/lib/ax"
 import { sessionHref } from "@/lib/routes"
-import { groupSessions, type Session, stateBadge } from "@/lib/sessions"
+import { folderSuggestions, groupSessions, type Session, stateBadge } from "@/lib/sessions"
 import { ago } from "@/lib/time"
 
 function SessionRow({ session }: { session: Session }) {
@@ -45,6 +49,7 @@ function SessionRow({ session }: { session: Session }) {
 /** Every live session of Claude Code and Codex, those waiting for you first. */
 export function SessionsScreen() {
   const found = useSessions()
+  const [starting, setStarting] = useState(false)
   const sessions = found.data?.sessions ?? []
   const count = (state: Session["state"]) => sessions.filter((s) => s.state === state).length
   const summary = [
@@ -57,11 +62,22 @@ export function SessionsScreen() {
     .join(" · ")
   return (
     <main className="mx-auto max-w-[960px] space-y-5 p-4 md:p-6">
-      <header className="space-y-1">
-        <Eyebrow>Sessions</Eyebrow>
-        <h1 className="text-[22px] leading-tight">Every conversation, live</h1>
-        {summary && <p className="text-sm text-muted-foreground">{summary}</p>}
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div className="space-y-1">
+          <Eyebrow>Sessions</Eyebrow>
+          <h1 className="text-[22px] leading-tight">Every conversation, live</h1>
+          {summary && <p className="text-sm text-muted-foreground">{summary}</p>}
+        </div>
+        {/* A computer's job: the phone page only follows sessions. */}
+        {!starting && (
+          <Button className="max-sm:hidden" onClick={() => setStarting(true)}>
+            <Plus /> New session
+          </Button>
+        )}
       </header>
+      {starting && (
+        <NewSession folders={folderSuggestions(sessions)} onClose={() => setStarting(false)} />
+      )}
       {found.error && !found.data && (
         <div className="panel p-5 text-sm text-muted-foreground">
           The sessions didn't load: {found.error}

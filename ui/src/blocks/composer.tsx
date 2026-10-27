@@ -1,25 +1,16 @@
-import { ImagePlus, Info, Loader2, SendHorizontal, ShieldQuestion, Square, X } from "lucide-react"
-import { type ClipboardEvent, type KeyboardEvent, useRef, useState } from "react"
+import { Info, Loader2, SendHorizontal, ShieldQuestion, Square } from "lucide-react"
+import { type KeyboardEvent, useState } from "react"
 
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { AttachButton, ConfirmDialog, PictureTray, usePictures } from "@/blocks/message-input"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { chatAct, hurry } from "@/lib/ax"
-import { type Pasted, prepare } from "@/lib/images"
 import { type Approval, type ChatState, canSend, composerMode, type Session } from "@/lib/sessions"
 
 type Payload = Record<string, unknown>
 
 /** Text with `code` in backticks, as the server writes commands and paths. */
-function Inline({ text }: { text: string }) {
+export function Inline({ text }: { text: string }) {
   return (
     <>
       {text.split("`").map((part, i) =>
@@ -88,29 +79,8 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
   const [inFlight, setInFlight] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [ask, setAsk] = useState<{ question: string; payload: Payload } | null>(null)
-  const [pictures, setPictures] = useState<Pasted[]>([])
-  const picker = useRef<HTMLInputElement>(null)
+  const pictures = usePictures(setError)
   const mode = composerMode(chat)
-
-  async function attach(files: File[]) {
-    const images = files.filter((f) => f.type.startsWith("image/"))
-    if (!images.length) return false
-    try {
-      const ready = await Promise.all(images.map(prepare))
-      setPictures((was) => [...was, ...ready].slice(0, 10))
-    } catch (e) {
-      setError((e as Error).message)
-    }
-    return true
-  }
-  // Pasting a picture attaches it; pasting text stays text.
-  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = Array.from(e.clipboardData.files)
-    if (files.some((f) => f.type.startsWith("image/"))) {
-      e.preventDefault()
-      void attach(files)
-    }
-  }
   const base = { provider: session.provider, id: session.id, cwd: session.cwd, name: session.name }
 
   async function run(payload: Payload) {
@@ -128,7 +98,7 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
       setAsk(null)
       if (payload.action === "send") {
         setText("")
-        setPictures([])
+        pictures.clear()
       }
       hurry()
     } catch (e) {
@@ -139,13 +109,9 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
   }
 
   const send = () =>
-    canSend(chat, text, pictures.length) &&
+    canSend(chat, text, pictures.pictures.length) &&
     !inFlight &&
-    run({
-      action: "send",
-      text: text.trim(),
-      images: pictures.map(({ media, data }) => ({ media, data })),
-    })
+    run({ action: "send", text: text.trim(), images: pictures.payload() })
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
@@ -182,53 +148,13 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
         </div>
       ) : (
         <div className="rounded-xl border bg-card p-2 focus-within:ring-2 focus-within:ring-ring/40">
-          {pictures.length > 0 && (
-            <ul className="flex flex-wrap gap-2 px-1 pt-1 pb-2" aria-label="Pictures to send">
-              {pictures.map((picture, i) => (
-                <li key={picture.preview} className="relative">
-                  <img
-                    src={picture.preview}
-                    alt=""
-                    className="h-16 w-auto rounded-md border object-cover"
-                  />
-                  <button
-                    type="button"
-                    aria-label={`Remove picture ${i + 1}`}
-                    onClick={() => setPictures((was) => was.filter((_, j) => j !== i))}
-                    className="absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full border bg-card text-muted-foreground shadow-sm hover:text-foreground"
-                  >
-                    <X className="size-3" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          <PictureTray pictures={pictures.pictures} onRemove={pictures.remove} />
           <div className="flex items-end gap-2">
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label="Attach pictures"
-              title="Attach pictures (or paste them)"
-              onClick={() => picker.current?.click()}
-              disabled={inFlight}
-            >
-              <ImagePlus />
-            </Button>
-            <input
-              ref={picker}
-              type="file"
-              accept="image/*"
-              multiple
-              hidden
-              onChange={(e) => {
-                void attach(Array.from(e.target.files ?? []))
-                e.target.value = ""
-              }}
-            />
+            <AttachButton onFiles={(files) => void pictures.attach(files)} disabled={inFlight} />
             <Textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
-              onPaste={onPaste}
+              onPaste={pictures.onPaste}
               onKeyDown={onKey}
               placeholder={placeholder}
               aria-label="Message"
@@ -252,7 +178,7 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
                 aria-label="Send"
                 title="Send (Enter)"
                 onClick={send}
-                disabled={!canSend(chat, text, pictures.length) || inFlight}
+                disabled={!canSend(chat, text, pictures.pictures.length) || inFlight}
               >
                 {inFlight ? <Loader2 className="animate-spin" /> : <SendHorizontal />}
               </Button>
@@ -284,23 +210,12 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
         </div>
       )}
 
-      <AlertDialog open={ask !== null} onOpenChange={(open) => !open && !inFlight && setAsk(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirm from the shared link</AlertDialogTitle>
-            <AlertDialogDescription className="whitespace-pre-wrap">
-              {ask?.question}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={inFlight}>Cancel</AlertDialogCancel>
-            <Button onClick={() => ask && run(ask.payload)} disabled={inFlight}>
-              {inFlight && <Loader2 className="animate-spin" />}
-              Yes, do it
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        question={ask?.question ?? null}
+        busy={inFlight}
+        onCancel={() => setAsk(null)}
+        onYes={() => ask && run(ask.payload)}
+      />
     </div>
   )
 }

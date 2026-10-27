@@ -5,7 +5,9 @@ import {
   type Card,
   type ChatState,
   canSend,
+  canStart,
   composerMode,
+  folderSuggestions,
   groupSessions,
   mergePage,
   runningNow,
@@ -190,5 +192,24 @@ describe("the composer", () => {
     expect(mergePage({ ...shown, shots: [shot] }, { ...shown, next: 6, first: 4 }).shots).toEqual(
       []
     )
+  })
+})
+
+describe("a new session", () => {
+  it("suggests the folders sessions work in, the most recent first, once each", () => {
+    const sessions = [
+      session({ id: "a", cwd: "/r/demo", updated: "2026-10-27T10:00:00+00:00" }),
+      session({ id: "b", cwd: "/r/ax", updated: "2026-10-27T12:00:00+00:00" }),
+      session({ id: "c", cwd: "/r/demo", updated: "2026-10-27T11:00:00+00:00" }),
+      session({ id: "d", cwd: null }),
+    ]
+    expect(folderSuggestions(sessions)).toEqual(["/r/ax", "/r/demo"])
+  })
+
+  it("starts once it has a folder and something to say", () => {
+    expect(canStart("/r/demo", "Plan it", 0)).toBe(true)
+    expect(canStart("/r/demo", "", 1)).toBe(true)
+    expect(canStart("  ", "Plan it", 0)).toBe(false)
+    expect(canStart("/r/demo", "  ", 0)).toBe(false)
   })
 })

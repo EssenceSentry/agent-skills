@@ -654,7 +654,7 @@ The user works in four Claude and four Codex sessions at once, and neither deskt
   3. **Claude chat (done 2026-10-26):** a driver for the headless stream-json process (handshake, turns, partial messages, interrupt), tested against a fake process.
   4. **Approvals and interrupts in the view (done 2026-10-26),** for both tools, with the second confirmation for anything sent through the shared link.
   5. **Handover helpers:** "open in the Codex app", "continue in a terminal", and the check of desktop-app Claude sessions resumed in ax.
-  6. **New sessions from ax:** start a session of either tool in a folder with a first message, held by ax from the start. Both front ends need it; the extension starts them in the open workspace.
+  6. **New sessions from ax (done 2026-10-27):** start a session of either tool in a folder with a first message, pictures included, held by ax from the start. Claude gets a fresh id (`--session-id`), Codex a `thread/start` in the folder with the user's own settings; the session is named by its first line. The Sessions page has a New session form on a computer, none on a phone; the extension will start them in the open workspace.
   7. **VS Code extension, first cut:** the sessions sidebar and session tabs, with the conversation page bundled and themed.
   8. **Extension touches:** file links, diffs, notifications and status-bar usage, in any order.
   9. **The phone page trimmed** to progress and light actions.
