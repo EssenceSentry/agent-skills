@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest"
 
-import { assetUrl, bridge, request, setTransport } from "@/lib/transport"
+import {
+  askExtension,
+  assetUrl,
+  bridge,
+  extensionCalls,
+  request,
+  setExtension,
+  setTransport,
+} from "@/lib/transport"
 
 /** A stand-in for the extension: records what the page posts and answers on demand. */
 function extension() {
@@ -15,7 +23,10 @@ function extension() {
   return { posted, transport, answer: (message: unknown) => deliver(message) }
 }
 
-afterEach(() => setTransport(null))
+afterEach(() => {
+  setTransport(null)
+  setExtension(null)
+})
 
 describe("requests through the VS Code extension", () => {
   it("asks the extension and resolves with its reply", async () => {
@@ -85,5 +96,44 @@ describe("picture addresses", () => {
 
   it("stay as they are on the server's own page", () => {
     expect(assetUrl("/api/session/image?line=1")).toBe("/api/session/image?line=1")
+  })
+})
+
+describe("asking the extension itself", () => {
+  it("calls by name and resolves with the extension's result", async () => {
+    const posted: Record<string, unknown>[] = []
+    let deliver: (message: unknown) => void = () => undefined
+    setExtension(
+      extensionCalls(
+        (message) => posted.push(message as Record<string, unknown>),
+        (handler) => {
+          deliver = handler
+        }
+      )
+    )
+    const asked = askExtension("selection")
+    expect(posted).toEqual([{ type: "call", id: 1, name: "selection" }])
+    deliver({ type: "reply", id: 1, status: 200, body: "not this" })
+    deliver({ type: "result", id: 1, value: { path: "/a.ts" } })
+    await expect(asked).resolves.toEqual({ path: "/a.ts" })
+  })
+
+  it("fails with the extension's reason", async () => {
+    let deliver: (message: unknown) => void = () => undefined
+    setExtension(
+      extensionCalls(
+        () => undefined,
+        (handler) => {
+          deliver = handler
+        }
+      )
+    )
+    const asked = askExtension("pickFiles")
+    deliver({ type: "result", id: 1, error: "no folder is open" })
+    await expect(asked).rejects.toThrow("no folder is open")
+  })
+
+  it("isn't there outside an editor", async () => {
+    await expect(askExtension("selection")).rejects.toThrow("only inside VS Code")
   })
 })

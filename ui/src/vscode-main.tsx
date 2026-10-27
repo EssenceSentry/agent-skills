@@ -6,7 +6,7 @@ import "./index.css"
 import "./vscode.css"
 import { NewSession } from "@/blocks/new-session"
 import { EditorHost } from "@/lib/host"
-import { bridge, setTransport } from "@/lib/transport"
+import { bridge, extensionCalls, setExtension, setTransport } from "@/lib/transport"
 import { themeFor, viewFrom } from "@/lib/vscode"
 import { SessionScreen } from "@/screens/session"
 
@@ -30,6 +30,14 @@ setTransport(
 
 // The tab's own look, in vscode.css, applies under this mark only.
 document.documentElement.dataset.host = "vscode"
+
+// Files, folders and the editor's selection come from the extension itself.
+setExtension(
+  extensionCalls(
+    (message) => vscode.postMessage(message),
+    (handler) => window.addEventListener("message", (e) => handler(e.data))
+  )
+)
 
 // VS Code marks its theme on the body and changes it when the user switches themes.
 const follow = () => {

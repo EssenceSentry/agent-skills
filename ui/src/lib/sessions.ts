@@ -94,6 +94,33 @@ export type Approval = {
   summary: string
   reason: string | null
   detail: string | null
+  /** The plan, when Claude asks to leave plan mode and start on it. */
+  plan?: string | null
+}
+
+/** Plan mode, approve for me, and the model and effort; null is the session's own. */
+export type ChatSettings = {
+  plan: boolean
+  auto: boolean
+  model: string | null
+  effort: string | null
+}
+
+/** A model the session offers, and the efforts it takes. */
+export type ModelInfo = {
+  id: string
+  label: string
+  efforts: string[]
+  default_effort: string | null
+}
+
+/** What the session keeps pursuing; Codex reports its progress, Claude only that it's set. */
+export type Goal = {
+  objective: string
+  status: string
+  tokens_used: number | null
+  token_budget: number | null
+  seconds: number | null
 }
 
 /**
@@ -112,6 +139,10 @@ export type ChatState = {
   approval: Approval | null
   error: string | null
   note: string
+  /** Null until ax holds the session. */
+  settings?: ChatSettings | null
+  models?: ModelInfo[]
+  goal?: Goal | null
 }
 
 export type SessionView = TranscriptPage & { session: Session; cards: Card[]; chat?: ChatState }

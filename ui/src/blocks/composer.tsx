@@ -6,15 +6,28 @@ import {
   SendHorizontal,
   ShieldQuestion,
   Square,
+  Target,
+  X,
 } from "lucide-react"
-import { type KeyboardEvent, useContext, useState } from "react"
+import { type KeyboardEvent, useContext, useRef, useState } from "react"
 
+import {
+  type Change,
+  GoalBar,
+  ModeChips,
+  ModelPicker,
+  PlusMenu,
+  ReferenceTray,
+} from "@/blocks/composer-tools"
+import { Markdown } from "@/blocks/markdown"
 import { AttachButton, ConfirmDialog, PictureTray, usePictures } from "@/blocks/message-input"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { chatAct, hurry } from "@/lib/ax"
 import { EditorHost } from "@/lib/host"
+import { type Reference, referenceLabel, withReferences } from "@/lib/plus"
 import { type Approval, type ChatState, canSend, composerMode, type Session } from "@/lib/sessions"
+import { askExtension } from "@/lib/transport"
 
 type Payload = Record<string, unknown>
 
@@ -58,6 +71,11 @@ function ApprovalCard({
           )}
         </div>
       </div>
+      {approval.plan && (
+        <div className="chat-plan max-h-80 overflow-auto rounded-lg border bg-card px-3.5 py-3">
+          <Markdown className="text-[13px] leading-relaxed">{approval.plan}</Markdown>
+        </div>
+      )}
       {approval.detail && (
         <details>
           <summary className="cursor-pointer text-xs text-muted-foreground">Details</summary>
@@ -68,10 +86,10 @@ function ApprovalCard({
       )}
       <div className="flex gap-2">
         <Button size="sm" onClick={() => onAnswer(true)} disabled={busy}>
-          Allow
+          {approval.plan ? "Go ahead" : "Allow"}
         </Button>
         <Button size="sm" variant="outline" onClick={() => onAnswer(false)} disabled={busy}>
-          Refuse
+          {approval.plan ? "Keep planning" : "Refuse"}
         </Button>
       </div>
     </div>
@@ -89,6 +107,9 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
   const [error, setError] = useState<string | null>(null)
   const [ask, setAsk] = useState<{ question: string; payload: Payload } | null>(null)
   const pictures = usePictures(setError)
+  const [refs, setRefs] = useState<Reference[]>([])
+  const [goalMode, setGoalMode] = useState(false)
+  const box = useRef<HTMLTextAreaElement>(null)
   const mode = composerMode(chat)
   // In VS Code, as in Codex: an up arrow to send, and the note about who holds the session
   // folded into the hand-back icon beside the plus instead of a line under the box.
@@ -109,9 +130,11 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
         return
       }
       setAsk(null)
-      if (payload.action === "send") {
+      if (payload.action === "send" || payload.action === "goal") {
         setText("")
         pictures.clear()
+        setRefs([])
+        setGoalMode(false)
       }
       hurry()
     } catch (e) {
@@ -121,21 +144,58 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
     }
   }
 
+  const ready = goalMode
+    ? text.trim().length > 0 && !chat.busy
+    : canSend(chat, text, pictures.pictures.length + refs.length)
   const send = () =>
-    canSend(chat, text, pictures.pictures.length) &&
+    ready &&
     !inFlight &&
-    run({ action: "send", text: text.trim(), images: pictures.payload() })
+    run(
+      goalMode
+        ? { action: "goal", objective: withReferences(text, refs) }
+        : { action: "send", text: withReferences(text, refs), images: pictures.payload() }
+    )
+  const change = (c: Change) => run({ action: "settings", ...c })
+  // Files and the selection come from the editor; each joins the message once.
+  const add = (found: Reference[]) =>
+    setRefs((was) => {
+      const seen = new Set(was.map(referenceLabel))
+      return [...was, ...found.filter((r) => !seen.has(referenceLabel(r)))]
+    })
+  const addFiles = () =>
+    askExtension<Reference[]>("pickFiles").then(add, (e: Error) => setError(e.message))
+  const addSelection = () =>
+    askExtension<Reference | null>("selection").then(
+      (found) =>
+        found ? add([found]) : setError("Select some code in an editor first, then add it."),
+      (e: Error) => setError(e.message)
+    )
+  const startGoal = () => {
+    setGoalMode(true)
+    // After the menu has closed and handed the focus back to its button.
+    setTimeout(() => box.current?.focus(), 0)
+  }
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       send()
     }
   }
-  const placeholder =
-    chat.holder === "codex app" ? "Message it through the Codex app…" : `Message ${session.name}…`
+  const placeholder = goalMode
+    ? "What should it keep working toward?"
+    : chat.holder === "codex app"
+      ? "Message it through the Codex app…"
+      : `Message ${session.name}…`
 
   return (
     <div className="chat-composer sticky bottom-0 z-10 -mx-4 space-y-2 bg-background/90 px-4 pt-2 pb-4 backdrop-blur-md md:-mx-6 md:px-6">
+      {chat.goal && (
+        <GoalBar
+          goal={chat.goal}
+          disabled={inFlight || chat.busy}
+          onClear={() => run({ action: "goal-clear" })}
+        />
+      )}
       {chat.approval && (
         <ApprovalCard
           approval={chat.approval}
@@ -161,9 +221,36 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
         </div>
       ) : (
         <div className="chat-box rounded-xl border bg-card p-2 focus-within:ring-2 focus-within:ring-ring/40">
+          {goalMode && (
+            <button
+              type="button"
+              className="chat-chip chat-goal-chip"
+              aria-label="Goal: cancel"
+              title="Your message sets a goal it keeps pursuing. Click to send a plain message."
+              onClick={() => setGoalMode(false)}
+            >
+              <Target /> Goal <X />
+            </button>
+          )}
           <PictureTray pictures={pictures.pictures} onRemove={pictures.remove} />
+          <ReferenceTray
+            refs={refs}
+            onRemove={(i) => setRefs((was) => was.filter((_, j) => j !== i))}
+          />
           <div className="flex items-end gap-2">
-            <AttachButton onFiles={(files) => void pictures.attach(files)} disabled={inFlight} />
+            {editor ? (
+              <PlusMenu
+                settings={chat.settings}
+                disabled={inFlight}
+                onFiles={addFiles}
+                onSelection={addSelection}
+                onPictures={(files) => void pictures.attach(files)}
+                onChange={change}
+                onGoal={startGoal}
+              />
+            ) : (
+              <AttachButton onFiles={(files) => void pictures.attach(files)} disabled={inFlight} />
+            )}
             {editor && chat.holder === "ax" && (
               <Button
                 size="icon"
@@ -177,7 +264,9 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
                 <LogOut />
               </Button>
             )}
+            {editor && <ModeChips settings={chat.settings} disabled={inFlight} onChange={change} />}
             <Textarea
+              ref={box}
               value={text}
               onChange={(e) => setText(e.target.value)}
               onPaste={pictures.onPaste}
@@ -187,6 +276,7 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
               rows={2}
               className="chat-input max-h-48 min-h-10 flex-1 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
             />
+            {editor && <ModelPicker chat={chat} disabled={inFlight} onChange={change} />}
             {mode === "busy" ? (
               <Button
                 size="icon"
@@ -206,7 +296,7 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
                 className="chat-send"
                 title="Send (Enter)"
                 onClick={send}
-                disabled={!canSend(chat, text, pictures.pictures.length) || inFlight}
+                disabled={!ready || inFlight}
               >
                 {inFlight ? <Loader2 className="animate-spin" /> : <SendIcon />}
               </Button>

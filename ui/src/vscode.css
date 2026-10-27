@@ -407,3 +407,146 @@ html textarea:focus {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
 }
+
+/*
+ * The + menu, the mode chips, the model picker and the goal, as in Codex: a rounded menu
+ * with a hint beside each item, chips for what is on, and the model as quiet text before
+ * the send button.
+ */
+:root[data-host="vscode"] .chat-plus {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  color: var(--vscode-foreground);
+}
+:root[data-host="vscode"] .chat-plus:hover,
+:root[data-host="vscode"] .chat-model:hover,
+:root[data-host="vscode"] .chat-chip:hover,
+:root[data-host="vscode"] .chat-goal-clear:hover {
+  background: var(--chat-tint);
+}
+:root[data-host="vscode"] .chat-plus svg {
+  width: 17px;
+  height: 17px;
+}
+:root[data-host="vscode"] .chat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+:root[data-host="vscode"] .chat-chip svg {
+  width: 14px;
+  height: 14px;
+}
+:root[data-host="vscode"] .chat-goal-chip {
+  margin: 2px 0 4px 2px;
+  background: var(--chat-tint);
+}
+:root[data-host="vscode"] .chat-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+:root[data-host="vscode"] .chat-model svg {
+  width: 13px;
+  height: 13px;
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-host="vscode"] .chat-model + .chat-send {
+  margin-left: 4px;
+}
+:root[data-host="vscode"] .chat-menu {
+  width: 19rem;
+  min-width: 15rem;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--chat-line-strong);
+  background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  font-family: var(--vscode-font-family);
+  font-size: var(--chat-size);
+}
+:root[data-host="vscode"] .chat-menu [data-slot="dropdown-menu-label"] {
+  padding: 6px 8px 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-host="vscode"] .chat-menu [role="menuitem"],
+:root[data-host="vscode"] .chat-menu [role="menuitemcheckbox"],
+:root[data-host="vscode"] .chat-menu [role="menuitemradio"] {
+  gap: 9px;
+  border-radius: 8px;
+  padding-block: 6px;
+  font-size: var(--chat-size);
+  white-space: nowrap;
+}
+:root[data-host="vscode"] .chat-menu [data-highlighted] {
+  background: var(--chat-tint);
+  color: var(--vscode-foreground);
+}
+:root[data-host="vscode"] .chat-menu svg {
+  width: 16px;
+  height: 16px;
+}
+:root[data-host="vscode"] .chat-menu-hint {
+  margin-left: auto;
+  padding-left: 12px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-host="vscode"] .chat-refs {
+  padding: 2px 2px 6px;
+}
+:root[data-host="vscode"] .chat-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 3px 0 8px;
+  border-radius: 7px;
+  background: var(--chat-tint);
+  font-size: 12px;
+}
+:root[data-host="vscode"] .chat-ref svg {
+  width: 13px;
+  height: 13px;
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-host="vscode"] .chat-ref button {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+}
+:root[data-host="vscode"] .chat-ref button:hover {
+  background: var(--chat-code-tint);
+}
+:root[data-host="vscode"] .chat-goal {
+  border: 1px solid var(--chat-line-strong);
+  border-radius: 12px;
+  background: transparent;
+  font-size: 12px;
+}
+:root[data-host="vscode"] .chat-goal-line {
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-host="vscode"] .chat-plan {
+  border: 1px solid var(--chat-line);
+  border-radius: 10px;
+  background: var(--vscode-editor-background);
+}

@@ -65,3 +65,64 @@ describe("handing a session back", () => {
     expect(html).not.toContain('aria-label="Hand back"')
   })
 })
+
+const astra = {
+  id: "gpt-6-astra",
+  label: "GPT-6-Astra",
+  efforts: ["low", "xhigh"],
+  default_effort: "low",
+}
+
+describe("modes in the editor", () => {
+  it("shows the model and effort, and the modes that are on", () => {
+    const html = render(
+      chat({
+        holder: "ax",
+        settings: { plan: true, auto: true, model: "gpt-6-astra", effort: "xhigh" },
+        models: [astra],
+      }),
+      true
+    )
+    expect(html).toContain('aria-label="Add and modes"')
+    expect(html).toContain("GPT-6-Astra · Extra high")
+    expect(html).toContain('aria-label="Plan mode is on: turn it off"')
+    expect(html).toContain('aria-label="Approve for me is on: turn it off"')
+  })
+
+  it("shows the goal it pursues, with a way to clear it", () => {
+    const html = render(
+      chat({
+        goal: {
+          objective: "ship it",
+          status: "active",
+          tokens_used: 1200,
+          token_budget: null,
+          seconds: 30,
+        },
+      }),
+      true
+    )
+    expect(html).toContain("ship it")
+    expect(html).toContain("Active · 30 s · 1.2k tokens")
+    expect(html).toContain('aria-label="Clear the goal"')
+  })
+
+  it("shows a plan waiting for approval as the plan itself", () => {
+    const html = render(
+      chat({
+        approval: {
+          id: "p1",
+          tool: "ExitPlanMode",
+          summary: "start on its plan",
+          reason: null,
+          detail: null,
+          plan: "# Plan\n1. Do it",
+        },
+      }),
+      true
+    )
+    expect(html).toContain("<h1>Plan</h1>")
+    expect(html).toContain("Go ahead")
+    expect(html).toContain("Keep planning")
+  })
+})

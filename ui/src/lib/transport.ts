@@ -76,3 +76,50 @@ export function bridge(
 export function assetUrl(path: string): string {
   return assetBase && path.startsWith("/") && !path.startsWith("//") ? assetBase + path : path
 }
+
+export type ExtensionCall = (name: string, args?: unknown) => Promise<unknown>
+
+/**
+ * Calls the VS Code extension answers itself, such as picking files or reading the
+ * editor's selection; each answered by a result with its id.
+ */
+export function extensionCalls(
+  post: (message: unknown) => void,
+  listen: (handler: (message: unknown) => void) => void
+): ExtensionCall {
+  let last = 0
+  const waiting = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
+  listen((message) => {
+    const result = message as { type?: unknown; id?: unknown; value?: unknown; error?: unknown }
+    if (result?.type !== "result" || typeof result.id !== "number") return
+    const call = waiting.get(result.id)
+    if (!call) return
+    waiting.delete(result.id)
+    if (typeof result.error === "string") call.reject(new Error(result.error))
+    else call.resolve(result.value)
+  })
+  return (name, args) =>
+    new Promise((resolve, reject) => {
+      last += 1
+      waiting.set(last, { resolve, reject })
+      post(
+        args === undefined
+          ? { type: "call", id: last, name }
+          : { type: "call", id: last, name, args }
+      )
+    })
+}
+
+let extension: ExtensionCall | null = null
+
+export function setExtension(call: ExtensionCall | null) {
+  extension = call
+}
+
+/** Whether the page runs in an editor that answers calls. */
+export const inExtension = () => extension !== null
+
+export async function askExtension<T>(name: string, args?: unknown): Promise<T> {
+  if (!extension) throw new Error("this works only inside VS Code")
+  return (await extension(name, args)) as T
+}
