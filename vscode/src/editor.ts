@@ -1,3 +1,4 @@
+import { basename, dirname } from "node:path"
 import * as vscode from "vscode"
 
 import { call } from "./bridge"
@@ -11,6 +12,7 @@ import {
   readBeforeQuery,
 } from "./changes"
 import type { FileTarget } from "./links"
+import { fileReference, type Reference, selectionReference } from "./selection"
 
 /** A file an answer names, beside the session and at its line; a folder in the explorer. */
 export async function openFile({ path, line, column }: FileTarget) {
@@ -131,4 +133,76 @@ export async function showChanges(files: BeforeFiles, server: string, session: S
     changesTitle(session.name, base, shown.length),
     shown
   )
+}
+
+let lastEditor: vscode.TextEditor | undefined
+
+/** Remembers the editor last used, since a click in a session's tab takes the focus. */
+export function followEditors(): vscode.Disposable {
+  lastEditor = vscode.window.activeTextEditor
+  return vscode.window.onDidChangeActiveTextEditor((editor) => {
+    if (editor) lastEditor = editor
+  })
+}
+
+/** The code selected in the editor last used, or nothing. */
+export function currentSelection(): Reference | null {
+  const editor =
+    lastEditor && !lastEditor.document.isClosed
+      ? lastEditor
+      : vscode.window.visibleTextEditors.find((e) => !e.selection.isEmpty)
+  if (!editor) return null
+  const { selection, document } = editor
+  return selectionReference({
+    path: document.uri.fsPath,
+    startLine: selection.start.line,
+    endLine: selection.end.line,
+    endCharacter: selection.end.character,
+    text: document.getText(selection),
+    languageId: document.languageId,
+  })
+}
+
+const SKIP = "{**/node_modules/**,**/.git/**,**/.venv/**,**/dist/**,**/__pycache__/**}"
+
+async function browse(): Promise<Reference[]> {
+  const uris = await vscode.window.showOpenDialog({
+    canSelectFiles: true,
+    canSelectFolders: true,
+    canSelectMany: true,
+    openLabel: "Send with the message",
+  })
+  return Promise.all(
+    (uris ?? []).map(async (uri) => {
+      const { type } = await vscode.workspace.fs.stat(uri)
+      return fileReference(uri.fsPath, (type & vscode.FileType.Directory) !== 0)
+    })
+  )
+}
+
+type FileItem = vscode.QuickPickItem & { uri?: vscode.Uri }
+
+/** Files of the workspace to send with a message, or any file or folder to browse for. */
+export async function pickFiles(): Promise<Reference[]> {
+  const found = vscode.workspace.workspaceFolders?.length
+    ? await vscode.workspace.findFiles("**/*", SKIP, 5000)
+    : []
+  if (!found.length) return browse()
+  const other: FileItem = { label: "$(folder-opened) Browse files and folders…", alwaysShow: true }
+  const files: FileItem[] = found
+    .map((uri) => ({ uri, relative: vscode.workspace.asRelativePath(uri) }))
+    .sort((a, b) => a.relative.localeCompare(b.relative))
+    .map(({ uri, relative }) => ({
+      label: basename(uri.fsPath),
+      description: dirname(relative) === "." ? "" : dirname(relative),
+      uri,
+    }))
+  const chosen = await vscode.window.showQuickPick([other, ...files], {
+    canPickMany: true,
+    matchOnDescription: true,
+    placeHolder: "Files to send with the message",
+  })
+  if (!chosen?.length) return []
+  const picked = chosen.flatMap((c) => (c.uri ? [fileReference(c.uri.fsPath, false)] : []))
+  return chosen.includes(other) ? [...picked, ...(await browse())] : picked
 }

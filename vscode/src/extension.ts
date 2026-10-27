@@ -4,7 +4,16 @@ import * as vscode from "vscode"
 
 import { type BridgeRequest, call, forward, linkTarget } from "./bridge"
 import type { Base } from "./changes"
-import { BEFORE_SCHEME, BeforeFiles, openFile, type Shown, showChanges } from "./editor"
+import {
+  BEFORE_SCHEME,
+  BeforeFiles,
+  currentSelection,
+  followEditors,
+  openFile,
+  pickFiles,
+  type Shown,
+  showChanges,
+} from "./editor"
 import { pageHtml, type View } from "./html"
 import { fileTarget } from "./links"
 import { newlyWaiting, notice } from "./notify"
@@ -172,6 +181,17 @@ class Tabs {
     if (m.type === "request") {
       const reply = await forward(server(), m as BridgeRequest)
       await panel.webview.postMessage(reply)
+    } else if (m.type === "call" && typeof m.id === "number") {
+      // What only the editor knows: files picked from the workspace, the selected code.
+      const reply = (value: unknown, error?: string) =>
+        panel.webview.postMessage({ type: "result", id: m.id, value, ...(error ? { error } : {}) })
+      try {
+        if (m.name === "selection") await reply(currentSelection())
+        else if (m.name === "pickFiles") await reply(await pickFiles())
+        else await reply(null, `the extension has no ${String(m.name)}`)
+      } catch (e) {
+        await reply(null, (e as Error).message)
+      }
     } else if (m.type === "open" && typeof m.href === "string") {
       const web = linkTarget(m.href, server())
       if (web) return void vscode.env.openExternal(vscode.Uri.parse(web))
@@ -250,6 +270,7 @@ export function activate(context: vscode.ExtensionContext) {
   tick()
 
   context.subscriptions.push(
+    followEditors(),
     view,
     view.onDidChangeVisibility((e) => e.visible && tick()),
     { dispose: () => clearTimeout(timer) },
