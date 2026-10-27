@@ -80,6 +80,7 @@ class Driver:
         self.settings: dict = {"plan": False, "auto": False, "model": None, "effort": None}
         self.models: list[dict] = []  # {id, label, efforts, default_effort}
         self.goal: dict | None = None  # {objective, status, tokens_used, token_budget, seconds}
+        self.tasks: dict | None = None  # Codex's plan for the turn, which only arrives live
 
     def _spawn(self, command: list[str]) -> None:
         folder = self.cwd if self.cwd and Path(self.cwd).is_dir() else None
@@ -116,7 +117,7 @@ class Driver:
     def view(self) -> dict:
         return {"busy": self.busy, "partial": self.partial, "approval": self.approval,
                 "error": self.error, "settings": dict(self.settings), "models": self.models,
-                "goal": self.goal}  # fmt: skip
+                "goal": self.goal, "tasks": self.tasks}  # fmt: skip
 
     def model(self, wanted: str | None = None) -> dict | None:
         """A model this session offers: the one named, else the one it runs."""
@@ -238,6 +239,14 @@ class CodexDriver(Driver):
                 self.error = ((turn.get("error") or {}).get("message")) or "the turn failed"
         elif method == "error":
             self.error = (params.get("error") or {}).get("message") or "codex reported an error"
+        elif method == "turn/plan/updated":
+            self.tasks = {
+                "items": [{"text": step.get("step") or "",
+                           "status": {"inProgress": "in_progress", "completed": "completed"}.get(
+                               step.get("status"), "pending")}
+                          for step in params.get("plan") or [] if isinstance(step, dict)],
+                "explanation": params.get("explanation"),
+            }  # fmt: skip
         elif method == "thread/goal/updated":
             self._goal(params.get("goal"), newer=True)
         elif method == "thread/goal/cleared":
@@ -265,6 +274,7 @@ class CodexDriver(Driver):
 
     def send(self, text: str, images=()) -> None:
         self._claim()
+        self.tasks = None  # a new message starts a new list
         given = [{"type": "localImage", "path": i["path"]} for i in images]
         given += [{"type": "text", "text": text}] if text else []
         try:
@@ -592,7 +602,7 @@ def state(config, provider: str, sid: str) -> dict:
     """Who holds the conversation, whether the user can write to it now, and what runs."""
     base = {"holder": None, "can_send": True, "take_over": False, "pending": False,
             "busy": False, "partial": "", "approval": None, "error": None, "note": "",
-            "settings": None, "models": [], "goal": None}  # fmt: skip
+            "settings": None, "models": [], "goal": None, "tasks": None}  # fmt: skip
     driver = CHATS.get(provider, sid)
     if driver:
         note = (_BACKGROUND.format(sid=sid) if provider == "claude" else

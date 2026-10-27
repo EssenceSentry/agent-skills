@@ -476,9 +476,10 @@ def image(config, provider: str, sid: str, line: int, n: int) -> tuple[bytes, st
 
 
 def session_view(config, provider: str, sid: str, *, after: int = 0) -> dict:
-    """One session for the app: its state, its transcript from `after`, and its job cards.
-    One ax has just started shows before its tool has written a transcript."""
-    from ax import chat
+    """One session for the app: its state, its transcript from `after`, its job cards, what
+    it is doing now and its turn's task list. One ax has just started shows before its
+    tool has written a transcript."""
+    from ax import chat, session_activity
 
     held = next((s for s in chat.held() if s["provider"] == provider and s["id"] == sid), None)
     try:
@@ -491,5 +492,10 @@ def session_view(config, provider: str, sid: str, *, after: int = 0) -> dict:
     session = next((s for s in listed if s["provider"] == provider and s["id"] == sid),
                    held or {"provider": provider, "id": sid, "name": sid[:8], "state": None})  # fmt: skip
 
+    path = transcript_path(config, provider, sid)
+    now = (session_activity.read(path, provider) if path and path.exists()
+           else {"activity": None, "tasks": None})  # fmt: skip
+    talk = chat.state(config, provider, sid)
     return {"session": session, **found, "cards": job_card.session_cards(config, provider, sid),
-            "chat": chat.state(config, provider, sid)}  # fmt: skip
+            "chat": talk, "activity": now["activity"],
+            "tasks": now["tasks"] or talk.get("tasks")}  # a Codex plan arrives only live  # fmt: skip

@@ -65,6 +65,11 @@ for line in sys.stdin:
         say({"method": "item/agentMessage/delta", "params": {"delta": "Running"}})
         say({"method": "item/agentMessage/delta", "params": {"delta": " the tests."}})
         text = message["params"]["input"][0]["text"]
+        if "plan steps" in text:
+            say({"method": "turn/plan/updated", "params": {
+                "threadId": "t", "turnId": "turn-1", "explanation": "Two steps",
+                "plan": [{"step": "Read", "status": "completed"},
+                         {"step": "Fix", "status": "inProgress"}]}})
         if "approve" in text:
             say({"id": 900, "method": "item/commandExecution/requestApproval",
                  "params": {"threadId": "t", "turnId": "turn-1", "itemId": "i",
@@ -773,3 +778,13 @@ def test_modes_and_goals_through_a_shared_link_wait_for_a_second_yes(env, chats)
                                  "objective": "ship it", "name": "Fix it"}, remote=True)  # fmt: skip
     assert goal["confirm"] and "ship it" in goal["question"]
     assert chat.CHATS.get("claude", "s-1") is None  # nothing happened yet
+
+
+def test_a_codex_threads_plan_is_the_turns_task_list(env, chats):
+    chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1", "text": "plan steps"})
+    state = settle(env, "codex", "t-1")
+    assert state["tasks"] == {"items": [{"text": "Read", "status": "completed"},
+                                        {"text": "Fix", "status": "in_progress"}],
+                              "explanation": "Two steps"}  # fmt: skip
+    chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1", "text": "next"})
+    assert settle(env, "codex", "t-1")["tasks"] is None  # a new message starts a new list
