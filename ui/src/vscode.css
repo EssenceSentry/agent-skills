@@ -576,3 +576,21 @@ html textarea:focus {
 :root[data-host="vscode"] .chat-task[data-status="in_progress"] svg {
   color: var(--vscode-textLink-foreground);
 }
+
+/* A question the agent asked: the thread's hairline frame, its options as quiet rows. */
+:root[data-host="vscode"] .chat-question {
+  background: transparent;
+  border: 1px solid var(--chat-line-strong);
+  border-radius: 12px;
+}
+:root[data-host="vscode"] label.chat-option:hover {
+  background: var(--chat-tint);
+}
+:root[data-host="vscode"] .chat-option-mark {
+  border-color: var(--chat-line-strong);
+}
+:root[data-host="vscode"] .chat-other {
+  background: var(--vscode-input-background, transparent);
+  border-color: var(--vscode-input-border, var(--chat-line-strong));
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+}

@@ -21,6 +21,7 @@ import {
 } from "@/blocks/composer-tools"
 import { Markdown } from "@/blocks/markdown"
 import { AttachButton, ConfirmDialog, PictureTray, usePictures } from "@/blocks/message-input"
+import { QuestionCard } from "@/blocks/question"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { chatAct, hurry } from "@/lib/ax"
@@ -195,6 +196,21 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
           goal={chat.goal}
           disabled={inFlight || chat.busy}
           onClear={() => run({ action: "goal-clear" })}
+        />
+      )}
+      {chat.question && (
+        <QuestionCard
+          ask={{
+            via: chat.question.via,
+            call: chat.question.call,
+            status: "open",
+            questions: chat.question.questions,
+            answers: null,
+          }}
+          busy={inFlight}
+          onAnswer={(answers) =>
+            run({ action: "answer-question", request: chat.question?.id, answers })
+          }
         />
       )}
       {chat.approval && (

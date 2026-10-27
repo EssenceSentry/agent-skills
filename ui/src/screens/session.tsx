@@ -4,13 +4,17 @@ import { Fragment, useContext, useEffect, useRef, useState } from "react"
 import { Composer } from "@/blocks/composer"
 import { JobCard } from "@/blocks/job-card"
 import { Markdown } from "@/blocks/markdown"
+import { ConfirmDialog } from "@/blocks/message-input"
 import { Lightbox, Pictures } from "@/blocks/pictures"
 import { StatusBadge } from "@/blocks/primitives"
+import { QuestionCard } from "@/blocks/question"
 import { TaskList } from "@/blocks/tasks"
 import { workingLine } from "@/lib/activity"
-import { useSession, useTick } from "@/lib/ax"
+import { chatAct, hurry, useSession, useTick } from "@/lib/ax"
 import { EditorHost } from "@/lib/host"
 import {
+  type Ask,
+  type ChatState,
   PROVIDERS,
   type Session,
   type SessionView,
@@ -76,6 +80,83 @@ function Header({ session, back }: { session: Session; back: boolean }) {
         {[tool, session.project, session.cwd].filter(Boolean).join(" · ")}
       </div>
     </header>
+  )
+}
+
+const ELSEWHERE: Record<Ask["via"], string> = {
+  claude: "Answer it where this session is open: the Claude app or its terminal.",
+  codex: "Answer it in the Codex app.",
+  "codex-async": "Answer it in the Codex app.",
+}
+
+/**
+ * A question the agent asked, in the conversation. One ax waits on live shows by the
+ * message box instead; Codex's async kind is answered here by a reply in Codex's own
+ * form; any other still open says where to answer it.
+ */
+function QuestionEvent({ ask, session, chat }: { ask: Ask; session: Session; chat?: ChatState }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [confirm, setConfirm] = useState<{
+    question: string
+    payload: Record<string, unknown>
+  } | null>(null)
+  const live = chat?.question
+  if (ask.status === "open" && live && (!live.call || live.call === ask.call)) return null
+  const here = ask.status === "open" && ask.via === "codex-async" && chat?.holder !== "elsewhere"
+
+  async function send(payload: Record<string, unknown>) {
+    setBusy(true)
+    setError(null)
+    try {
+      const said = await chatAct(payload)
+      if (said.confirm) {
+        setConfirm({
+          question: said.question ?? "Confirm?",
+          payload: { ...payload, confirm: said.confirm },
+        })
+        return
+      }
+      setConfirm(null)
+      hurry()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <QuestionCard
+        ask={ask}
+        busy={busy}
+        note={ELSEWHERE[ask.via]}
+        onAnswer={
+          here
+            ? (answers) =>
+                send({
+                  action: "answer-question",
+                  provider: session.provider,
+                  id: session.id,
+                  cwd: session.cwd,
+                  name: session.name,
+                  via: "codex-async",
+                  call: ask.call,
+                  questions: ask.questions.map((q) => q.question),
+                  answers,
+                })
+            : undefined
+        }
+      />
+      {error && <p className="text-xs text-critical">{error}</p>}
+      <ConfirmDialog
+        question={confirm?.question ?? null}
+        busy={busy}
+        onCancel={() => setConfirm(null)}
+        onYes={() => confirm && send(confirm.payload)}
+      />
+    </div>
   )
 }
 
@@ -170,6 +251,9 @@ export function SessionScreen({
       <div className="space-y-4">
         {view.events.map((event, n) => (
           <Fragment key={event.i}>
+            {event.kind === "question" && event.ask && (
+              <QuestionEvent ask={event.ask} session={session} chat={chat} />
+            )}
             {/* In the editor, as in Codex: a date over your message after a pause. */}
             {editor &&
               event.kind === "user" &&
@@ -177,7 +261,7 @@ export function SessionScreen({
               stampsBefore(view.events[n - 1]?.ts ?? null, event.ts) && (
                 <p className="chat-time">{messageStamp(event.ts)}</p>
               )}
-            <Message event={event} onOpen={show} />
+            {event.kind !== "question" && <Message event={event} onOpen={show} />}
           </Fragment>
         ))}
         <Pictures

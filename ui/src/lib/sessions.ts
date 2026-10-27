@@ -58,6 +58,31 @@ export type Card = {
 /** A picture in a conversation, read from the transcript by its place. */
 export type Picture = { url: string; media: string; line: number; n: number }
 
+/** One question an agent asked, with the options it offered. */
+export type Question = {
+  id: string | null
+  header: string | null
+  question: string
+  options: { label: string; description: string }[]
+  multi: boolean
+  /** Whether words other than the options are taken. */
+  other: boolean
+  secret: boolean
+}
+
+/**
+ * Questions asked together and their answers, one list per question (null where none
+ * was given). `via` says how it is answered: Claude's AskUserQuestion, Codex's
+ * request_user_input, or its async kind, answered by a reply message.
+ */
+export type Ask = {
+  via: "claude" | "codex" | "codex-async"
+  call: string | null
+  status: "open" | "answered" | "declined"
+  questions: Question[]
+  answers: (string[] | null)[] | null
+}
+
 export type TranscriptEvent = {
   i: number
   kind: "user" | "assistant" | "tool" | "notice" | string
@@ -70,6 +95,8 @@ export type TranscriptEvent = {
   images?: Picture[]
   /** Screenshots and pictures the agent's tools took before this answer. */
   shots?: Picture[]
+  /** On a question event: what it asked and what was answered. */
+  ask?: Ask
 }
 
 /**
@@ -137,6 +164,8 @@ export type ChatState = {
   /** The reply streaming in. */
   partial: string
   approval: Approval | null
+  /** A question it waits on, in a session ax holds. */
+  question?: { id: string; via: Ask["via"]; call: string | null; questions: Question[] } | null
   error: string | null
   note: string
   /** Null until ax holds the session. */
