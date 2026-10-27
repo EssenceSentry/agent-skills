@@ -2,7 +2,7 @@ import { Gauge, Hourglass, TriangleAlert } from "lucide-react"
 
 import type { Credits, UsageRow } from "@/lib/ax"
 import { ago } from "@/lib/time"
-import { EVEN_PER_DAY, usageFoot, usagePace, usageSummary, usageTone } from "@/lib/usage"
+import { EVEN_PER_DAY, UNREAD, usageFoot, usagePace, usageSummary, usageTone } from "@/lib/usage"
 import { cn } from "@/lib/utils"
 
 const PROVIDERS = [
@@ -14,13 +14,6 @@ const WINDOWS: Record<string, { label: string; hint: string; order: number }> = 
   weekly: { label: "Weekly", hint: "The 7-day window, all models", order: 1 },
   weekly_fable: { label: "Fable weekly", hint: "The 7-day window for Fable", order: 2 },
 }
-const UNKNOWN: Record<string, string> = {
-  unavailable: "not reported",
-  stale: "stale reading",
-  ambiguous: "unclear reading",
-  reset_passed: "reset since last read",
-}
-
 const PACE_HINT = {
   tight: `Less than an even ${Math.round(EVEN_PER_DAY)}% a day left: go easy`,
   spare: `Well over an even ${Math.round(EVEN_PER_DAY)}% a day left: room to use before it resets`,
@@ -32,7 +25,7 @@ function Window({ row }: { row: UsageRow }) {
   // Yellow means tight unless what is left is spare; the icon and hint say which.
   const pace = level === "warning" ? usagePace(row) : null
   const off = pace === "tight" || pace === "spare"
-  const foot = row.used === null ? (UNKNOWN[row.status] ?? row.status) : usageFoot(row)
+  const foot = row.used === null ? (UNREAD[row.status] ?? row.status) : usageFoot(row)
   const PaceIcon = pace === "spare" ? Hourglass : TriangleAlert
   return (
     <div className="min-w-0" title={off ? PACE_HINT[pace] : meta.hint}>
@@ -79,7 +72,7 @@ function Window({ row }: { row: UsageRow }) {
         )}
       >
         {foot}
-        {row.used !== null && row.status !== "fresh" && ` · ${UNKNOWN[row.status] ?? row.status}`}
+        {row.used !== null && row.status !== "fresh" && ` · ${UNREAD[row.status] ?? row.status}`}
       </div>
     </div>
   )
@@ -111,7 +104,7 @@ function CreditCell({ credits }: { credits: Credits }) {
         {credits.has_credits || credits.unlimited
           ? `read ${ago(credits.observed_at)}`
           : "none left"}
-        {credits.status !== "fresh" && ` · ${UNKNOWN[credits.status] ?? credits.status}`}
+        {credits.status !== "fresh" && ` · ${UNREAD[credits.status] ?? credits.status}`}
       </div>
     </div>
   )

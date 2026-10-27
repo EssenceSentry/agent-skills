@@ -1,6 +1,15 @@
-import { until } from "@/lib/time"
+// Relative, so the VS Code extension can bundle this file as it is.
+import { until } from "./time"
 
 const DAY = 86_400_000
+
+/** What a window shows when its reading can't be trusted, by its status. */
+export const UNREAD: Record<string, string> = {
+  unavailable: "not reported",
+  stale: "stale reading",
+  ambiguous: "unclear reading",
+  reset_passed: "reset since last read",
+}
 
 function percent(value: number): string {
   return value >= 10 ? `${Math.round(value)}%` : `${Number(value.toFixed(1))}%`
@@ -69,6 +78,14 @@ const WINDOW: Record<string, string> = {
 }
 const URGENCY = { primary: 0, warning: 1, critical: 2 } as const
 
+/** A window's name for people: "Claude session", "Codex weekly". */
+export function windowName(row: { provider: string; window: string }): string {
+  return `${TOOL[row.provider] ?? row.provider} ${WINDOW[row.window] ?? row.window}`
+}
+
+/** A tool's name for people. */
+export const toolName = (provider: string): string => TOOL[provider] ?? provider
+
 /**
  * The bar's whole reading of usage: the most used window, and the most urgent colour any
  * window takes, so the details can wait behind it.
@@ -89,6 +106,5 @@ export function usageSummary(
       "primary"
     )
   if (!top || top.used === null) return { used: null, label: "Usage not reported", tone }
-  const name = `${TOOL[top.provider] ?? top.provider} ${WINDOW[top.window] ?? top.window}`
-  return { used: top.used, label: `${name} ${Math.round(top.used)}% used`, tone }
+  return { used: top.used, label: `${windowName(top)} ${Math.round(top.used)}% used`, tone }
 }
