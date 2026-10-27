@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build && node scripts/stamp.mjs",
+    "build:vscode": "vite build --config vite.vscode.config.ts",
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "lint": "biome check",

@@ -1,0 +1,60 @@
+/*
+ * The conversation page inside a VS Code tab takes VS Code's colours and fonts: each
+ * theme token it uses points at a --vscode-* variable, which VS Code sets on the page
+ * and changes with the user's theme. Status colours keep the theme's light-dark()
+ * values, whose side follows data-theme, set from VS Code's theme kind.
+ *
+ * `:root:root` outranks the direction's `:root` whatever order the sheets load in.
+ */
+:root:root {
+  --page: var(--vscode-editor-background);
+  --background: var(--vscode-editor-background);
+  --foreground: var(--vscode-editor-foreground);
+  --card: var(--vscode-editorWidget-background);
+  --card-foreground: var(--vscode-editorWidget-foreground, var(--vscode-editor-foreground));
+  --popover: var(--vscode-editorWidget-background);
+  --popover-foreground: var(--vscode-editorWidget-foreground, var(--vscode-editor-foreground));
+  --sunken: var(--vscode-textCodeBlock-background);
+  --raised: var(--vscode-editorWidget-background);
+  --ink-2: var(--vscode-foreground);
+  --muted: var(--vscode-toolbar-hoverBackground);
+  --muted-foreground: var(--vscode-descriptionForeground);
+  --faint: var(--vscode-disabledForeground);
+  --border: var(--vscode-panel-border, var(--vscode-widget-border));
+  --border-strong: var(--vscode-editorWidget-border, var(--vscode-panel-border));
+  --input: var(--vscode-input-border, var(--vscode-panel-border));
+  --ring: var(--vscode-focusBorder);
+  --primary: var(--vscode-button-background);
+  --primary-foreground: var(--vscode-button-foreground);
+  --primary-soft: color-mix(in srgb, var(--vscode-button-background) 16%, transparent);
+  --primary-ink: var(--vscode-textLink-foreground);
+  --secondary: var(--vscode-button-secondaryBackground);
+  --secondary-foreground: var(--vscode-button-secondaryForeground);
+  --accent: var(--vscode-list-hoverBackground);
+  --accent-foreground: var(--vscode-list-hoverForeground, var(--vscode-foreground));
+  --destructive: var(--vscode-errorForeground);
+  --status-critical: var(--vscode-errorForeground);
+  --status-warning: var(--vscode-editorWarning-foreground);
+  --panel-ring: var(--vscode-panel-border, var(--vscode-widget-border));
+  --panel-shadow: none;
+  --page-texture: none;
+  --ff-sans: var(--vscode-font-family);
+  --ff-heading: var(--vscode-font-family);
+  --ff-figure: var(--vscode-font-family);
+  --ff-mono: var(--vscode-editor-font-family);
+}
+
+/*
+ * VS Code adds its own unlayered page styles, which outrank the theme's layered ones:
+ * take back the body's side padding and background, and leave focus to the rings. The
+ * extra `html` outranks them whichever sheet comes first.
+ */
+html,
+html body {
+  padding: 0;
+  background: var(--page);
+}
+html input:focus,
+html textarea:focus {
+  outline: none;
+}
