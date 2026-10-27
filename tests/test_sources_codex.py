@@ -127,3 +127,24 @@ def test_a_rollout_in_both_live_and_archived_folders_is_read_once(tmp_path):
     found = codex.discover(home)
     assert archived not in found
     assert live in found
+
+
+def test_an_answer_to_codexs_question_is_the_answer_not_its_json():
+    """Codex asks through request_user_input_async; the user's pick comes back wrapped in
+    JSON, and the question itself is already the agent's message above it."""
+    one = (
+        '<send_user_message_question_reply>\n[{"questionItemId":"[\\"request_user_input_async\\",'
+        '\\"call_1\\",0]","question":"May I grant the role?","answer":"Approve the grant"}]\n'
+        "</send_user_message_question_reply>\n"
+    )
+    assert codex._user_text(one) == "Approve the grant"
+    two = (
+        '<send_user_message_question_reply>\n[{"question":"Which index?","answer":"discovery"},'
+        '{"question":"Run it now?","answer":"Yes"}]\n</send_user_message_question_reply>'
+    )
+    assert codex._user_text(two) == "- Which index? discovery\n- Run it now? Yes"
+
+
+def test_an_answer_that_isnt_json_keeps_its_words():
+    text = "<send_user_message_question_reply>\nJust go ahead\n</send_user_message_question_reply>"
+    assert codex._user_text(text) == "Just go ahead"

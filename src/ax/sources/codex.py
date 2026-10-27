@@ -235,12 +235,30 @@ def _event(session: Session, event: dict, ts) -> None:
         session.events.append(Event("notice", "turn interrupted", ts))
 
 
+def _answers(text: str) -> str:
+    """The user's picks for Codex's questions: one answer as it is, several as lines
+    with their questions; words that aren't the JSON stay as they are."""
+    try:
+        replies = json.loads(text)
+    except ValueError:
+        return text
+    if not isinstance(replies, list) or not all(isinstance(r, dict) for r in replies):
+        return text
+    said = [", ".join(map(str, a)) if isinstance(a := r.get("answer"), list) else str(a or "")
+            for r in replies]  # fmt: skip
+    if len(replies) == 1:
+        return said[0]
+    return "\n".join(f"- {r.get('question') or ''} {a}".replace("-  ", "- ")
+                     for r, a in zip(replies, said, strict=True))  # fmt: skip
+
+
 def _user_text(text: str) -> str:
     text = text.strip()
     if text.startswith("<"):
         tag = re.match(r"<([\w-]+)", text)
         if tag and tag.group(1) in _KEEP_TAGS:
-            return re.sub(r"</?[\w-]+[^>]*>", "", text).strip()
+            inner = re.sub(r"</?[\w-]+[^>]*>", "", text).strip()
+            return _answers(inner) if tag.group(1) == "send_user_message_question_reply" else inner
         return ""
     if text.startswith("# AGENTS.md instructions"):
         return ""
