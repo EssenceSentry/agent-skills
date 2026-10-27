@@ -45,17 +45,19 @@ function Message({ event, onOpen }: { event: TranscriptEvent; onOpen: (url: stri
   )
 }
 
-function Header({ session }: { session: Session }) {
+function Header({ session, back }: { session: Session; back: boolean }) {
   const state = stateBadge(session)
   const tool = PROVIDERS.find((p) => p.provider === session.provider)?.label
   return (
     <header className="space-y-2">
-      <a
-        href="#/sessions"
-        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="size-3.5" aria-hidden /> Sessions
-      </a>
+      {back && (
+        <a
+          href="#/sessions"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-3.5" aria-hidden /> Sessions
+        </a>
+      )}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <h1 className="min-w-0 text-[20px] leading-tight break-words">{session.name}</h1>
         {session.state && <StatusBadge status={state.status} label={state.label} />}
@@ -67,8 +69,19 @@ function Header({ session }: { session: Session }) {
   )
 }
 
-/** One session's transcript as it grows, with the jobs it waits on below it. */
-export function SessionScreen({ provider, id }: { provider: string; id: string }) {
+/**
+ * One session's transcript as it grows, with the jobs it waits on below it. In a VS Code
+ * tab the sidebar is the way back, so there is no back link.
+ */
+export function SessionScreen({
+  provider,
+  id,
+  back = true,
+}: {
+  provider: string
+  id: string
+  back?: boolean
+}) {
   const found = useSession(provider, id)
   const view = found.data
   const end = useRef<HTMLDivElement>(null)
@@ -113,7 +126,7 @@ export function SessionScreen({ provider, id }: { provider: string; id: string }
   const streaming = chat?.busy && chat.partial ? chat.partial : null
   return (
     <main className="mx-auto max-w-[860px] space-y-5 p-4 md:p-6">
-      <Header session={session} />
+      <Header session={session} back={back} />
       {view.earlier > 0 && (
         <p className="text-center text-xs text-muted-foreground">
           {view.earlier === 1 ? "1 earlier message" : `${view.earlier} earlier messages`} not shown

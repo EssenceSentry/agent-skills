@@ -1,6 +1,7 @@
 import { X } from "lucide-react"
 import { useEffect } from "react"
 
+import { assetUrl } from "@/lib/transport"
 import { cn } from "@/lib/utils"
 
 /** A row of thumbnails; each opens full size. */
@@ -27,7 +28,7 @@ export function Pictures({
             aria-label={`${label}: picture ${i + 1}, full size`}
           >
             <img
-              src={url}
+              src={assetUrl(url)}
               alt=""
               loading="lazy"
               className="h-24 w-auto max-w-[220px] object-cover"
@@ -58,7 +59,7 @@ export function Lightbox({ url, onClose }: { url: string | null; onClose: () => 
       onKeyDown={(e) => e.key === "Enter" && onClose()}
     >
       <img
-        src={url}
+        src={assetUrl(url)}
         alt=""
         className="max-h-[90svh] max-w-full rounded-lg border object-contain shadow-lg"
       />

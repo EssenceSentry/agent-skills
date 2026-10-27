@@ -10,6 +10,7 @@ import {
 } from "@/lib/example"
 import type { Hit } from "@/lib/search"
 import { mergePage, type Sessions, type SessionView } from "@/lib/sessions"
+import { request } from "@/lib/transport"
 
 export type UsageRow = {
   provider: string
@@ -164,24 +165,13 @@ export type LiveStatus = "example" | "connecting" | "live" | "offline" | "locked
 export const LIVE =
   typeof document !== "undefined" && document.querySelector('meta[name="ax-live"]') !== null
 
-async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(path, { headers: { Accept: "application/json" } })
-  const body = await response.json().catch(() => null)
-  if (!response.ok) throw new Error(body?.error ?? `${response.status} ${response.statusText}`)
-  return body as T
-}
+const getJson = <T>(path: string): Promise<T> => request<T>("GET", path)
 
 /** Run one action; the promise resolves to what ax says it did. */
 export async function act(action: string, payload: Record<string, string>): Promise<string> {
   if (!LIVE) return "This is example data; nothing was changed."
-  const response = await fetch("/api/act", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ action, ...payload }),
-  })
-  const body = await response.json().catch(() => null)
-  if (!response.ok) throw new Error(body?.error ?? `${response.status} ${response.statusText}`)
-  return body.message as string
+  const body = await request<{ message: string }>("POST", "/api/act", { action, ...payload })
+  return body.message
 }
 
 export const loadFolder = (dir: string): Promise<Folder> =>
@@ -368,12 +358,5 @@ export type ChatAnswer = {
 /** Send, answer, stop, take over or hand back; the server says why not as an error. */
 export async function chatAct(payload: Record<string, unknown>): Promise<ChatAnswer> {
   if (!LIVE) return { ok: true, message: "This is example data; nothing was sent." }
-  const response = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify(payload),
-  })
-  const body = await response.json().catch(() => null)
-  if (!response.ok) throw new Error(body?.error ?? `${response.status} ${response.statusText}`)
-  return body as ChatAnswer
+  return request<ChatAnswer>("POST", "/api/chat", payload)
 }

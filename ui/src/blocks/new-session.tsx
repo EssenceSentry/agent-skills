@@ -18,8 +18,19 @@ const HELD = {
   codex: "It runs through ax and joins your Codex threads, so the Codex app can open it later.",
 }
 
-/** A session of either tool, started by ax in a folder with its first message. */
-export function NewSession({ folders, onClose }: { folders: string[]; onClose: () => void }) {
+/**
+ * A session of either tool, started by ax in a folder with its first message. Once it
+ * starts, its page opens; in VS Code `onStarted` opens its tab instead.
+ */
+export function NewSession({
+  folders,
+  onClose,
+  onStarted,
+}: {
+  folders: string[]
+  onClose: () => void
+  onStarted?: (provider: Provider, id: string, name: string) => void
+}) {
   const [provider, setProvider] = useState<Provider>("claude")
   const [folder, setFolder] = useState(folders[0] ?? "")
   const [text, setText] = useState("")
@@ -44,7 +55,10 @@ export function NewSession({ folders, onClose }: { folders: string[]; onClose: (
       }
       setAsk(null)
       const id = (said as { id?: string }).id
-      if (id) window.location.hash = sessionHref(provider, id)
+      // ax names it by its first line; the tab can show that before the listing does.
+      const name = text.trim().split("\n")[0]?.slice(0, 60) || "New session"
+      if (id && onStarted) onStarted(provider, id, name)
+      else if (id) window.location.hash = sessionHref(provider, id)
     } catch (e) {
       setError((e as Error).message)
     } finally {
