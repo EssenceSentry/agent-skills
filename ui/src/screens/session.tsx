@@ -1,5 +1,5 @@
 import { ArrowLeft } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { Fragment, useContext, useEffect, useRef, useState } from "react"
 
 import { Composer } from "@/blocks/composer"
 import { JobCard } from "@/blocks/job-card"
@@ -7,6 +7,7 @@ import { Markdown } from "@/blocks/markdown"
 import { Lightbox, Pictures } from "@/blocks/pictures"
 import { StatusBadge } from "@/blocks/primitives"
 import { useSession } from "@/lib/ax"
+import { EditorHost } from "@/lib/host"
 import {
   PROVIDERS,
   runningNow,
@@ -15,6 +16,7 @@ import {
   stateBadge,
   type TranscriptEvent,
 } from "@/lib/sessions"
+import { messageStamp, stampsBefore } from "@/lib/time"
 
 /**
  * Your messages on the right, with the pictures you pasted; the agent's answers as text,
@@ -24,18 +26,18 @@ function Message({ event, onOpen }: { event: TranscriptEvent; onOpen: (url: stri
   const images = (event.images ?? []).map((p) => p.url)
   if (event.kind === "user")
     return (
-      <div className="ml-auto flex max-w-[85%] flex-col items-end gap-2">
+      <div className="chat-user ml-auto flex max-w-[85%] flex-col items-end gap-2">
         <Pictures urls={images} onOpen={onOpen} label="Pictures you sent" className="justify-end" />
         {event.text && (
-          <div className="rounded-xl bg-primary-soft px-3.5 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap break-words">
+          <div className="chat-bubble rounded-xl bg-primary-soft px-3.5 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap break-words">
             {event.text}
           </div>
         )}
       </div>
     )
   return (
-    <div className="space-y-2.5">
-      <Markdown className="text-[14px] leading-relaxed">{event.text}</Markdown>
+    <div className="chat-reply space-y-2.5">
+      <Markdown className="chat-answer text-[14px] leading-relaxed">{event.text}</Markdown>
       <Pictures
         urls={(event.shots ?? []).map((p) => p.url)}
         onOpen={onOpen}
@@ -49,7 +51,7 @@ function Header({ session, back }: { session: Session; back: boolean }) {
   const state = stateBadge(session)
   const tool = PROVIDERS.find((p) => p.provider === session.provider)?.label
   return (
-    <header className="space-y-2">
+    <header className="chat-header space-y-2">
       {back && (
         <a
           href="#/sessions"
@@ -59,10 +61,10 @@ function Header({ session, back }: { session: Session; back: boolean }) {
         </a>
       )}
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <h1 className="min-w-0 text-[20px] leading-tight break-words">{session.name}</h1>
+        <h1 className="chat-title min-w-0 text-[20px] leading-tight break-words">{session.name}</h1>
         {session.state && <StatusBadge status={state.status} label={state.label} />}
       </div>
-      <div className="label-mono text-[11px] break-all text-muted-foreground">
+      <div className="chat-meta label-mono text-[11px] break-all text-muted-foreground">
         {[tool, session.project, session.cwd].filter(Boolean).join(" · ")}
       </div>
     </header>
@@ -83,6 +85,7 @@ export function SessionScreen({
   back?: boolean
 }) {
   const found = useSession(provider, id)
+  const editor = useContext(EditorHost)
   const view = found.data
   const end = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState<string | null>(null)
@@ -127,18 +130,27 @@ export function SessionScreen({
   return (
     // The folder relative paths in its answers start from, for an editor opening them.
     <main
-      className="mx-auto max-w-[860px] space-y-5 p-4 md:p-6"
+      className="chat-thread mx-auto max-w-[860px] space-y-5 p-4 md:p-6"
       data-cwd={session.cwd ?? undefined}
     >
       <Header session={session} back={back} />
       {view.earlier > 0 && (
-        <p className="text-center text-xs text-muted-foreground">
+        <p className="chat-note text-center text-xs text-muted-foreground">
           {view.earlier === 1 ? "1 earlier message" : `${view.earlier} earlier messages`} not shown
         </p>
       )}
       <div className="space-y-4">
-        {view.events.map((event) => (
-          <Message key={event.i} event={event} onOpen={setOpen} />
+        {view.events.map((event, n) => (
+          <Fragment key={event.i}>
+            {/* In the editor, as in Codex: a date over your message after a pause. */}
+            {editor &&
+              event.kind === "user" &&
+              event.ts &&
+              stampsBefore(view.events[n - 1]?.ts ?? null, event.ts) && (
+                <p className="chat-time">{messageStamp(event.ts)}</p>
+              )}
+            <Message event={event} onOpen={setOpen} />
+          </Fragment>
         ))}
         <Pictures
           urls={(view.shots ?? []).map((p) => p.url)}
@@ -147,13 +159,13 @@ export function SessionScreen({
         />
       </div>
       {streaming && (
-        <div className="space-y-1">
-          <Markdown className="text-[14px] leading-relaxed">{streaming}</Markdown>
+        <div className="chat-reply space-y-1">
+          <Markdown className="chat-answer text-[14px] leading-relaxed">{streaming}</Markdown>
         </div>
       )}
       {working && !streaming && (
         <div
-          className="flex min-w-0 items-center gap-2 pl-1 text-xs text-muted-foreground"
+          className="chat-running flex min-w-0 items-center gap-2 pl-1 text-xs text-muted-foreground"
           role="status"
         >
           <span className="live-dot !size-1.5 shrink-0" />
@@ -165,8 +177,10 @@ export function SessionScreen({
         </div>
       )}
       {cards.length > 0 && (
-        <section className="space-y-2" aria-label="Jobs it waits on">
-          <h2 className="text-[13px] font-medium text-muted-foreground">Waiting on</h2>
+        <section className="chat-cards space-y-2" aria-label="Jobs it waits on">
+          <h2 className="chat-cards-title text-[13px] font-medium text-muted-foreground">
+            Waiting on
+          </h2>
           {cards.map((card) => (
             <JobCard key={card.key} card={card} />
           ))}

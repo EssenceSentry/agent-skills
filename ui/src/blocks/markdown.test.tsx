@@ -64,4 +64,14 @@ describe("Markdown", () => {
     expect(html("See `src/lib/ax.ts:42`.")).toContain("<code>src/lib/ax.ts:42</code>")
     expect(html("See `src/lib/ax.ts:42`.")).not.toContain("<a")
   })
+
+  it("lets a table scroll on its own in the editor, and marks links to files", () => {
+    const table = inEditor("| a | b |\n|---|--:|\n| x | 1 |")
+    expect(table).toMatch(/^<div class="note-prose[^"]*"><div class="table-scroll"><table>/)
+    expect(html("| a | b |\n|---|--:|\n| x | 1 |")).not.toContain("table-scroll")
+    expect(inEditor("[the plan](/Users/me/plan.md)")).toContain(
+      '<a href="/Users/me/plan.md" data-file="">'
+    )
+    expect(inEditor("[a site](https://example.com)")).not.toContain("data-file")
+  })
 })

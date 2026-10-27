@@ -1,5 +1,5 @@
-import { ImagePlus, Loader2, X } from "lucide-react"
-import { type ClipboardEvent, useRef, useState } from "react"
+import { ImagePlus, Loader2, Plus, X } from "lucide-react"
+import { type ClipboardEvent, useContext, useRef, useState } from "react"
 
 import {
   AlertDialog,
@@ -11,6 +11,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { EditorHost } from "@/lib/host"
 import { type Pasted, prepare } from "@/lib/images"
 
 /** Pictures for a message: pasted or attached, shrunk to send, removable before sending. */
@@ -88,17 +89,19 @@ export function AttachButton({
   disabled?: boolean
 }) {
   const picker = useRef<HTMLInputElement>(null)
+  const AttachIcon = useContext(EditorHost) ? Plus : ImagePlus
   return (
     <>
       <Button
         size="icon"
         variant="ghost"
         aria-label="Attach pictures"
+        className="chat-attach"
         title="Attach pictures (or paste them)"
         onClick={() => picker.current?.click()}
         disabled={disabled}
       >
-        <ImagePlus />
+        <AttachIcon />
       </Button>
       <input
         ref={picker}

@@ -51,3 +51,25 @@ export function every(seconds: number): string {
   }
   return seconds >= 60 ? `${Number((seconds / 60).toFixed(1))} min` : `${seconds} s`
 }
+
+const DAY_PART = new Intl.DateTimeFormat("en-US", {
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+})
+const TIME_PART = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" })
+
+/** A message's date above it, as Codex writes one: "Tue, Oct 6 at 1:21 PM". */
+export function messageStamp(iso: string): string {
+  const when = new Date(iso)
+  return `${DAY_PART.format(when)} at ${TIME_PART.format(when)}`.replace(/\s/g, " ")
+}
+
+const PAUSE = 30 * 60_000
+
+/** Whether a message gets a date: the first one, and any after half an hour's quiet. */
+export function stampsBefore(previous: string | null, current: string | null): boolean {
+  if (!current) return false
+  if (!previous) return true
+  return Date.parse(current) - Date.parse(previous) >= PAUSE
+}

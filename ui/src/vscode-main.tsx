@@ -28,6 +28,9 @@ setTransport(
   view?.server
 )
 
+// The tab's own look, in vscode.css, applies under this mark only.
+document.documentElement.dataset.host = "vscode"
+
 // VS Code marks its theme on the body and changes it when the user switches themes.
 const follow = () => {
   document.documentElement.dataset.theme = themeFor(document.body.className)

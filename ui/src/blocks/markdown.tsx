@@ -38,9 +38,27 @@ const components: Components = {
   },
 }
 
-/** In an editor's tab, code that names a file is also a link to it. */
+/**
+ * In an editor's tab, code that names a file is also a link to it, a link to a file is
+ * marked as one, and a wide table scrolls on its own.
+ */
 const inEditor: Components = {
   ...components,
+  a: ({ href = "", children }) =>
+    /^(?:[a-z][a-z0-9+.-]*:|#)/i.test(href) ? (
+      <a href={href} target="_blank" rel="noreferrer">
+        {children}
+      </a>
+    ) : (
+      <a href={href} data-file="">
+        {children}
+      </a>
+    ),
+  table: ({ children }) => (
+    <div className="table-scroll">
+      <table>{children}</table>
+    </div>
+  ),
   code: ({ children, className }) => {
     const text = typeof children === "string" ? children : null
     if (text && !className && looksLikePath(text))

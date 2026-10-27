@@ -1,10 +1,19 @@
-import { Info, Loader2, SendHorizontal, ShieldQuestion, Square } from "lucide-react"
-import { type KeyboardEvent, useState } from "react"
+import {
+  ArrowUp,
+  Info,
+  Loader2,
+  LogOut,
+  SendHorizontal,
+  ShieldQuestion,
+  Square,
+} from "lucide-react"
+import { type KeyboardEvent, useContext, useState } from "react"
 
 import { AttachButton, ConfirmDialog, PictureTray, usePictures } from "@/blocks/message-input"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { chatAct, hurry } from "@/lib/ax"
+import { EditorHost } from "@/lib/host"
 import { type Approval, type ChatState, canSend, composerMode, type Session } from "@/lib/sessions"
 
 type Payload = Record<string, unknown>
@@ -37,7 +46,7 @@ function ApprovalCard({
   busy: boolean
 }) {
   return (
-    <div className="space-y-2.5 rounded-xl border border-warning/40 bg-warning/8 p-3.5">
+    <div className="chat-approval space-y-2.5 rounded-xl border border-warning/40 bg-warning/8 p-3.5">
       <div className="flex items-start gap-2">
         <ShieldQuestion className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
         <div className="min-w-0 space-y-1">
@@ -81,6 +90,10 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
   const [ask, setAsk] = useState<{ question: string; payload: Payload } | null>(null)
   const pictures = usePictures(setError)
   const mode = composerMode(chat)
+  // In VS Code, as in Codex: an up arrow to send, and the note about who holds the session
+  // folded into the hand-back icon beside the plus instead of a line under the box.
+  const editor = useContext(EditorHost)
+  const SendIcon = editor ? ArrowUp : SendHorizontal
   const base = { provider: session.provider, id: session.id, cwd: session.cwd, name: session.name }
 
   async function run(payload: Payload) {
@@ -122,7 +135,7 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
     chat.holder === "codex app" ? "Message it through the Codex app…" : `Message ${session.name}…`
 
   return (
-    <div className="sticky bottom-0 z-10 -mx-4 space-y-2 bg-background/90 px-4 pt-2 pb-4 backdrop-blur-md md:-mx-6 md:px-6">
+    <div className="chat-composer sticky bottom-0 z-10 -mx-4 space-y-2 bg-background/90 px-4 pt-2 pb-4 backdrop-blur-md md:-mx-6 md:px-6">
       {chat.approval && (
         <ApprovalCard
           approval={chat.approval}
@@ -132,7 +145,7 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
       )}
 
       {mode === "take-over" || mode === "waiting" ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-3.5">
+        <div className="chat-takeover flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-3.5">
           <p className="min-w-0 flex-1 text-[13px] text-ink-2">
             <Inline text={chat.note} />
           </p>
@@ -147,10 +160,23 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
           )}
         </div>
       ) : (
-        <div className="rounded-xl border bg-card p-2 focus-within:ring-2 focus-within:ring-ring/40">
+        <div className="chat-box rounded-xl border bg-card p-2 focus-within:ring-2 focus-within:ring-ring/40">
           <PictureTray pictures={pictures.pictures} onRemove={pictures.remove} />
           <div className="flex items-end gap-2">
             <AttachButton onFiles={(files) => void pictures.attach(files)} disabled={inFlight} />
+            {editor && chat.holder === "ax" && (
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label="Hand back"
+                title={`Hand back. ${chat.note.replaceAll("`", "")}`}
+                className="chat-handback"
+                onClick={() => run({ action: "release" })}
+                disabled={inFlight || chat.busy}
+              >
+                <LogOut />
+              </Button>
+            )}
             <Textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
@@ -159,13 +185,14 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
               placeholder={placeholder}
               aria-label="Message"
               rows={2}
-              className="max-h-48 min-h-10 flex-1 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+              className="chat-input max-h-48 min-h-10 flex-1 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
             />
             {mode === "busy" ? (
               <Button
                 size="icon"
                 variant="outline"
                 aria-label="Stop"
+                className="chat-send"
                 title="Stop it"
                 onClick={() => run({ action: "stop" })}
                 disabled={inFlight}
@@ -176,11 +203,12 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
               <Button
                 size="icon"
                 aria-label="Send"
+                className="chat-send"
                 title="Send (Enter)"
                 onClick={send}
                 disabled={!canSend(chat, text, pictures.pictures.length) || inFlight}
               >
-                {inFlight ? <Loader2 className="animate-spin" /> : <SendHorizontal />}
+                {inFlight ? <Loader2 className="animate-spin" /> : <SendIcon />}
               </Button>
             )}
           </div>
@@ -189,8 +217,8 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
 
       {error && <p className="text-xs text-critical">{error}</p>}
       {chat.error && !error && <p className="text-xs text-critical">{chat.error}</p>}
-      {mode !== "take-over" && mode !== "waiting" && chat.note && (
-        <div className="flex items-start justify-between gap-3 text-[11.5px] text-muted-foreground">
+      {!editor && mode !== "take-over" && mode !== "waiting" && chat.note && (
+        <div className="chat-hint flex items-start justify-between gap-3 text-[11.5px] text-muted-foreground">
           <span className="flex min-w-0 items-start gap-1.5">
             <Info className="mt-px size-3.5 shrink-0" aria-hidden />
             <span>

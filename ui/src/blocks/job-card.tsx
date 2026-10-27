@@ -23,7 +23,7 @@ export function JobCard({ card }: { card: Card }) {
   const notebook = card.notebook
   return (
     <article
-      className="space-y-3 rounded-xl border border-border bg-card p-4"
+      className="chat-card space-y-3 rounded-xl border border-border bg-card p-4"
       aria-label={card.label}
     >
       <header className="flex items-start justify-between gap-3">
