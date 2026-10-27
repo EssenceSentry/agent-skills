@@ -31,7 +31,32 @@ for line in sys.stdin:
     if method == "initialize":
         say({"id": message["id"], "result": {"userAgent": "fake"}})
     elif method == "thread/resume":
-        say({"id": message["id"], "result": {"thread": {"id": message["params"]["threadId"]}}})
+        say({"id": message["id"], "result": {
+            "thread": {"id": message["params"]["threadId"]}, "model": "gpt-6-astra",
+            "reasoningEffort": "xhigh", "approvalsReviewer": "auto_review",
+            "collaborationMode": None}})
+    elif method == "model/list":
+        say({"id": message["id"], "result": {"data": [
+            {"model": "gpt-6-astra", "displayName": "GPT-6-Astra", "isDefault": True,
+             "defaultReasoningEffort": "medium", "hidden": False,
+             "supportedReasoningEfforts": [{"reasoningEffort": e} for e in ("low", "medium", "high", "xhigh")]},
+            {"model": "gpt-6-sol", "displayName": "GPT-6-Sol", "isDefault": False,
+             "defaultReasoningEffort": "low", "hidden": False,
+             "supportedReasoningEfforts": [{"reasoningEffort": e} for e in ("low", "high")]},
+            {"model": "old-secret", "displayName": "Hidden", "hidden": True,
+             "supportedReasoningEfforts": []}]}})
+    elif method == "thread/goal/get":
+        say({"id": message["id"], "result": {"goal": None}})
+    elif method == "thread/goal/set":
+        goal = {"threadId": message["params"]["threadId"], "objective": message["params"]["objective"],
+                "status": "active", "tokenBudget": message["params"].get("tokenBudget"),
+                "tokensUsed": 0, "timeUsedSeconds": 0, "createdAt": 1, "updatedAt": 1}
+        say({"id": message["id"], "result": {"goal": goal}})
+        say({"method": "thread/goal/updated", "params": {"threadId": goal["threadId"], "goal": {
+            **goal, "tokensUsed": 1200, "timeUsedSeconds": 90}}})
+    elif method == "thread/goal/clear":
+        say({"id": message["id"], "result": {"cleared": True}})
+        say({"method": "thread/goal/cleared", "params": {"threadId": message["params"]["threadId"]}})
     elif method == "thread/start":
         say({"id": message["id"], "result": {"thread": {"id": "t-new"}}})
     elif method == "turn/start":
@@ -67,8 +92,23 @@ for line in sys.stdin:
     log.write(line); log.flush()
     if message.get("type") == "control_request":
         subtype = message["request"]["subtype"]
+        answer = {}
+        if subtype == "initialize":
+            answer = {"current_permission_mode": "default", "models": [
+                {"value": "default", "displayName": "Default (recommended)",
+                 "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"]},
+                {"value": "opus", "displayName": "Opus 5.5",
+                 "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"]},
+                {"value": "haiku", "displayName": "Haiku 5.5", "supportedEffortLevels": []}]}
+        elif subtype == "set_permission_mode":
+            answer = {"mode": message["request"]["mode"]}
+        elif subtype == "set_model":
+            answer = {"model": message["request"]["model"]}
         say({"type": "control_response", "response": {"subtype": "success",
-                                                      "request_id": message["request_id"]}})
+                                                      "request_id": message["request_id"],
+                                                      "response": answer}})
+        if subtype == "set_permission_mode":
+            say({"type": "system", "subtype": "status", "permissionMode": answer["mode"]})
         if subtype == "interrupt":
             say({"type": "result", "subtype": "error_during_execution"})
     elif message.get("type") == "user":
@@ -79,9 +119,16 @@ for line in sys.stdin:
             say({"type": "control_request", "request_id": "perm-1", "request": {
                 "subtype": "can_use_tool", "tool_name": "Bash",
                 "input": {"command": "rm -rf build"}}})
+        elif "plan please" in text:
+            say({"type": "control_request", "request_id": "plan-1", "request": {
+                "subtype": "can_use_tool", "tool_name": "ExitPlanMode",
+                "input": {"plan": "# Plan\n1. Do it"}}})
         else:
             say({"type": "result", "subtype": "success"})
     elif message.get("type") == "control_response":
+        if message["response"]["request_id"] == "plan-1" and \
+                message["response"]["response"]["behavior"] == "allow":
+            say({"type": "system", "subtype": "status", "permissionMode": "default"})
         say({"type": "result", "subtype": "success"})
 """
 
@@ -114,12 +161,13 @@ def chats(env, tmp_path, monkeypatch):
     claude = script(tmp_path, "claude.py", FAKE_CLAUDE)
     registry = chat.Chats(
         codex_command=lambda: [sys.executable, str(codex), str(codex_log)],
-        claude_command=lambda sid, new=False: [
+        claude_command=lambda sid, new=False, effort=None: [
             sys.executable,
             str(claude),
             str(claude_log),
             sid,
             "new" if new else "resume",
+            effort or "-",
         ],
     )
     monkeypatch.setattr(chat, "CHATS", registry)
@@ -460,7 +508,7 @@ def test_a_new_claude_session_starts_in_a_folder_held_by_ax(env, chats, tmp_path
     sid = said["id"]
     assert str(uuid.UUID(sid)) == sid
     until(lambda: not chat.state(env.config, "claude", sid)["busy"])
-    assert json.loads(claude_log.read_text().splitlines()[0]) == [sid, "new"]
+    assert json.loads(claude_log.read_text().splitlines()[0])[:2] == [sid, "new"]
     assert [b["type"] for b in logged(claude_log)[1]["message"]["content"]] == ["image", "text"]
     [held] = chat.held()
     assert (held["id"], held["name"], held["cwd"], held["kind"]) == (
@@ -541,3 +589,187 @@ def test_a_session_ax_started_keeps_the_name_of_its_first_message(env, chats, tm
     )
     [found] = listed["sessions"]
     assert (found["name"], found["kind"]) == ("Fix the flaky test", "ax (background)")
+
+
+# Modes, models and goals
+
+
+def launches(path):
+    """Each time the fake Claude started: its session id, new or resume, and effort."""
+    return [json.loads(line) for line in path.read_text().splitlines() if line.startswith("[")]
+
+
+def controls(path, subtype):
+    return [m["request"] for m in logged(path)
+            if m.get("type") == "control_request" and m["request"]["subtype"] == subtype]  # fmt: skip
+
+
+def settle(env, provider, sid):
+    return until(lambda: (s := chat.state(env.config, provider, sid)) and not s["busy"] and s)
+
+
+def test_a_claude_session_ax_opens_reports_its_models_and_modes(env, chats):
+    said = chat.act(env.config, {"action": "open", "provider": "claude", "id": "s-1"})
+    assert said["ok"]
+    state = chat.state(env.config, "claude", "s-1")
+    assert state["settings"] == {"plan": False, "auto": False, "model": None, "effort": None}
+    assert state["models"][:2] == [
+        {"id": "default", "label": "Default (recommended)", "default_effort": None,
+         "efforts": ["low", "medium", "high", "xhigh", "max"]},
+        {"id": "opus", "label": "Opus 5.5", "default_effort": None,
+         "efforts": ["low", "medium", "high", "xhigh", "max"]},
+    ]  # fmt: skip
+    assert state["goal"] is None
+
+
+def test_plan_mode_and_approve_for_me_set_claudes_permission_mode(env, chats):
+    _, _, claude_log = chats
+    chat.act(env.config, {"action": "settings", "provider": "claude", "id": "s-1", "plan": True})
+    until(lambda: chat.state(env.config, "claude", "s-1")["settings"]["plan"])
+    chat.act(env.config, {"action": "settings", "provider": "claude", "id": "s-1",
+                          "plan": False, "auto": True})  # fmt: skip
+    until(lambda: chat.state(env.config, "claude", "s-1")["settings"]["auto"])
+    chat.act(env.config, {"action": "settings", "provider": "claude", "id": "s-1", "auto": False})
+    until(lambda: len(controls(claude_log, "set_permission_mode")) == 3)
+    assert [c["mode"] for c in controls(claude_log, "set_permission_mode")] == [
+        "plan", "auto", "default"]  # fmt: skip
+    assert chat.state(env.config, "claude", "s-1")["settings"]["auto"] is False
+
+
+def test_claude_switches_model_at_once_and_effort_by_restarting_between_turns(env, chats):
+    _, _, claude_log = chats
+    chat.act(env.config, {"action": "settings", "provider": "claude", "id": "s-1",
+                          "model": "opus"})  # fmt: skip
+    until(lambda: controls(claude_log, "set_model"))
+    assert controls(claude_log, "set_model") == [{"subtype": "set_model", "model": "opus"}]
+    chat.act(env.config, {"action": "settings", "provider": "claude", "id": "s-1",
+                          "effort": "low"})  # fmt: skip
+    until(lambda: len(launches(claude_log)) == 2)
+    assert launches(claude_log) == [["s-1", "resume", "-"], ["s-1", "resume", "low"]]
+    # The restarted process keeps the model chosen before it.
+    until(lambda: len(controls(claude_log, "set_model")) == 2)
+    state = chat.state(env.config, "claude", "s-1")
+    assert state["settings"]["model"] == "opus" and state["settings"]["effort"] == "low"
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "text": "hi"})
+    assert settle(env, "claude", "s-1")["holder"] == "ax"
+
+
+def test_claude_asks_to_leave_plan_mode_with_its_plan(env, chats):
+    chat.act(env.config, {"action": "settings", "provider": "claude", "id": "s-1", "plan": True})
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1",
+                          "text": "plan please"})  # fmt: skip
+    asked = until(lambda: chat.state(env.config, "claude", "s-1")["approval"])
+    assert asked["summary"] == "start on its plan" and asked["plan"] == "# Plan\n1. Do it"
+    assert asked["detail"] is None
+    chat.act(env.config, {"action": "answer", "provider": "claude", "id": "s-1",
+                          "request": asked["id"], "allow": True})  # fmt: skip
+    assert settle(env, "claude", "s-1")["settings"]["plan"] is False
+
+
+def test_a_claude_goal_is_its_goal_command(env, chats):
+    _, _, claude_log = chats
+    said = chat.act(env.config, {"action": "goal", "provider": "claude", "id": "s-1",
+                                 "objective": "the tests pass"})  # fmt: skip
+    assert said["ok"]
+    state = settle(env, "claude", "s-1")
+    assert state["goal"] == {"objective": "the tests pass", "status": "set", "tokens_used": None,
+                             "token_budget": None, "seconds": None}  # fmt: skip
+    chat.act(env.config, {"action": "goal-clear", "provider": "claude", "id": "s-1"})
+    settle(env, "claude", "s-1")
+    texts = [
+        m["message"]["content"][0]["text"] for m in logged(claude_log) if m.get("type") == "user"
+    ]
+    assert texts == ["/goal the tests pass", "/goal clear"]
+    assert chat.state(env.config, "claude", "s-1")["goal"] is None
+
+
+def test_a_codex_thread_ax_opens_reports_its_models_and_settings(env, chats):
+    _, codex_log, _ = chats
+    chat.act(env.config, {"action": "open", "provider": "codex", "id": "t-1"})
+    state = chat.state(env.config, "codex", "t-1")
+    # Its own settings: the model and effort it runs with, and its auto review.
+    assert state["settings"] == {"plan": False, "auto": True, "model": "gpt-6-astra",
+                                 "effort": "xhigh"}  # fmt: skip
+    assert state["models"] == [
+        {"id": "gpt-6-astra", "label": "GPT-6-Astra", "default_effort": "medium",
+         "efforts": ["low", "medium", "high", "xhigh"]},
+        {"id": "gpt-6-sol", "label": "GPT-6-Sol", "default_effort": "low",
+         "efforts": ["low", "high"]},
+    ]  # fmt: skip
+    hello = next(m for m in logged(codex_log) if m.get("method") == "initialize")
+    assert hello["params"]["capabilities"] == {"experimentalApi": True}
+
+
+def test_codex_keeps_its_own_settings_until_one_is_changed_then_the_next_turn_carries_it(
+    env, chats
+):
+    _, codex_log, _ = chats
+    chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1", "text": "first"})
+    settle(env, "codex", "t-1")
+    chat.act(env.config, {"action": "settings", "provider": "codex", "id": "t-1", "plan": True,
+                          "auto": False, "model": "gpt-6-sol", "effort": "high"})  # fmt: skip
+    chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1", "text": "second"})
+    settle(env, "codex", "t-1")
+    first, second = [m["params"] for m in logged(codex_log) if m.get("method") == "turn/start"]
+    assert set(first) == {"threadId", "input"}
+    assert second["collaborationMode"] == {"mode": "plan", "settings": {
+        "model": "gpt-6-sol", "reasoning_effort": "high", "developer_instructions": None}}  # fmt: skip
+    assert second["approvalsReviewer"] == "user"
+    assert (second["model"], second["effort"]) == ("gpt-6-sol", "high")
+    assert chat.state(env.config, "codex", "t-1")["settings"] == {
+        "plan": True, "auto": False, "model": "gpt-6-sol", "effort": "high"}  # fmt: skip
+
+
+def test_a_codex_goal_is_set_then_pursued(env, chats):
+    _, codex_log, _ = chats
+    chat.act(env.config, {"action": "goal", "provider": "codex", "id": "t-1",
+                          "objective": "ship it", "budget": 50000})  # fmt: skip
+    state = settle(env, "codex", "t-1")
+    assert state["goal"] == {"objective": "ship it", "status": "active", "tokens_used": 1200,
+                             "token_budget": 50000, "seconds": 90}  # fmt: skip
+    sent = logged(codex_log)
+    goal = next(m for m in sent if m.get("method") == "thread/goal/set")
+    assert goal["params"] == {"threadId": "t-1", "objective": "ship it", "origin": "user",
+                              "tokenBudget": 50000}  # fmt: skip
+    turn = next(m for m in sent if m.get("method") == "turn/start")
+    assert turn["params"]["input"] == [{"type": "text", "text": "ship it"}]
+    chat.act(env.config, {"action": "goal-clear", "provider": "codex", "id": "t-1"})
+    until(lambda: chat.state(env.config, "codex", "t-1")["goal"] is None)
+    clear = next(m for m in logged(codex_log) if m.get("method") == "thread/goal/clear")
+    assert clear["params"] == {"threadId": "t-1", "origin": "user"}
+
+
+@pytest.mark.parametrize(
+    "change,error",
+    [
+        ({"model": "gpt-9"}, "no model gpt-9"),
+        ({"model": "gpt-6-sol", "effort": "xhigh"}, "gpt-6-sol has no effort xhigh"),
+        ({"effort": "max"}, "gpt-6-astra has no effort max"),
+        ({"plan": "yes"}, "plan is true or false"),
+        ({}, "nothing to change"),
+    ],
+)
+def test_settings_are_checked_before_anything_changes(env, chats, change, error):
+    with pytest.raises(ValueError, match=error):
+        chat.act(env.config, {"action": "settings", "provider": "codex", "id": "t-1", **change})
+
+
+def test_a_goal_needs_an_objective(env, chats):
+    with pytest.raises(ValueError, match="say what the goal is"):
+        chat.act(env.config, {"action": "goal", "provider": "codex", "id": "t-1", "objective": " "})
+
+
+def test_a_thread_open_in_the_codex_app_keeps_its_modes_there(env, chats, monkeypatch):
+    monkeypatch.setattr(chat, "codex_open_in_app", lambda config, tid: True)
+    with pytest.raises(ValueError, match="open in the Codex app"):
+        chat.act(env.config, {"action": "settings", "provider": "codex", "id": "t-2", "plan": True})
+
+
+def test_modes_and_goals_through_a_shared_link_wait_for_a_second_yes(env, chats):
+    first = chat.act(env.config, {"action": "settings", "provider": "claude", "id": "s-1",
+                                  "auto": True, "name": "Fix it"}, remote=True)  # fmt: skip
+    assert first["confirm"] and "approve its own actions" in first["question"]
+    goal = chat.act(env.config, {"action": "goal", "provider": "claude", "id": "s-1",
+                                 "objective": "ship it", "name": "Fix it"}, remote=True)  # fmt: skip
+    assert goal["confirm"] and "ship it" in goal["question"]
+    assert chat.CHATS.get("claude", "s-1") is None  # nothing happened yet
