@@ -117,6 +117,16 @@ def now_state(config, *, usage_of=None, credits_of=None) -> dict:
     return state
 
 
+def usage_state(config, *, usage_of=None) -> dict:
+    """Usage alone, for a status bar that needs nothing else from the Now state."""
+    from ax import serve
+
+    return {
+        "usage": serve._usage_rows(config, usage_of or serve._cached_usage),
+        "credits": [_credits_row(c) for c in _credits(config)],
+    }
+
+
 def _credits(config) -> list:
     found = usage.codex_credits(config.codex_home)
     return [found] if found else []

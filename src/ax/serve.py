@@ -18,7 +18,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from ax import chat, exp, find, job_eta, job_follow, jobs, live_sessions, runs, scorecard, usage
+from ax import (
+    chat,
+    exp,
+    find,
+    job_eta,
+    job_follow,
+    jobs,
+    live_sessions,
+    runs,
+    scorecard,
+    session_changes,
+    usage,
+)
 from ax.config import Config
 from ax.config import load as load_config
 from ax.store import Store
@@ -241,6 +253,7 @@ def make_server(
                 return self._send(200, body, f"{kind}; charset=utf-8")
             reads = {
                 "/api/now": lambda: now(),
+                "/api/usage": lambda: app.usage_state(config, usage_of=usage_of),
                 "/api/notes": lambda: app.folder(config, (query.get("dir") or [""])[0]),
                 "/api/note": lambda: app.note(config, (query.get("path") or [""])[0]),
             }
@@ -260,6 +273,15 @@ def make_server(
                     after = int((query.get("after") or ["0"])[0] or 0)
                     return self._json(200, live_sessions.session_view(config, provider, sid,
                                                                       after=after))  # fmt: skip
+                if parts.path == "/api/session/changes":  # what it changed with its edit tools
+                    return self._json(200, session_changes.changes(
+                        config, (query.get("provider") or [""])[0], (query.get("id") or [""])[0]))  # fmt: skip
+                if parts.path == "/api/session/before":  # one of those files before the change
+                    text = session_changes.before(
+                        config, (query.get("provider") or [""])[0], (query.get("id") or [""])[0],
+                        (query.get("path") or [""])[0], base=(query.get("base") or [""])[0],
+                    )  # fmt: skip
+                    return self._json(200, {"exists": text is not None, "text": text or ""})
                 if parts.path == "/api/find":
                     return self._json(200, app.search(config, (query.get("q") or [""])[0]))
                 if parts.path == "/api/file":

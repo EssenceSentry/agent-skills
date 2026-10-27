@@ -304,6 +304,11 @@ def _codex_path(config, sid: str) -> Path | None:
 # Together
 
 
+def transcript_path(config, provider: str, sid: str) -> Path | None:
+    """Where a session of either tool keeps its transcript, if it has one yet."""
+    return _claude_path(config, sid) if provider == "claude" else _codex_path(config, sid)
+
+
 def listing(config, *, claude_of=claude, codex_of=codex) -> dict:
     """Every live session, those waiting for the user first, each with its jobs counted."""
     sessions, errors = [], []
@@ -393,7 +398,7 @@ def transcript(config, provider: str, sid: str, *, after: int = 0, limit: int = 
     """
     if provider not in ("claude", "codex"):
         raise ValueError(f"unknown provider {provider!r}")
-    path = _claude_path(config, sid) if provider == "claude" else _codex_path(config, sid)
+    path = transcript_path(config, provider, sid)
     if path is None or not path.exists():
         raise NotFound(f"no transcript for {provider} session {sid}")
     events = _parse(provider, path)
@@ -451,7 +456,7 @@ def image(config, provider: str, sid: str, line: int, n: int) -> tuple[bytes, st
     """The `n`th image in line `line` of a session's transcript, and its media type."""
     if provider not in ("claude", "codex"):
         raise ValueError(f"unknown provider {provider!r}")
-    path = _claude_path(config, sid) if provider == "claude" else _codex_path(config, sid)
+    path = transcript_path(config, provider, sid)
     raw = _line_at(path, line) if path and path.exists() else None
     try:
         record = json.loads(raw) if raw else None
