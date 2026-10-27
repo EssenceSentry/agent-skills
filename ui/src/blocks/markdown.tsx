@@ -81,7 +81,7 @@ const components: Components = {
   pre: ({ children, node }) => {
     const first = node?.children[0]
     const classes = first?.type === "element" ? String(first.properties.className ?? "") : ""
-    return mathKind(classes) ? <>{children}</> : <pre>{children}</pre>
+    return mathKind(classes) ? children : <pre>{children}</pre>
   },
   code: ({ children, className }) => {
     const kind = mathKind(className)

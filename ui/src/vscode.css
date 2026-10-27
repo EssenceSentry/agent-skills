@@ -523,16 +523,6 @@ html textarea:focus {
 :root[data-host="vscode"] .chat-menu-wide [role="menuitemcheckbox"] {
   padding-block: 7px;
 }
-/* The task list, in the thread's quiet frame. */
-:root[data-host="vscode"] .chat-tasks {
-  background: transparent;
-  border: 1px solid var(--chat-line-strong);
-  border-radius: 12px;
-  font-size: var(--chat-size);
-}
-:root[data-host="vscode"] .chat-task[data-status="in_progress"] svg {
-  color: var(--vscode-textLink-foreground);
-}
 :root[data-host="vscode"] .chat-refs {
   padding: 2px 2px 6px;
 }
@@ -574,4 +564,15 @@ html textarea:focus {
   border: 1px solid var(--chat-line);
   border-radius: 10px;
   background: var(--vscode-editor-background);
+}
+
+/* The task list, in the thread's quiet frame. */
+:root[data-host="vscode"] .chat-tasks {
+  background: transparent;
+  border: 1px solid var(--chat-line-strong);
+  border-radius: 12px;
+  font-size: var(--chat-size);
+}
+:root[data-host="vscode"] .chat-task[data-status="in_progress"] svg {
+  color: var(--vscode-textLink-foreground);
 }
