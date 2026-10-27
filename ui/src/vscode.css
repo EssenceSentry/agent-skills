@@ -508,6 +508,21 @@ html textarea:focus {
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
 }
+/* The + menu spans the message box, as in Codex, each hint right after its name. */
+:root[data-host="vscode"] .chat-menu.chat-menu-wide {
+  width: var(--anchor-width);
+  padding: 8px;
+  border-radius: 16px;
+}
+:root[data-host="vscode"] .chat-menu-wide .chat-menu-hint {
+  margin-left: 2px;
+  padding-left: 0;
+  font-size: var(--chat-size);
+}
+:root[data-host="vscode"] .chat-menu-wide [role="menuitem"],
+:root[data-host="vscode"] .chat-menu-wide [role="menuitemcheckbox"] {
+  padding-block: 7px;
+}
 /* The task list, in the thread's quiet frame. */
 :root[data-host="vscode"] .chat-tasks {
   background: transparent;

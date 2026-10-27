@@ -4,13 +4,14 @@ import {
   Folder,
   ImagePlus,
   Lightbulb,
+  Paperclip,
   Plus,
   ShieldCheck,
   Target,
   TextSelect,
   X,
 } from "lucide-react"
-import { useRef } from "react"
+import { type RefObject, useRef } from "react"
 
 import {
   DropdownMenu,
@@ -31,9 +32,11 @@ export type Change = Partial<ChatSettings>
 
 /**
  * The + menu, as in Codex: what to add to the message (files and folders, the editor's
- * selection, pictures) and the session's modes (plan mode, a goal, approve for me).
+ * selection, pictures) and the session's modes (plan mode, a goal, approve for me). It
+ * opens over the message box, as wide as it, each item's hint right after its name.
  */
 export function PlusMenu({
+  box,
   settings,
   disabled,
   onFiles,
@@ -42,6 +45,7 @@ export function PlusMenu({
   onChange,
   onGoal,
 }: {
+  box: RefObject<HTMLElement | null>
   settings: ChatSettings | null | undefined
   disabled?: boolean
   onFiles: () => void
@@ -62,38 +66,52 @@ export function PlusMenu({
         >
           <Plus />
         </DropdownMenuTrigger>
-        <DropdownMenuContent side="top" align="start" className="chat-menu w-72">
+        <DropdownMenuContent
+          anchor={box}
+          side="top"
+          align="start"
+          sideOffset={6}
+          className="chat-menu chat-menu-wide"
+        >
           <DropdownMenuGroup>
             <DropdownMenuLabel>Add</DropdownMenuLabel>
             <DropdownMenuItem onClick={onFiles}>
-              <FileText /> Files and folders
+              <Paperclip /> Files and folders
+              <span className="chat-menu-hint">From the workspace or anywhere</span>
             </DropdownMenuItem>
             <DropdownMenuItem onClick={onSelection}>
               <TextSelect /> Current selection
+              <span className="chat-menu-hint">The code selected in the editor</span>
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => picker.current?.click()}>
               <ImagePlus /> Pictures
+              <span className="chat-menu-hint">Or paste them in the box</span>
             </DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
             <DropdownMenuLabel>Mode</DropdownMenuLabel>
+            <DropdownMenuItem onClick={onGoal}>
+              <Target /> Goal
+              <span className="chat-menu-hint">Set a goal to keep pursuing</span>
+            </DropdownMenuItem>
             <DropdownMenuCheckboxItem
               checked={settings?.plan ?? false}
               onCheckedChange={(on) => onChange({ plan: on })}
             >
               <Lightbulb /> Plan mode
-              <span className="chat-menu-hint">Plans, then asks</span>
+              <span className="chat-menu-hint">
+                {settings?.plan ? "Turn plan mode off" : "Turn plan mode on"}
+              </span>
             </DropdownMenuCheckboxItem>
-            <DropdownMenuItem onClick={onGoal}>
-              <Target /> Goal
-              <span className="chat-menu-hint">Keeps pursuing it</span>
-            </DropdownMenuItem>
             <DropdownMenuCheckboxItem
               checked={settings?.auto ?? false}
               onCheckedChange={(on) => onChange({ auto: on })}
             >
               <ShieldCheck /> Approve for me
+              <span className="chat-menu-hint">
+                {settings?.auto ? "Ask before its actions again" : "Approve its actions for you"}
+              </span>
             </DropdownMenuCheckboxItem>
           </DropdownMenuGroup>
         </DropdownMenuContent>

@@ -110,6 +110,7 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
   const [refs, setRefs] = useState<Reference[]>([])
   const [goalMode, setGoalMode] = useState(false)
   const box = useRef<HTMLTextAreaElement>(null)
+  const frame = useRef<HTMLDivElement>(null)
   const mode = composerMode(chat)
   // In VS Code, as in Codex: an up arrow to send, and the note about who holds the session
   // folded into the hand-back icon beside the plus instead of a line under the box.
@@ -220,7 +221,10 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
           )}
         </div>
       ) : (
-        <div className="chat-box rounded-xl border bg-card p-2 focus-within:ring-2 focus-within:ring-ring/40">
+        <div
+          ref={frame}
+          className="chat-box rounded-xl border bg-card p-2 focus-within:ring-2 focus-within:ring-ring/40"
+        >
           {goalMode && (
             <button
               type="button"
@@ -240,6 +244,7 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
           <div className="flex items-end gap-2">
             {editor ? (
               <PlusMenu
+                box={frame}
                 settings={chat.settings}
                 disabled={inFlight}
                 onFiles={addFiles}
