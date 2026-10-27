@@ -297,3 +297,17 @@ def test_session_pages_need_the_token_through_a_tunnel(env, served):
                                      headers={"X-Forwarded-For": "1.2.3.4"})  # fmt: skip
     with urllib.request.urlopen(request, timeout=5) as response:
         assert response.status == 200
+
+
+def test_a_session_no_longer_live_keeps_its_folder_and_title_from_its_transcript(env, monkeypatch):
+    """A closed session isn't in the listing; its page still needs its folder, or the
+    relative paths in its answers can't be opened."""
+    from ax import chat
+
+    monkeypatch.setattr(live_sessions, "cached_listing", lambda config: {"sessions": []})
+    monkeypatch.setattr(chat, "claude_open_elsewhere", lambda config, sid: False)
+    view = live_sessions.session_view(env.config, "claude", CLAUDE_SESSION)
+    assert view["session"]["cwd"] == "/Users/me/Repos/demo"
+    assert view["session"]["project"] == "demo"
+    assert view["session"]["name"] == "Retry for fetch helper"  # the title the user gave it
+    assert view["session"]["state"] is None

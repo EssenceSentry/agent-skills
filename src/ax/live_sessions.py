@@ -38,7 +38,7 @@ OUTPUT_CHARS = 2_000
 LISTING_TTL = 4.0
 _ORDER = {"waiting": 0, "working": 1, "idle": 2}
 _paths: dict[tuple[str, str, str], Path] = {}  # (tool home, provider, session id)
-_parsed: dict[str, tuple[tuple[int, int], list]] = {}
+_parsed: dict[str, tuple[tuple[int, int], object]] = {}  # path -> (size and time, parsed)
 _listings: dict[str, tuple[float, dict]] = {}
 
 
@@ -353,16 +353,21 @@ def cached_listing(config, *, ttl: float = LISTING_TTL) -> dict:
     return fresh
 
 
-def _parse(provider: str, path: Path) -> list:
+def _parsed_session(provider: str, path: Path):
+    """The archive's reading of a transcript, again only when the file changed."""
     stat = path.stat()
     stamp = (stat.st_size, stat.st_mtime_ns)
     cached = _parsed.get(str(path))
     if cached and cached[0] == stamp:
         return cached[1]
     parser = claude_source.parse if provider == "claude" else codex_source.parse
-    events = parser(path).events
-    _parsed[str(path)] = (stamp, events)
-    return events
+    parsed = parser(path)
+    _parsed[str(path)] = (stamp, parsed)
+    return parsed
+
+
+def _parse(provider: str, path: Path) -> list:
+    return _parsed_session(provider, path).events
 
 
 def _clip(text: str, limit: int) -> str:
@@ -489,10 +494,15 @@ def session_view(config, provider: str, sid: str, *, after: int = 0) -> dict:
             raise
         found = {"events": [], "running": [], "shots": [], "next": 0, "first": 0, "earlier": 0}
     listed = cached_listing(config)["sessions"]
-    session = next((s for s in listed if s["provider"] == provider and s["id"] == sid),
-                   held or {"provider": provider, "id": sid, "name": sid[:8], "state": None})  # fmt: skip
-
+    session = next((s for s in listed if s["provider"] == provider and s["id"] == sid), held)
     path = transcript_path(config, provider, sid)
+    if session is None:  # no longer live: its transcript still knows its folder and title
+        parsed = _parsed_session(provider, path) if path and path.exists() else None
+        cwd = getattr(parsed, "cwd", None)
+        session = {"provider": provider, "id": sid, "state": None,
+                   "name": getattr(parsed, "title", None) or sid[:8], "cwd": cwd,
+                   "project": project_name(cwd) if cwd else None}  # fmt: skip
+
     now = (session_activity.read(path, provider) if path and path.exists()
            else {"activity": None, "tasks": None})  # fmt: skip
     talk = chat.state(config, provider, sid)
