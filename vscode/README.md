@@ -14,6 +14,13 @@ with KaTeX; single dollars stay text. The look lives in `ui/src/vscode.css`, und
 
 Inside VS Code the tabs also:
 
+- **Say what a working session is doing:** a line under the conversation, as the desktop
+  app shows it ("Listing the uncommitted work · 1m 16s"), and the turn's task list with
+  each step's state. Claude's come from its transcript: the running tool, its description
+  turned into what it is doing, and the desktop app's `update_plan` calls or Claude
+  Code's `TodoWrite`. Codex's line is what it last said it would do, or its command; its
+  plan arrives only live, so it shows for threads ax holds.
+
 - **Add and set modes from `+`:** files and folders from the workspace (or any, by
   browsing), the code selected in an editor, pictures; plan mode, a goal it keeps
   pursuing, and approve for me. The modes that are on show as chips, a goal shows above
