@@ -380,6 +380,19 @@ def _picture(provider: str, sid: str, ref: dict) -> dict:
     return {"url": url, "media": ref["media"], "line": ref["line"], "n": ref["n"]}
 
 
+def _asked(ask: dict) -> dict:
+    """A question set for the page; what was typed for a secret one stays hidden."""
+    answers = ask.get("answers")
+    if answers:
+        answers = [["•••"] if a and q.get("secret") else a
+                   for q, a in zip(ask["questions"], answers, strict=False)]  # fmt: skip
+    return {**ask, "answers": answers}
+
+
+def _is_question(e) -> bool:
+    return e.kind == "tool" and bool(e.ask and e.ask.get("questions"))
+
+
 def _shown(i: int, e, provider: str = "", sid: str = "", shots=()) -> dict:
     text = e.text or ""
     if e.images:  # the archive marks each picture with "[image]"; here it shows itself
@@ -390,6 +403,7 @@ def _shown(i: int, e, provider: str = "", sid: str = "", shots=()) -> dict:
         "ts": e.ts.isoformat(timespec="seconds") if e.ts else None,
         "images": [_picture(provider, sid, ref) for ref in e.images],
         "shots": [_picture(provider, sid, ref) for ref in shots],
+        **({"kind": "question", "ask": _asked(e.ask)} if _is_question(e) else {}),
     }  # fmt: skip
 
 
@@ -407,7 +421,11 @@ def transcript(config, provider: str, sid: str, *, after: int = 0, limit: int = 
     if path is None or not path.exists():
         raise NotFound(f"no transcript for {provider} session {sid}")
     events = _parse(provider, path)
-    chat = [i for i, e in enumerate(events) if e.kind in ("user", "assistant")]
+    # The conversation: your messages, its answers and the questions it asked you; a reply
+    # that answered a question shows as the question's answer, not again as a message.
+    chat = [i for i, e in enumerate(events)
+            if (e.kind in ("user", "assistant") and not (e.ask and e.ask.get("reply")))
+            or _is_question(e)]  # fmt: skip
     picked = [i for i in chat if i >= after] if after else chat[-limit:]
     since = chat[-1] + 1 if chat else 0
     running = [i for i in range(since, len(events))

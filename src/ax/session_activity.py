@@ -255,6 +255,8 @@ def _codex(state: _State, record: dict) -> None:
         if text:
             state.said = {"text": first_line(text, 140), "since": record.get("timestamp")}
     elif what in ("custom_tool_call", "function_call"):
+        if str(payload.get("name") or "").startswith("request_user_input"):
+            return  # a question for the user, shown as itself
         state.running[payload.get("call_id")] = {"text": _command(payload),
                                                  "since": record.get("timestamp")}  # fmt: skip
     elif what in ("custom_tool_call_output", "function_call_output"):

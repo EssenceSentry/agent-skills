@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from ax.model import Event, Session
+from ax.sources import asks
 from ax.sources.common import (
     as_text,
     code,
@@ -172,9 +173,10 @@ def _item(session: Session, item: dict, ts, calls: dict, line=None) -> None:
         if item.get("role") == "user":
             said = None
             for text in texts:
+                answered = _answer_async(text, calls)
                 text = _user_text(text)
                 if text:
-                    said = Event("user", text, ts)
+                    said = Event("user", text, ts, ask={"reply": answered} if answered else None)
                     session.events.append(said)
             if images and said is None:
                 session.events.append(Event("user", "", ts, images=images))
@@ -197,6 +199,13 @@ def _item(session: Session, item: dict, ts, calls: dict, line=None) -> None:
             calls[item.get("call_id")] = None
             return
         event = Event("tool", _summarize_function(name, item, session.cwd), ts, tool=name)
+        if name in ("request_user_input", "request_user_input_async"):
+            try:
+                given = json.loads(item.get("arguments") or "{}")
+            except ValueError:
+                given = {}
+            via = "codex" if name == "request_user_input" else "codex-async"
+            event.ask = asks.ask(via, item.get("call_id"), given)
         session.events.append(event)
         calls[item.get("call_id")] = event
     elif kind == "custom_tool_call":
@@ -213,6 +222,13 @@ def _item(session: Session, item: dict, ts, calls: dict, line=None) -> None:
         event = calls.get(item.get("call_id"))
         if event is not None:
             _attach_output(event, _output_text(item.get("output")))
+            if event.ask and event.ask["via"] == "codex":
+                try:
+                    given = json.loads(_output_text(item.get("output")))
+                except ValueError:
+                    given = None
+                if isinstance(given, dict) and isinstance(given.get("answers"), dict):
+                    asks.answer_by_id(event.ask, given["answers"])
             event.images.extend(images)  # screenshots the tool returned
     elif kind == "web_search_call":
         action = item.get("action") if isinstance(item.get("action"), dict) else {}
@@ -233,6 +249,21 @@ def _event(session: Session, event: dict, ts) -> None:
             session.tokens_out = total.get("output_tokens", session.tokens_out)
     elif kind == "turn_aborted":
         session.events.append(Event("notice", "turn interrupted", ts))
+
+
+def _answer_async(text: str, calls: dict) -> str | None:
+    """Fill in the async question a reply answers; the call it answers, if any."""
+    if not text.strip().startswith(f"<{asks.REPLY_TAG}>"):
+        return None
+    answered = None
+    for call, index, answer in asks.replies(text):
+        event = calls.get(call)
+        ask = event.ask if event is not None else None
+        if ask and ask.get("questions") and 0 <= index < len(ask["questions"]):
+            given = ask["answers"] or [None] * len(ask["questions"])
+            given[index] = asks._split(answer, ask["questions"][index])
+            ask["answers"], ask["status"], answered = given, "answered", call
+    return answered
 
 
 def _answers(text: str) -> str:

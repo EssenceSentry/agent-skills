@@ -6,6 +6,7 @@ from collections import Counter
 from pathlib import Path
 
 from ax.model import Event, Session
+from ax.sources import asks
 from ax.sources.common import (
     as_text,
     claude_images,
@@ -212,6 +213,8 @@ def _assistant(rec, ts, session, pending, usage, models):
             event = Event(
                 "tool", _summarize(name, block.get("input") or {}, session.cwd), ts, tool=name
             )
+            if name == "AskUserQuestion":
+                event.ask = asks.ask("claude", block.get("id"), block.get("input"))
             session.events.append(event)
             pending[block.get("id")] = event
 
@@ -221,6 +224,13 @@ def _attach_result(event: Event | None, item: dict, result) -> None:
         return
     event.ok = not item.get("is_error", False)
     event.output = _result_text(item.get("content"))[-_KEEP_OUTPUT:]
+    if event.ask:
+        if not event.ok:
+            event.ask["status"] = "declined"
+        elif isinstance(result, dict) and isinstance(result.get("answers"), dict):
+            asks.answer_by_text(event.ask, result["answers"])
+        else:
+            asks.answer_from_words(event.ask, _result_text(item.get("content")))
     if not isinstance(result, dict):
         return
     if result.get("agentId"):

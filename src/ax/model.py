@@ -19,6 +19,9 @@ class Event:
     child: str | None = None  # session id of a subagent this tool call started
     # Where its images are in the transcript, never the images: {"line", "n", "media"}.
     images: list[dict] = field(default_factory=list)
+    # A question asked with options and its answers (see ax.sources.asks), or, on the
+    # user's message that answered one later, {"reply": call}.
+    ask: dict | None = None
 
 
 @dataclass
