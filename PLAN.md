@@ -616,6 +616,7 @@ The user works in four Claude and four Codex sessions at once, and neither deskt
   | Stream the reply | `--include-partial-messages` | `item/agentMessage/delta` and item events |
   | Interrupt | control request `interrupt` | `turn/interrupt` |
   | Approve or refuse an action | after the host's `initialize` control request, with `--permission-prompts host --permission-prompt-tool stdio`: `can_use_tool` requests | `item/*/requestApproval` requests, when the thread's `approvalsReviewer` is `user` (with `auto_review`, the user's current setting, Codex's reviewer decides) |
+  | Ask the user a question with options | `AskUserQuestion` (1–4 questions, 2–4 options, `multiSelect`) as a `can_use_tool` request, answered by allowing it with `updatedInput.answers` keyed by each question's words; the transcript's `toolUseResult` keeps the answers | `request_user_input` as an `item/tool/requestUserInput` request in plan mode, answered by id (`{answers: {id: {answers: [...]}}}`); `request_user_input_async`, from the Codex app, answered by a later user message wrapping `<send_user_message_question_reply>` JSON |
   | Hand over to the desktop app | partly: see below | yes: the same thread list the Codex app reads |
 
 - **Sessions view (read-only):** every live session of both tools, grouped by tool and project, with what each is doing and which ones wait for the user, the last thing each asked, and how long it has waited. Each opens its live transcript. This alone answers "which of my eight sessions needs me".

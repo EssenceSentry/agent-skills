@@ -31,7 +31,18 @@ Inside VS Code the tabs also:
 
 - **Open files:** a link or a path in code in an answer (`src/a.ts:42`, `/abs/x.py#L3`)
   opens beside the session, at its line; a relative path starts from the session's
-  folder.
+  folder, which a closed session's transcript still gives. Text, and whatever an
+  installed editor claims (pictures, media, PDFs with a viewer extension), opens in VS
+  Code; anything else in the app the system gives it, and a folder in Finder.
+- **Show pictures in a gallery:** the pictures in a message, or the screenshots its tools
+  took, open together: arrow keys or thumbnails step through them, and the wheel,
+  buttons or a double-click zoom up to eight times, with drag to pan.
+- **Answer questions:** a question an agent asks with options (Claude's
+  `AskUserQuestion`, Codex's `request_user_input` and its async kind) is a card, each
+  question folding to a row; past ones stay folded with their answers. One a session ax
+  holds waits on shows by the message box, a question open at a time as the apps step
+  through them; Codex's async ones are answered from the conversation by a reply in
+  Codex's own form; any other says where to answer it.
 - **Show diffs:** the tab's title bar, and each session in the sidebar, show what the
   session changed with its edit tools in VS Code's multi-file diff, since its latest turn
   began or since the last commit. Edits made through shell commands aren't recorded by
