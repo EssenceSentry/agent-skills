@@ -17,6 +17,7 @@ import queue
 import subprocess
 import threading
 import time
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -407,13 +408,15 @@ def _shown(i: int, e, provider: str = "", sid: str = "", shots=()) -> dict:
     }  # fmt: skip
 
 
-def transcript(config, provider: str, sid: str, *, after: int = 0, limit: int = 300) -> dict:
+def transcript(config, provider: str, sid: str, *, after: int = 0, limit: int = 300,
+               again: Iterable[int] = ()) -> dict:  # fmt: skip
     """The user's messages and the agent's answers from event `after`, or the last `limit`
     of them at first, redacted, and the command running now, if any.
 
     Finished commands and notices are left out: a reader wants the conversation, and while
     the agent works, one line on what it runs. `next` counts every event, so the page
-    asks for what came after the last one it saw.
+    asks for what came after the last one it saw, and names in `again` the questions it
+    still shows open: an answer changes an event the page already has.
     """
     if provider not in ("claude", "codex"):
         raise ValueError(f"unknown provider {provider!r}")
@@ -427,6 +430,9 @@ def transcript(config, provider: str, sid: str, *, after: int = 0, limit: int = 
             if (e.kind in ("user", "assistant") and not (e.ask and e.ask.get("reply")))
             or _is_question(e)]  # fmt: skip
     picked = [i for i in chat if i >= after] if after else chat[-limit:]
+    if after:
+        asked = {i for i in again if 0 <= i < min(after, len(events)) and _is_question(events[i])}
+        picked = sorted(asked) + picked
     since = chat[-1] + 1 if chat else 0
     running = [i for i in range(since, len(events))
                if events[i].kind == "tool" and events[i].ok is None and not events[i].output]  # fmt: skip
@@ -498,15 +504,16 @@ def image(config, provider: str, sid: str, line: int, n: int) -> tuple[bytes, st
         raise NotFound("that image can't be read") from None
 
 
-def session_view(config, provider: str, sid: str, *, after: int = 0) -> dict:
-    """One session for the app: its state, its transcript from `after`, its job cards, what
-    it is doing now and its turn's task list. One ax has just started shows before its
-    tool has written a transcript."""
+def session_view(config, provider: str, sid: str, *, after: int = 0,
+                 again: Iterable[int] = ()) -> dict:  # fmt: skip
+    """One session for the app: its state, its transcript from `after` with the questions
+    named in `again`, its job cards, what it is doing now and its turn's task list. One ax
+    has just started shows before its tool has written a transcript."""
     from ax import chat, session_activity
 
     held = next((s for s in chat.held() if s["provider"] == provider and s["id"] == sid), None)
     try:
-        found = transcript(config, provider, sid, after=after)
+        found = transcript(config, provider, sid, after=after, again=again)
     except NotFound:
         if held is None:
             raise

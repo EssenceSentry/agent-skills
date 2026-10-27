@@ -9,7 +9,7 @@ import {
   exampleSessions,
 } from "@/lib/example"
 import type { Hit } from "@/lib/search"
-import { mergePage, type Sessions, type SessionView } from "@/lib/sessions"
+import { mergePage, openQuestions, type Sessions, type SessionView } from "@/lib/sessions"
 import { request } from "@/lib/transport"
 
 export type UsageRow = {
@@ -288,9 +288,12 @@ export function useSessions(every = 5_000) {
   return found
 }
 
+/** The questions a reading asks for again, as the query takes them. */
+const again = (asked: number[]) => (asked.length ? `&again=${asked.join(",")}` : "")
+
 /**
  * One session: its state and job cards, and its transcript, to which each reading adds
- * what happened since the last one.
+ * what happened since the last one and the answers to questions it showed open.
  */
 export function useSession(provider: string, id: string, every = 3_000, streaming = 1_000) {
   const [found, setFound] = useState<{ data?: SessionView; error?: string }>(() =>
@@ -303,7 +306,9 @@ export function useSession(provider: string, id: string, every = 3_000, streamin
     setFound({})
     const base = `/api/session?provider=${encodeURIComponent(provider)}&id=${encodeURIComponent(id)}`
     const load = () =>
-      getJson<SessionView>(`${base}&after=${shown?.next ?? 0}`).then(
+      getJson<SessionView>(
+        `${base}&after=${shown?.next ?? 0}${again(shown ? openQuestions(shown) : [])}`
+      ).then(
         (page) => {
           if (!current) return
           if (shown) {

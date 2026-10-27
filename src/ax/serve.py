@@ -271,8 +271,10 @@ def make_server(
                     provider = (query.get("provider") or [""])[0]
                     sid = (query.get("id") or [""])[0]
                     after = int((query.get("after") or ["0"])[0] or 0)
+                    again = [int(i) for i in (query.get("again") or [""])[0].split(",")
+                             if i.strip().isdigit()]  # fmt: skip
                     return self._json(200, live_sessions.session_view(config, provider, sid,
-                                                                      after=after))  # fmt: skip
+                                                                      after=after, again=again))  # fmt: skip
                 if parts.path == "/api/session/changes":  # what it changed with its edit tools
                     return self._json(200, session_changes.changes(
                         config, (query.get("provider") or [""])[0], (query.get("id") or [""])[0]))  # fmt: skip

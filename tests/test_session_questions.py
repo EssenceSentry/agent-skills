@@ -177,3 +177,36 @@ def test_the_conversation_shows_questions_and_not_the_replies_that_answer_them(e
     assert [e["kind"] for e in found["events"]] == ["user", "question", "assistant"]
     assert found["events"][1]["ask"]["answers"] == [["Approve"]]
 
+
+def test_a_later_reading_sends_again_the_questions_the_page_holds_open(env):
+    from ax import live_sessions
+
+    sid = "34343434-3434-4343-8343-343434343434"
+    path = env.claude_home / "projects" / "-repo" / f"{sid}.jsonl"
+    path.parent.mkdir(parents=True)
+    asked_records = [
+        {"type": "user", "timestamp": AT(1), "cwd": "/repo", "sessionId": sid,
+         "message": {"role": "user", "content": "Write the report"}},
+        {"type": "assistant", "timestamp": AT(2), "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "q1", "name": "AskUserQuestion",
+             "input": {"questions": [FORMAT]}}]}},
+    ]  # fmt: skip
+    write(path, asked_records)
+    first = live_sessions.transcript(env.config, "claude", sid)
+    held = next(e for e in first["events"] if e["kind"] == "question")
+    assert held["ask"]["status"] == "open"
+    answered = [
+        {"type": "user", "timestamp": AT(3), "toolUseResult": {
+            "questions": [FORMAT], "answers": {"Which format?": "Summary"}},
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "tool_use_id": "q1", "content": "answered"}]}},
+        {"type": "assistant", "timestamp": AT(4), "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "A summary, then."}]}},
+    ]  # fmt: skip
+    write(path, asked_records + answered)
+    later = live_sessions.transcript(env.config, "claude", sid, after=first["next"],
+                                     again=[held["i"], 0])  # fmt: skip
+    again = [e for e in later["events"] if e["i"] == held["i"]]
+    assert again and again[0]["ask"]["status"] == "answered"
+    assert again[0]["ask"]["answers"] == [["Summary"]]
+    assert [e["kind"] for e in later["events"]] == ["question", "assistant"]  # not the prompt

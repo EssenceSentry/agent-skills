@@ -230,20 +230,28 @@ export function stateBadge(session: Session): { status: Status; label: string } 
 const same = (a: TranscriptEvent[], b: TranscriptEvent[]) =>
   a.length === b.length && a.every((e, i) => e.i === b[i]?.i)
 
+/** The questions on screen still waiting for an answer, which each reading asks for again. */
+export function openQuestions(page: TranscriptPage): number[] {
+  return page.events.filter((e) => e.ask?.status === "open").map((e) => e.i)
+}
+
 /**
- * New messages after the ones on screen, and the command running now from the latest
- * reading; a page that doesn't follow on replaces them.
+ * New messages after the ones on screen, questions on screen as they are now, and the
+ * command running now from the latest reading; a page that doesn't follow on replaces
+ * them.
  */
 export function mergePage(shown: TranscriptPage, page: TranscriptPage): TranscriptPage {
   if (page.first > shown.next || page.next < shown.next) return page
   const running = page.running ?? []
   const shots = page.shots ?? []
+  const now = new Map(page.events.filter((e) => e.i < shown.next).map((e) => [e.i, e]))
+  const events = now.size ? shown.events.map((e) => now.get(e.i) ?? e) : shown.events
   if (page.next === shown.next)
-    return same(shown.running, running) && (shown.shots ?? []).length === shots.length
+    return !now.size && same(shown.running, running) && (shown.shots ?? []).length === shots.length
       ? shown
-      : { ...shown, running, shots }
+      : { ...shown, events, running, shots }
   const fresh = page.events.filter((e) => e.i >= shown.next)
-  return { ...shown, events: [...shown.events, ...fresh], next: page.next, running, shots }
+  return { ...shown, events: [...events, ...fresh], next: page.next, running, shots }
 }
 
 /** The one command worth a line: the one running now, while the session works. */

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import { parseRoute, sessionHref } from "@/lib/routes"
 import {
+  type Ask,
   type Card,
   type ChatState,
   canSend,
@@ -10,6 +11,7 @@ import {
   folderSuggestions,
   groupSessions,
   mergePage,
+  openQuestions,
   runningNow,
   type Session,
   shownCards,
@@ -132,6 +134,58 @@ describe("sessions", () => {
     expect(mergePage(first, page([], 10, 10))).toBe(first)
     const restarted = page([event(0)], 1, 0)
     expect(mergePage(first, restarted)).toEqual(restarted) // the file was replaced
+  })
+
+  it("swaps in a question the page showed open once its answer comes", () => {
+    const ask = (status: "open" | "answered"): Ask => ({
+      via: "claude",
+      call: "q1",
+      status,
+      answers: status === "open" ? null : [["Summary"]],
+      questions: [],
+    })
+    const asked = (status: "open" | "answered"): TranscriptEvent => ({
+      i: 9,
+      kind: "question",
+      text: "",
+      tool: "AskUserQuestion",
+      ok: null,
+      output: "",
+      ts: null,
+      ask: ask(status),
+    })
+    const said = {
+      i: 12,
+      kind: "assistant",
+      text: "ok",
+      tool: null,
+      ok: null,
+      output: "",
+      ts: null,
+    }
+    const shown: TranscriptPage = {
+      events: [asked("open")],
+      next: 10,
+      first: 9,
+      running: [],
+      earlier: 0,
+    }
+    expect(openQuestions(shown)).toEqual([9])
+    const later: TranscriptPage = {
+      events: [asked("answered"), said],
+      next: 13,
+      first: 10,
+      running: [],
+      earlier: 0,
+    }
+    const merged = mergePage(shown, later)
+    expect(merged.events.map((e) => [e.i, e.ask?.status ?? null])).toEqual([
+      [9, "answered"],
+      [12, null],
+    ])
+    expect(openQuestions(merged)).toEqual([])
+    const quiet = mergePage(shown, { ...later, events: [asked("answered")], next: 10 })
+    expect(quiet.events[0]?.ask?.status).toBe("answered") // nothing new, but answered
   })
 
   it("shows the command running now only while the session works, and only the latest", () => {

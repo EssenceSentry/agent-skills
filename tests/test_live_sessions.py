@@ -281,6 +281,11 @@ def test_the_app_lists_sessions_and_opens_one_with_its_job_cards(env, served):
         f"{served}/api/session?provider=claude&id={CLAUDE_SESSION}&after={opened['next']}"
     )
     assert status == 200 and rest["events"] == []
+    status, rest = get(  # only questions are sent again, and words aren't event numbers
+        f"{served}/api/session?provider=claude&id={CLAUDE_SESSION}&after={opened['next']}"
+        "&again=0,1,x,"
+    )
+    assert status == 200 and rest["events"] == []
     assert get(f"{served}/api/session?provider=claude&id=nope")[0] == 404
 
 
