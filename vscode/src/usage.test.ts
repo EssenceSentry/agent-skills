@@ -72,11 +72,21 @@ describe("usage in the status bar", () => {
 
   it("marks a figure that comes from an old reading, as the app's gauge does", () => {
     const shown = usageStatus(
-      [{ provider: "codex", window: "weekly", used: 40, status: "stale", resets_at: "2026-10-30T12:00:00Z" }],
+      [
+        {
+          provider: "codex",
+          window: "weekly",
+          used: 40,
+          status: "stale",
+          resets_at: "2026-10-30T12:00:00Z",
+        },
+      ],
       [],
       NOW
     )
-    expect(shown.tooltip.at(-1)).toBe("Codex weekly: 40% used · 20% a day for 3 days · stale reading")
+    expect(shown.tooltip.at(-1)).toBe(
+      "Codex weekly: 40% used · 20% a day for 3 days · stale reading"
+    )
   })
 
   it("says what it can't read, and lists Codex's credits", () => {
