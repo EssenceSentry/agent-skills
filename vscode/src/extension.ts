@@ -9,6 +9,7 @@ import {
   BeforeFiles,
   currentSelection,
   followEditors,
+  followExtensions,
   openFile,
   pickFiles,
   type Shown,
@@ -17,6 +18,7 @@ import {
 import { pageHtml, type View } from "./html"
 import { fileTarget } from "./links"
 import { newlyWaiting, notice } from "./notify"
+import { unplaced } from "./opening"
 import { UsageBar } from "./status"
 import { type Listing, sessionTree, type TreeNode, waitingCount } from "./tree"
 
@@ -195,8 +197,13 @@ class Tabs {
     } else if (m.type === "open" && typeof m.href === "string") {
       const web = linkTarget(m.href, server())
       if (web) return void vscode.env.openExternal(vscode.Uri.parse(web))
-      const file = fileTarget(m.href, typeof m.cwd === "string" ? m.cwd : null, homedir())
+      const cwd = typeof m.cwd === "string" ? m.cwd : null
+      const file = fileTarget(m.href, cwd, homedir())
       if (file) await openFile(file)
+      else {
+        const why = unplaced(m.href, cwd)
+        if (why) void vscode.window.showWarningMessage(why)
+      }
     } else if (m.type === "started" && isProvider(m.provider) && typeof m.id === "string") {
       // The form's tab becomes the session's.
       const column = panel.viewColumn
@@ -271,6 +278,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     followEditors(),
+    followExtensions(),
     view,
     view.onDidChangeVisibility((e) => e.visible && tick()),
     { dispose: () => clearTimeout(timer) },

@@ -1,3 +1,4 @@
+import { open } from "node:fs/promises"
 import { basename, dirname } from "node:path"
 import * as vscode from "vscode"
 
@@ -12,9 +13,45 @@ import {
   readBeforeQuery,
 } from "./changes"
 import type { FileTarget } from "./links"
+import { openWith } from "./opening"
 import { fileReference, type Reference, selectionReference } from "./selection"
 
-/** A file an answer names, beside the session and at its line; a folder in the explorer. */
+let editors: string[] | undefined
+
+/** The file patterns installed editors claim: pictures and media built in, PDFs by extension. */
+function editorPatterns(): string[] {
+  editors ??= vscode.extensions.all.flatMap((extension) =>
+    ((extension.packageJSON?.contributes?.customEditors ?? []) as { selector?: unknown[] }[])
+      .flatMap((editor) => editor.selector ?? [])
+      .map((selector) => (selector as { filenamePattern?: string }).filenamePattern)
+      .filter((pattern): pattern is string => typeof pattern === "string")
+  )
+  return editors
+}
+
+/** Forget the patterns when extensions come or go. */
+export function followExtensions(): vscode.Disposable {
+  return vscode.extensions.onDidChange(() => {
+    editors = undefined
+  })
+}
+
+/** Whether a file reads as text: no NUL byte in its first 8 KB. */
+async function looksText(path: string): Promise<boolean> {
+  const file = await open(path, "r")
+  try {
+    const head = Buffer.alloc(8192)
+    const { bytesRead } = await file.read(head, 0, head.length, 0)
+    return !head.subarray(0, bytesRead).includes(0)
+  } finally {
+    await file.close()
+  }
+}
+
+/**
+ * A file an answer names: in VS Code beside the session, at its line, when VS Code can
+ * show it (text, pictures, PDFs with a viewer), else in its own app; a folder in Finder.
+ */
 export async function openFile({ path, line, column }: FileTarget) {
   const uri = vscode.Uri.file(path)
   let stat: vscode.FileStat
@@ -23,10 +60,10 @@ export async function openFile({ path, line, column }: FileTarget) {
   } catch {
     return void vscode.window.showWarningMessage(`No file at ${path}`)
   }
-  if (stat.type & vscode.FileType.Directory) {
-    const inside = vscode.workspace.getWorkspaceFolder(uri)
-    return void vscode.commands.executeCommand(inside ? "revealInExplorer" : "revealFileInOS", uri)
-  }
+  if (stat.type & vscode.FileType.Directory) return void vscode.env.openExternal(uri)
+  const text = await looksText(path).catch(() => false)
+  if (openWith(path, { editors: editorPatterns(), text }) === "app")
+    return void vscode.env.openExternal(uri)
   const at = line ? new vscode.Position(line - 1, Math.max((column ?? 1) - 1, 0)) : undefined
   await vscode.commands.executeCommand("vscode.open", uri, {
     viewColumn: vscode.ViewColumn.Beside,
