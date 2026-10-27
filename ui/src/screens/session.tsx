@@ -24,7 +24,13 @@ import { messageStamp, stampsBefore } from "@/lib/time"
  * Your messages on the right, with the pictures you pasted; the agent's answers as text,
  * with the screenshots its tools took on the way below them.
  */
-function Message({ event, onOpen }: { event: TranscriptEvent; onOpen: (url: string) => void }) {
+function Message({
+  event,
+  onOpen,
+}: {
+  event: TranscriptEvent
+  onOpen: (urls: string[], index: number) => void
+}) {
   const images = (event.images ?? []).map((p) => p.url)
   if (event.kind === "user")
     return (
@@ -110,7 +116,8 @@ export function SessionScreen({
   const editor = useContext(EditorHost)
   const view = found.data
   const end = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState<string | null>(null)
+  const [open, setOpen] = useState<{ urls: string[]; index: number } | null>(null)
+  const show = (urls: string[], index: number) => setOpen({ urls, index })
   const seen = useRef(0)
   const count = view?.events.length ?? 0
 
@@ -170,12 +177,12 @@ export function SessionScreen({
               stampsBefore(view.events[n - 1]?.ts ?? null, event.ts) && (
                 <p className="chat-time">{messageStamp(event.ts)}</p>
               )}
-            <Message event={event} onOpen={setOpen} />
+            <Message event={event} onOpen={show} />
           </Fragment>
         ))}
         <Pictures
           urls={(view.shots ?? []).map((p) => p.url)}
-          onOpen={setOpen}
+          onOpen={show}
           label="Screenshots it took since its last answer"
         />
       </div>
@@ -197,7 +204,7 @@ export function SessionScreen({
         </section>
       )}
       {chat && <Composer session={session} chat={chat} />}
-      <Lightbox url={open} onClose={() => setOpen(null)} />
+      <Lightbox urls={open?.urls ?? []} index={open?.index ?? 0} onClose={() => setOpen(null)} />
       {/* After the composer, so following the newest message never leaves it under the box. */}
       <div ref={end} />
     </main>
