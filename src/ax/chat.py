@@ -39,6 +39,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ax import job_wake
+from ax.sources import asks
 from ax.sources import claude as claude_source
 from ax.sources.common import first_line
 
@@ -71,6 +72,9 @@ class Driver:
         self.busy = False
         self.partial = ""
         self.approval: dict | None = None
+        self.question: dict | None = (
+            None  # a question with options it waits on: {id, via, call, questions}
+        )
         self.error: str | None = None
         self.started = time.time()
         self.lock = threading.Lock()
@@ -104,7 +108,7 @@ class Driver:
             if isinstance(message, dict) and process is self.process:
                 self._read(message)
         if process is self.process:  # not a process ax replaced on purpose
-            self.busy, self.approval = False, None
+            self.busy, self.approval, self.question = False, None, None
             self.error = self.error or f"the {self.provider} process ended"
 
     def _read(self, message: dict) -> None:
@@ -116,8 +120,8 @@ class Driver:
 
     def view(self) -> dict:
         return {"busy": self.busy, "partial": self.partial, "approval": self.approval,
-                "error": self.error, "settings": dict(self.settings), "models": self.models,
-                "goal": self.goal, "tasks": self.tasks}  # fmt: skip
+                "question": self.question, "error": self.error, "settings": dict(self.settings),
+                "models": self.models, "goal": self.goal, "tasks": self.tasks}  # fmt: skip
 
     def model(self, wanted: str | None = None) -> dict | None:
         """A model this session offers: the one named, else the one it runs."""
@@ -235,6 +239,7 @@ class CodexDriver(Driver):
         elif method == "turn/completed":
             turn = params.get("turn") or {}
             self.busy, self.partial, self.approval, self.turn = False, "", None, None
+            self.question = None
             if turn.get("status") == "failed":
                 self.error = ((turn.get("error") or {}).get("message")) or "the turn failed"
         elif method == "error":
@@ -255,6 +260,13 @@ class CodexDriver(Driver):
             self._settled(params.get("threadSettings") or {})
 
     def _asked(self, raw_id, method: str, params: dict) -> None:
+        if method == "item/tool/requestUserInput":  # a question with options, for the user
+            key = f"codex-{raw_id}"
+            self.asked[key] = raw_id
+            self.question = {"id": key, "via": "codex", "call": params.get("itemId"),
+                             "questions": [asks.question(q) for q in params.get("questions") or []
+                                           if isinstance(q, dict)]}  # fmt: skip
+            return
         if method not in _APPROVALS:  # nothing here can answer it; don't leave the turn hanging
             self._write({"id": raw_id, "error": {"code": -32601, "message": (
                 "ax can't answer this; open the thread in the Codex app")}})  # fmt: skip
@@ -295,6 +307,15 @@ class CodexDriver(Driver):
     def stop(self) -> None:
         if self.turn:
             self.call("turn/interrupt", {"threadId": self.sid, "turnId": self.turn})
+
+    def answer_question(self, request: str, answers: list[list[str]]) -> None:
+        raw = self.asked.pop(request, None)
+        if raw is None or not self.question:
+            raise ValueError("that question is no longer waiting")
+        given = {q["id"]: {"answers": a} for q, a in
+                 zip(self.question["questions"], answers, strict=False) if a and q["id"]}  # fmt: skip
+        self._write({"id": raw, "result": {"answers": given}})
+        self.question = None
 
     def configure(self, changes: dict) -> None:
         """New modes, sent with every turn from the next one on; the thread keeps its own
@@ -374,6 +395,11 @@ class ClaudeDriver(Driver):
                 rid, tool = message.get("request_id"), request.get("tool_name") or "tool"
                 given = request.get("input") or {}
                 self.inputs[rid] = given
+                if tool == "AskUserQuestion":
+                    self.question = {"id": rid, "via": "claude", "call": request.get("tool_use_id"),
+                                     "questions": [asks.question(q) for q in given.get("questions") or []
+                                                   if isinstance(q, dict)]}  # fmt: skip
+                    return
                 plan = given.get("plan") if tool == "ExitPlanMode" else None
                 self.approval = {
                     "id": rid, "tool": tool, "reason": request.get("decision_reason"),
@@ -394,7 +420,7 @@ class ClaudeDriver(Driver):
                 self.settings["plan"] = False
                 threading.Thread(target=self._apply_mode, daemon=True).start()
         elif kind == "result":
-            self.busy, self.partial, self.approval = False, "", None
+            self.busy, self.partial, self.approval, self.question = False, "", None, None
             subtype = message.get("subtype") or ""
             if subtype.startswith("error") and subtype != "error_during_execution":
                 self.error = message.get("result") or subtype.replace("_", " ")
@@ -420,6 +446,19 @@ class ClaudeDriver(Driver):
         self.stops += 1
         self._write({"type": "control_request", "request_id": f"stop-{self.stops}",
                      "request": {"subtype": "interrupt"}})  # fmt: skip
+
+    def answer_question(self, request: str, answers: list[list[str]]) -> None:
+        """The answers as the Agent SDK takes them: each question's words to the label
+        chosen, several joined with ", ", or the words typed."""
+        given = self.inputs.pop(request, None)
+        if given is None or not self.question:
+            raise ValueError("that question is no longer waiting")
+        picked = {q["question"]: ", ".join(a) for q, a in
+                  zip(self.question["questions"], answers, strict=False) if a}  # fmt: skip
+        self._write({"type": "control_response", "response": {
+            "subtype": "success", "request_id": request,
+            "response": {"behavior": "allow", "updatedInput": {**given, "answers": picked}}}})  # fmt: skip
+        self.question = None
 
     def _handshake(self, given: dict) -> None:
         self.mode = given.get("current_permission_mode") or self.mode
@@ -584,11 +623,13 @@ def held() -> list[dict]:
     found = []
     for (provider, sid), driver in list(CHATS.drivers.items()):
         approval = driver.approval
-        state = "waiting" if approval else ("working" if driver.busy else "idle")
+        asking = driver.question
+        state = "waiting" if approval or asking else ("working" if driver.busy else "idle")
         found.append({
             "provider": provider, "id": sid, "name": driver.name, "cwd": driver.cwd,
             "project": Path(driver.cwd).name if driver.cwd else None, "state": state,
-            "waiting_for": "approval" if approval else None, "kind": "ax (background)",
+            "waiting_for": "approval" if approval else "question" if asking else None,
+            "kind": "ax (background)",
             "started": None, "updated": None, "last": None,
         })  # fmt: skip
     return found
@@ -601,7 +642,8 @@ _BACKGROUND = ("Running in the background through ax, so the Claude app doesn't 
 def state(config, provider: str, sid: str) -> dict:
     """Who holds the conversation, whether the user can write to it now, and what runs."""
     base = {"holder": None, "can_send": True, "take_over": False, "pending": False,
-            "busy": False, "partial": "", "approval": None, "error": None, "note": "",
+            "busy": False, "partial": "", "approval": None, "question": None, "error": None,
+            "note": "",
             "settings": None, "models": [], "goal": None, "tasks": None}  # fmt: skip
     driver = CHATS.get(provider, sid)
     if driver:
@@ -632,7 +674,7 @@ def state(config, provider: str, sid: str) -> dict:
 
 def _fingerprint(payload: dict) -> str:
     keys = ("action", "provider", "id", "cwd", "text", "request", "allow", "plan", "auto",
-            "model", "effort", "objective", "budget")  # fmt: skip
+            "model", "effort", "objective", "budget", "answers", "call", "questions", "via")  # fmt: skip
     pictures = [i.get("data") for i in payload.get("images") or [] if isinstance(i, dict)]
     return hashlib.sha256(
         json.dumps([[payload.get(k) for k in keys], pictures]).encode()
@@ -651,6 +693,9 @@ def _question(payload: dict) -> str:
             return (f"Start a new {tool} session in {payload.get('cwd')} from the shared "
                     f"link?\n\n“{shown}”{pictures}")  # fmt: skip
         return f"Send this to {name} from the shared link?\n\n“{shown}”{pictures}"
+    if payload.get("action") == "answer-question":
+        given = "; ".join(", ".join(a) for a in payload.get("answers") or [] if a)
+        return f"Answer {name}'s question from the shared link?\n\n“{given}”"
     if payload.get("action") == "goal":
         return f"Give {name} this goal, from the shared link?\n\n“{payload.get('objective')}”"
     if payload.get("action") == "settings":
@@ -707,6 +752,35 @@ def _changes(payload: dict) -> dict:
     return found
 
 
+def _answers(payload: dict) -> list[list[str]]:
+    """The answers to a question, one list per question, checked."""
+    given = payload.get("answers")
+    if not isinstance(given, list) or not all(
+        isinstance(a, list) and all(isinstance(x, str) for x in a) for a in given
+    ):
+        raise ValueError("answers are a list of answers for each question")
+    if not any(any(x.strip() for x in a) for a in given):
+        raise ValueError("there is no answer to send")
+    return [[x.strip() for x in a if x.strip()] for a in given]
+
+
+def _answer_question(config, provider, sid, payload, cwd, name) -> dict:
+    """A question ax holds the session for, or a Codex async one by its reply message."""
+    answers = _answers(payload)
+    driver = CHATS.get(provider, sid)
+    request = payload.get("request")
+    if driver and driver.question and driver.question["id"] == request:
+        driver.answer_question(str(request), answers)
+        return {"ok": True, "message": "Answered."}
+    if provider == "codex" and payload.get("via") == "codex-async":
+        call, questions = payload.get("call"), payload.get("questions")
+        if not isinstance(call, str) or not isinstance(questions, list):
+            raise ValueError("say which question: its call and its questions")
+        text = asks.reply_message(call, [str(q) for q in questions], answers)
+        return _send(config, provider, sid, text, cwd, name)
+    raise ValueError("ax can't reach that question: answer it where the session is open")
+
+
 def _hold(config, provider: str, sid: str, cwd=None, name=None) -> Driver:
     """The driver for a session whose modes are changing: one ax holds, or opens now."""
     driver = CHATS.get(provider, sid)
@@ -747,7 +821,9 @@ def act(config, payload: dict, *, remote: bool = False) -> dict:
     objective = str(payload.get("objective") or "").strip()
     if action == "goal" and not objective:
         raise ValueError("say what the goal is")
-    if remote and action in ("send", "answer", "start", "settings", "goal"):
+    if action == "answer-question":
+        _answers(payload)
+    if remote and action in ("send", "answer", "start", "settings", "goal", "answer-question"):
         ask = _confirmed(payload)
         if ask:
             return ask
@@ -798,6 +874,8 @@ def act(config, payload: dict, *, remote: bool = False) -> dict:
             raise ValueError("a budget is a whole number of tokens")
         _hold(config, provider, sid, cwd, name).set_goal(objective, budget)
         return {"ok": True, "message": "Goal set."}
+    if action == "answer-question":
+        return _answer_question(config, provider, sid, payload, cwd, name)
     if action == "goal-clear":
         driver = CHATS.get(provider, sid)
         if driver is None:

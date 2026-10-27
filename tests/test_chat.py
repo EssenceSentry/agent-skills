@@ -70,7 +70,13 @@ for line in sys.stdin:
                 "threadId": "t", "turnId": "turn-1", "explanation": "Two steps",
                 "plan": [{"step": "Read", "status": "completed"},
                          {"step": "Fix", "status": "inProgress"}]}})
-        if "approve" in text:
+        if "ask me" in text:
+            say({"id": 901, "method": "item/tool/requestUserInput", "params": {
+                "threadId": "t", "turnId": "turn-1", "itemId": "c9", "isBlocking": True,
+                "questions": [{"id": "scope", "header": "Scope", "question": "Which?",
+                               "options": [{"label": "A", "description": "a"}],
+                               "isOther": True, "isSecret": False}]}})
+        elif "approve" in text:
             say({"id": 900, "method": "item/commandExecution/requestApproval",
                  "params": {"threadId": "t", "turnId": "turn-1", "itemId": "i",
                             "command": "rm -rf build", "reason": "clean the build"}})
@@ -124,6 +130,16 @@ for line in sys.stdin:
             say({"type": "control_request", "request_id": "perm-1", "request": {
                 "subtype": "can_use_tool", "tool_name": "Bash",
                 "input": {"command": "rm -rf build"}}})
+        elif "ask me" in text:
+            say({"type": "control_request", "request_id": "ask-1", "request": {
+                "subtype": "can_use_tool", "tool_name": "AskUserQuestion", "tool_use_id": "tu-1",
+                "input": {"questions": [
+                    {"question": "Which format?", "header": "Format", "multiSelect": False,
+                     "options": [{"label": "Summary", "description": "Brief"},
+                                 {"label": "Detailed", "description": "Full"}]},
+                    {"question": "Which sections?", "header": "Sections", "multiSelect": True,
+                     "options": [{"label": "Intro", "description": ""},
+                                 {"label": "End", "description": ""}]}]}}})
         elif "plan please" in text:
             say({"type": "control_request", "request_id": "plan-1", "request": {
                 "subtype": "can_use_tool", "tool_name": "ExitPlanMode",
@@ -788,3 +804,69 @@ def test_a_codex_threads_plan_is_the_turns_task_list(env, chats):
                               "explanation": "Two steps"}  # fmt: skip
     chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1", "text": "next"})
     assert settle(env, "codex", "t-1")["tasks"] is None  # a new message starts a new list
+
+
+# Questions
+
+
+def test_claudes_question_waits_for_answers_and_takes_them_as_the_sdk_says(env, chats):
+    _, _, claude_log = chats
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "text": "ask me"})
+    asked = until(lambda: chat.state(env.config, "claude", "s-1")["question"])
+    assert asked["id"] == "ask-1" and asked["via"] == "claude" and asked["call"] == "tu-1"
+    assert [q["question"] for q in asked["questions"]] == ["Which format?", "Which sections?"]
+    assert chat.state(env.config, "claude", "s-1")["approval"] is None
+    assert next(s for s in chat.held() if s["id"] == "s-1")["waiting_for"] == "question"
+    chat.act(env.config, {"action": "answer-question", "provider": "claude", "id": "s-1",
+                          "request": "ask-1", "answers": [["Summary"], ["Intro", "End"]]})  # fmt: skip
+    settle(env, "claude", "s-1")
+    answer = next(m for m in logged(claude_log) if m.get("type") == "control_response")
+    given = answer["response"]["response"]
+    assert given["behavior"] == "allow"
+    assert given["updatedInput"]["answers"] == {"Which format?": "Summary",
+                                                "Which sections?": "Intro, End"}  # fmt: skip
+    assert len(given["updatedInput"]["questions"]) == 2
+    assert chat.state(env.config, "claude", "s-1")["question"] is None
+
+
+def test_codexs_blocking_question_is_answered_through_the_app_server(env, chats):
+    _, codex_log, _ = chats
+    chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1", "text": "ask me"})
+    asked = until(lambda: chat.state(env.config, "codex", "t-1")["question"])
+    assert asked == {"id": "codex-901", "via": "codex", "call": "c9", "questions": [{
+        "id": "scope", "header": "Scope", "question": "Which?", "multi": False, "other": True,
+        "secret": False, "options": [{"label": "A", "description": "a"}]}]}  # fmt: skip
+    chat.act(env.config, {"action": "answer-question", "provider": "codex", "id": "t-1",
+                          "request": "codex-901", "answers": [["A"]]})  # fmt: skip
+    settle(env, "codex", "t-1")
+    answer = next(m for m in logged(codex_log) if m.get("id") == 901 and "result" in m)
+    assert answer["result"] == {"answers": {"scope": {"answers": ["A"]}}}
+
+
+def test_codexs_async_question_is_answered_with_a_reply_in_its_own_format(env, chats):
+    _, codex_log, _ = chats
+    chat.act(env.config, {"action": "answer-question", "provider": "codex", "id": "t-1",
+                          "via": "codex-async", "call": "c2", "questions": ["May I grant?"],
+                          "answers": [["Approve"]]})  # fmt: skip
+    settle(env, "codex", "t-1")
+    sent = next(m for m in logged(codex_log) if m.get("method") == "turn/start")
+    text = sent["params"]["input"][0]["text"]
+    assert text.startswith("<send_user_message_question_reply>\n")
+    [item] = json.loads(text.split("\n")[1])
+    assert item == {"questionItemId": '["request_user_input_async","c2",0]',
+                    "question": "May I grant?", "answer": "Approve"}  # fmt: skip
+
+
+def test_a_question_ax_cant_reach_says_where_to_answer_it(env, chats):
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="answer it where"):
+        chat.act(env.config, {"action": "answer-question", "provider": "claude", "id": "s-1",
+                              "request": "ask-9", "answers": [["A"]]})  # fmt: skip
+
+
+def test_an_answer_through_a_shared_link_waits_for_a_second_yes(env, chats):
+    first = chat.act(env.config, {"action": "answer-question", "provider": "codex", "id": "t-1",
+                                  "via": "codex-async", "call": "c2", "questions": ["May I?"],
+                                  "answers": [["Approve"]], "name": "Fix it"}, remote=True)  # fmt: skip
+    assert first["confirm"] and "Approve" in first["question"]
