@@ -508,6 +508,16 @@ html textarea:focus {
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
 }
+/* The task list, in the thread's quiet frame. */
+:root[data-host="vscode"] .chat-tasks {
+  background: transparent;
+  border: 1px solid var(--chat-line-strong);
+  border-radius: 12px;
+  font-size: var(--chat-size);
+}
+:root[data-host="vscode"] .chat-task[data-status="in_progress"] svg {
+  color: var(--vscode-textLink-foreground);
+}
 :root[data-host="vscode"] .chat-refs {
   padding: 2px 2px 6px;
 }

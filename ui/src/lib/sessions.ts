@@ -143,9 +143,27 @@ export type ChatState = {
   settings?: ChatSettings | null
   models?: ModelInfo[]
   goal?: Goal | null
+  tasks?: Tasks | null
 }
 
-export type SessionView = TranscriptPage & { session: Session; cards: Card[]; chat?: ChatState }
+/** What the session is doing now: the tool it runs, said as the desktop app says it. */
+export type Activity = { text: string; since: string | null }
+
+export type TaskStatus = "pending" | "in_progress" | "completed"
+
+/** The current turn's task list, as the agent keeps it. */
+export type Tasks = {
+  items: { text: string; status: TaskStatus }[]
+  explanation: string | null
+}
+
+export type SessionView = TranscriptPage & {
+  session: Session
+  cards: Card[]
+  chat?: ChatState
+  activity?: Activity | null
+  tasks?: Tasks | null
+}
 
 export const PROVIDERS: { provider: Provider; label: string }[] = [
   { provider: "claude", label: "Claude Code" },
