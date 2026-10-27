@@ -14,6 +14,14 @@ with KaTeX; single dollars stay text. The look lives in `ui/src/vscode.css`, und
 
 Inside VS Code the tabs also:
 
+- **Add and set modes from `+`:** files and folders from the workspace (or any, by
+  browsing), the code selected in an editor, pictures; plan mode, a goal it keeps
+  pursuing, and approve for me. The modes that are on show as chips, a goal shows above
+  the box with its progress, and the model and effort are picked beside the send button.
+  Claude takes plan mode and approve for me as permission modes, its model at once and
+  its effort by restarting between turns, and a goal as `/goal`; Codex takes them with
+  its next turn, and a goal through `thread/goal/set`, begun at once.
+
 - **Open files:** a link or a path in code in an answer (`src/a.ts:42`, `/abs/x.py#L3`)
   opens beside the session, at its line; a relative path starts from the session's
   folder.
