@@ -125,7 +125,11 @@ export function SessionScreen({
   const running = runningNow(session, view)
   const streaming = chat?.busy && chat.partial ? chat.partial : null
   return (
-    <main className="mx-auto max-w-[860px] space-y-5 p-4 md:p-6">
+    // The folder relative paths in its answers start from, for an editor opening them.
+    <main
+      className="mx-auto max-w-[860px] space-y-5 p-4 md:p-6"
+      data-cwd={session.cwd ?? undefined}
+    >
       <Header session={session} back={back} />
       {view.earlier > 0 && (
         <p className="text-center text-xs text-muted-foreground">

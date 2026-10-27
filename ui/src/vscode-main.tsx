@@ -5,6 +5,7 @@ import "@atelier/theme/direction.css"
 import "./index.css"
 import "./vscode.css"
 import { NewSession } from "@/blocks/new-session"
+import { EditorHost } from "@/lib/host"
 import { bridge, setTransport } from "@/lib/transport"
 import { themeFor, viewFrom } from "@/lib/vscode"
 import { SessionScreen } from "@/screens/session"
@@ -37,14 +38,16 @@ new MutationObserver(follow).observe(document.body, {
   attributeFilter: ["class"],
 })
 
-// A tab can't navigate: links open in the browser, through the extension.
+// A tab can't navigate: links open through the extension, files in the editor and the
+// rest in the browser; a relative path starts from the session's folder.
 document.addEventListener(
   "click",
   (e) => {
     const link = (e.target as Element | null)?.closest?.("a[href]")
     if (!link) return
     e.preventDefault()
-    vscode.postMessage({ type: "open", href: link.getAttribute("href") })
+    const cwd = link.closest("[data-cwd]")?.getAttribute("data-cwd") ?? null
+    vscode.postMessage({ type: "open", href: link.getAttribute("href"), cwd })
   },
   true
 )
@@ -79,6 +82,8 @@ if (!root) throw new Error("the tab's page needs an element with id root")
 
 createRoot(root).render(
   <StrictMode>
-    <Tab />
+    <EditorHost.Provider value={true}>
+      <Tab />
+    </EditorHost.Provider>
   </StrictMode>
 )

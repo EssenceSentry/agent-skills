@@ -1,7 +1,10 @@
+import { useContext } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 
 import { remarkCallouts } from "@/lib/callouts"
+import { EditorHost } from "@/lib/host"
+import { looksLikePath } from "@/lib/paths"
 import { cn } from "@/lib/utils"
 
 const MISSING = "#/missing/"
@@ -35,14 +38,34 @@ const components: Components = {
   },
 }
 
+/** In an editor's tab, code that names a file is also a link to it. */
+const inEditor: Components = {
+  ...components,
+  code: ({ children, className }) => {
+    const text = typeof children === "string" ? children : null
+    if (text && !className && looksLikePath(text))
+      return (
+        <a href={text} data-file="">
+          <code>{text}</code>
+        </a>
+      )
+    return <code className={className}>{children}</code>
+  },
+}
+
 /**
  * A vault note's Markdown. The server has already turned `[[wiki links]]` into app links;
  * callouts become asides here. Raw HTML in a note is never rendered.
  */
 export function Markdown({ children, className }: { children: string; className?: string }) {
+  const editor = useContext(EditorHost)
   return (
     <div className={cn("note-prose", className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkCallouts]} components={components} skipHtml>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkCallouts]}
+        components={editor ? inEditor : components}
+        skipHtml
+      >
         {children}
       </ReactMarkdown>
     </div>

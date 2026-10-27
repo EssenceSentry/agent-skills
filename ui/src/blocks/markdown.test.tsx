@@ -2,8 +2,15 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 
 import { Markdown } from "@/blocks/markdown"
+import { EditorHost } from "@/lib/host"
 
 const html = (text: string) => renderToStaticMarkup(<Markdown>{text}</Markdown>)
+const inEditor = (text: string) =>
+  renderToStaticMarkup(
+    <EditorHost.Provider value={true}>
+      <Markdown>{text}</Markdown>
+    </EditorHost.Provider>
+  )
 
 describe("Markdown", () => {
   it("turns a callout into an aside with its title", () => {
@@ -46,5 +53,15 @@ describe("Markdown", () => {
   it("renders tables and task lists", () => {
     expect(html("| a | b |\n|---|---|\n| 1 | 2 |")).toContain("<table>")
     expect(html("- [x] done")).toContain('type="checkbox"')
+  })
+
+  it("links the files code names inside the editor, and only there", () => {
+    expect(inEditor("See `src/lib/ax.ts:42`.")).toContain(
+      '<a href="src/lib/ax.ts:42" data-file=""><code>src/lib/ax.ts:42</code></a>'
+    )
+    expect(inEditor("Run `npm run build`.")).toContain("<code>npm run build</code>")
+    expect(inEditor("Run `npm run build`.")).not.toContain("<a")
+    expect(html("See `src/lib/ax.ts:42`.")).toContain("<code>src/lib/ax.ts:42</code>")
+    expect(html("See `src/lib/ax.ts:42`.")).not.toContain("<a")
   })
 })
