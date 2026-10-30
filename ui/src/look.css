@@ -1,0 +1,852 @@
+/*
+ * The conversation in VS Code's own manner, after the Codex panel: VS Code's font at its
+ * size with relaxed lines, one narrow column, no frames, the user's words in a soft
+ * bubble, lines and tints drawn from the foreground colour, and a rounded message box
+ * in the input colours. Both pages draw it, under `data-look="editor"`: VS Code's tab
+ * with its theme's --vscode-* colours, the web page with ax's own standing in for them
+ * (web.css). These rules sit outside the theme's layers, so they outrank its utility
+ * classes.
+ */
+
+.chat-answer,
+.chat-input {
+  font-size: var(--ax-chat-font-size, 14px);
+  font-family: var(--ax-chat-font-family, inherit);
+}
+.chat-thread pre,
+.chat-thread pre code {
+  font-size: var(--ax-code-font-size, 12px);
+}
+:root[data-look="editor"] {
+  --chat-size: var(--ax-chat-font-size, var(--vscode-font-size, 13px));
+  --chat-code-size: var(--ax-code-font-size, var(--vscode-editor-font-size, 12px));
+  --chat-leading: 1.6;
+  --chat-space: calc(var(--chat-size) / 4);
+  --chat-line: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  --chat-line-strong: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+  --chat-tint: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+  --chat-code-tint: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  font-size: var(--chat-size);
+  font-family: var(--ax-chat-font-family, var(--vscode-font-family, inherit));
+}
+:root[data-look="editor"][data-theme="light"] {
+  --chat-tint: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+  --chat-code-tint: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+/* The column, the tab's whole height, so the message box sits at its foot however short
+ * the conversation. */
+:root[data-look="editor"] .chat-thread {
+  max-width: 52rem;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 14px 0;
+}
+:root[data-look="editor"] .chat-thread > :not(:last-child) {
+  margin-block-end: calc(var(--chat-space) * 6);
+}
+:root[data-look="editor"] .chat-meta {
+  font-family: var(--vscode-font-family);
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+/* Status badges and card subtitles in the UI font, as Codex writes them. */
+:root[data-look="editor"] .chat-thread .label-mono.rounded-full {
+  height: 20px;
+  padding-inline: 8px;
+  font-family: var(--vscode-font-family);
+  font-size: 11px;
+}
+:root[data-look="editor"] .chat-card > header .label-mono {
+  font-family: var(--vscode-font-family);
+  font-size: 12px;
+}
+:root[data-look="editor"] .chat-note,
+:root[data-look="editor"] .chat-running,
+:root[data-look="editor"] .chat-cards-title,
+:root[data-look="editor"] .chat-time {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+/* "N earlier messages" opens the thread, left-aligned over a hairline. */
+:root[data-look="editor"] .chat-note {
+  text-align: left;
+  padding-bottom: calc(var(--chat-space) * 2.5);
+  border-bottom: 1px solid var(--chat-line-strong);
+}
+/* A date over a message after a pause. */
+:root[data-look="editor"] .chat-time {
+  text-align: center;
+}
+
+/* The user's words: a soft bubble, right-aligned, at the chat's size. */
+:root[data-look="editor"] .chat-user {
+  max-width: 78%;
+}
+:root[data-look="editor"] .chat-bubble {
+  background: var(--chat-tint);
+  color: var(--vscode-foreground);
+  border-radius: 18px;
+  padding: 8px 15px;
+  font-size: var(--chat-size);
+  line-height: var(--chat-leading);
+}
+
+/* Answers: plain text in the column, Markdown at the panel's rhythm. */
+:root[data-look="editor"] .chat-answer {
+  font-size: var(--chat-size);
+  line-height: var(--chat-leading);
+  color: var(--vscode-foreground);
+}
+:root[data-look="editor"] .chat-answer > * + * {
+  margin-top: calc(var(--chat-space) * 4);
+}
+:root[data-look="editor"] .chat-answer > :where(ul, ol) + * {
+  margin-top: calc(var(--chat-space) * 2.5);
+}
+:root[data-look="editor"] .chat-answer :where(h1, h2, h3, h4, h5, h6) {
+  font-family: var(--vscode-font-family);
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.35;
+  margin-top: calc(var(--chat-space) * 5);
+}
+:root[data-look="editor"] .chat-answer :where(h1) {
+  font-size: 1.5em;
+}
+:root[data-look="editor"] .chat-answer :where(h2) {
+  font-size: 1.25em;
+}
+:root[data-look="editor"] .chat-answer :where(h3) {
+  font-size: 1.125em;
+}
+:root[data-look="editor"] .chat-answer :where(h4, h5, h6) {
+  font-size: 1em;
+}
+:root[data-look="editor"] .chat-answer :where(h1, h2, h3, h4, h5, h6) + * {
+  margin-top: calc(var(--chat-space) * 1.5);
+}
+:root[data-look="editor"] .chat-answer > :first-child {
+  margin-top: 0;
+}
+:root[data-look="editor"] .chat-answer :where(p) + :where(ul, ol) {
+  margin-top: var(--chat-space);
+}
+:root[data-look="editor"] .chat-answer :where(ul, ol) {
+  padding-left: 1.5em;
+}
+:root[data-look="editor"] .chat-answer :where(li) {
+  padding-left: 0.25em;
+}
+:root[data-look="editor"] .chat-answer :where(li + li, li > ul, li > ol) {
+  margin-top: calc(var(--chat-space) * 0.5);
+}
+:root[data-look="editor"] .chat-answer :where(li)::marker {
+  color: var(--vscode-foreground);
+}
+:root[data-look="editor"] .chat-answer :where(strong) {
+  font-weight: 600;
+}
+:root[data-look="editor"] .chat-answer :where(a) {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: none;
+}
+:root[data-look="editor"] .chat-answer :where(a:hover) {
+  color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+:root[data-look="editor"] .chat-answer :where(code) {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.88em;
+  font-weight: 500;
+  color: inherit;
+  background: var(--chat-code-tint);
+  box-shadow: inset 0 0 0 1px var(--chat-line);
+  border-radius: 4px;
+  padding: 1px 0.3em;
+}
+:root[data-look="editor"] .chat-answer :where(a code) {
+  color: var(--vscode-textLink-foreground);
+}
+:root[data-look="editor"] .chat-answer a[data-file]:not(:has(code))::before {
+  content: "";
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.3em;
+  vertical-align: -0.15em;
+  background-color: currentColor;
+  mask: var(--chat-file-mark) center / contain no-repeat;
+}
+:root[data-look="editor"] {
+  --chat-file-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'%3E%3Cpath d='M4 1.75h5.5L12.5 4.75v9.5H4z'/%3E%3Cpath d='M6.25 7.5h4M6.25 10h4'/%3E%3C/svg%3E");
+}
+:root[data-look="editor"] .chat-answer :where(pre) {
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--chat-code-size);
+  line-height: 1.5;
+  background: var(--vscode-textCodeBlock-background, var(--chat-tint));
+  border: 1px solid var(--chat-line);
+  border-radius: 6px;
+  box-shadow: none;
+  padding: 10px 14px;
+}
+:root[data-look="editor"] .chat-answer :where(pre code) {
+  font-size: inherit;
+  font-weight: 400;
+  background: none;
+  box-shadow: none;
+  padding: 0;
+}
+:root[data-look="editor"] .chat-answer :where(blockquote) {
+  border-left: 3px solid var(--chat-line-strong);
+  padding-left: 12px;
+  color: inherit;
+  background: none;
+}
+:root[data-look="editor"] .chat-answer :where(hr) {
+  border-top-color: var(--chat-line-strong);
+}
+:root[data-look="editor"] .chat-answer .table-scroll {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+:root[data-look="editor"] .chat-answer :where(table) {
+  display: table;
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  overflow: visible;
+  font-size: inherit;
+  line-height: var(--chat-leading);
+  font-variant-numeric: tabular-nums;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+:root[data-look="editor"] .chat-answer :where(th, td) {
+  text-align: start;
+  vertical-align: top;
+  padding: calc(var(--chat-space) * 2.5) calc(var(--chat-space) * 6) calc(var(--chat-space) * 2.5) 0;
+  border-bottom: 1px solid var(--chat-line);
+}
+:root[data-look="editor"] .chat-answer :where(th) {
+  font-weight: 600;
+  padding-block: calc(var(--chat-space) * 2);
+  border-bottom-color: var(--chat-line-strong);
+}
+:root[data-look="editor"] .chat-answer :where(th:last-child) {
+  padding-inline-end: calc(var(--chat-space) * 10);
+}
+:root[data-look="editor"] .chat-answer :where(tbody tr:last-child td) {
+  border-bottom: 0;
+  padding-bottom: calc(var(--chat-space) * 2);
+}
+:root[data-look="editor"] .chat-answer :where(th, td)[style*="right"] {
+  white-space: nowrap;
+}
+:root[data-look="editor"] .chat-answer :where(img) {
+  border-radius: 6px;
+}
+
+/* Job cards: hairline frames, no fill. */
+:root[data-look="editor"] .chat-card {
+  background: transparent;
+  border: 1px solid var(--chat-line-strong);
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+:root[data-look="editor"] .chat-card > header > div > svg:first-child {
+  box-sizing: content-box;
+  width: 18px;
+  height: 18px;
+  padding: 9px;
+  margin: 0 4px 0 0;
+  border-radius: 9px;
+  background: var(--chat-tint);
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-look="editor"] .chat-card > header > div {
+  align-items: center;
+}
+:root[data-look="editor"] .chat-card > header .font-medium {
+  font-size: var(--chat-size);
+}
+
+/*
+ * The message box: always at the bottom (pushed there in a short conversation, held there
+ * in a long one), rounded, in VS Code's input colours, with the text on top and its
+ * controls in a row below, attach left and send right.
+ */
+:root[data-look="editor"] .chat-composer {
+  margin-inline: -14px;
+  padding: 8px 14px 14px;
+  background: var(--vscode-editor-background);
+  backdrop-filter: none;
+}
+:root[data-look="editor"] .chat-thread > .chat-composer {
+  margin-block: auto 0;
+}
+:root[data-look="editor"] .chat-box {
+  background: var(--vscode-input-background, var(--chat-tint));
+  border: 1px solid var(--vscode-input-border, var(--chat-line-strong));
+  border-radius: 20px;
+  padding: 8px 10px 8px 8px;
+  box-shadow: none;
+}
+:root[data-look="editor"] .chat-box > .flex {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+:root[data-look="editor"] .chat-box:focus-within {
+  border-color: var(--vscode-focusBorder);
+  box-shadow: none;
+}
+:root[data-look="editor"] .chat-input {
+  order: -1;
+  flex-basis: 100%;
+  font-size: var(--chat-size);
+  line-height: 1.5;
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  min-height: 46px;
+  padding: 4px 6px 2px;
+  background: transparent;
+}
+/* Under a request: the text on the controls' row, one line high until it grows. */
+:root[data-look="editor"] .chat-box-compact > .flex {
+  flex-wrap: nowrap;
+}
+:root[data-look="editor"] .chat-box-compact .chat-input {
+  order: 0;
+  flex-basis: auto;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 6px;
+}
+/* The text gives way first; the controls keep their names. */
+:root[data-look="editor"] .chat-box-compact > .flex > :not(.chat-input, .chat-model-wrap) {
+  flex-shrink: 0;
+}
+/* In a box too narrow for its controls, as in a narrow panel, the model's name gives way
+ * before send leaves the row. */
+:root[data-look="editor"] .chat-model-wrap {
+  flex-shrink: 1;
+}
+:root[data-look="editor"] .chat-model {
+  min-width: 0;
+  max-width: 100%;
+}
+@container (max-width: 220px) {
+  :root[data-look="editor"] .chat-model-effort {
+    display: none;
+  }
+}
+/* A box too narrow for the text beside its controls, as in a third of the screen, keeps
+ * the text on its own line above them. */
+:root[data-look="editor"] .chat-box {
+  container-type: inline-size;
+}
+@container (max-width: 620px) {
+  :root[data-look="editor"] .chat-box-compact > .flex {
+    flex-wrap: wrap;
+  }
+  :root[data-look="editor"] .chat-box-compact .chat-input {
+    order: -1;
+    flex-basis: 100%;
+  }
+}
+@container (max-width: 460px) {
+  /* The modes that are on show by their icons, named on hover, so the controls keep one
+   * row with send at its end. The goal chip keeps its name: it says what Enter does. */
+  :root[data-look="editor"] .chat-chip:not(.chat-goal-chip) {
+    font-size: 0;
+    gap: 0;
+    padding: 0 6px;
+  }
+}
+:root[data-look="editor"] .chat-input::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+}
+:root[data-look="editor"] .chat-attach {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  color: var(--vscode-foreground);
+}
+:root[data-look="editor"] .chat-send {
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--vscode-foreground);
+  color: var(--vscode-editor-background);
+  border: 0;
+}
+:root[data-look="editor"] .chat-send:disabled {
+  opacity: 0.45;
+}
+:root[data-look="editor"] .chat-send svg,
+:root[data-look="editor"] .chat-attach svg {
+  width: 17px;
+  height: 17px;
+}
+:root[data-look="editor"] .chat-hint {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/*
+ * The + menu, the mode chips, the model picker and the goal, as in Codex: a rounded menu
+ * with a hint beside each item, chips for what is on, and the model as quiet text before
+ * the send button.
+ */
+:root[data-look="editor"] .chat-plus {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  color: var(--vscode-foreground);
+}
+:root[data-look="editor"] .chat-plus:hover,
+:root[data-look="editor"] .chat-model:hover,
+:root[data-look="editor"] .chat-chip:hover,
+:root[data-look="editor"] .chat-goal-clear:hover {
+  background: var(--chat-tint);
+}
+:root[data-look="editor"] .chat-plus svg {
+  width: 17px;
+  height: 17px;
+}
+:root[data-look="editor"] .chat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+:root[data-look="editor"] .chat-chip svg {
+  width: 14px;
+  height: 14px;
+}
+:root[data-look="editor"] .chat-goal-chip {
+  margin: 2px 0 4px 2px;
+  background: var(--chat-tint);
+}
+:root[data-look="editor"] .chat-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+:root[data-look="editor"] .chat-model svg {
+  width: 13px;
+  height: 13px;
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-look="editor"] .chat-model-wrap {
+  margin-left: auto;
+}
+:root[data-look="editor"] .chat-model-wrap + .chat-send,
+:root[data-look="editor"] .chat-send + .chat-send {
+  margin-left: 4px;
+}
+:root[data-look="editor"] .chat-menu {
+  width: 19rem;
+  min-width: 15rem;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--chat-line-strong);
+  background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  font-family: var(--vscode-font-family);
+  font-size: var(--chat-size);
+}
+:root[data-look="editor"] .chat-menu [data-slot="dropdown-menu-label"] {
+  padding: 6px 8px 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-look="editor"] .chat-menu [role="menuitem"],
+:root[data-look="editor"] .chat-menu [role="menuitemcheckbox"],
+:root[data-look="editor"] .chat-menu [role="menuitemradio"] {
+  gap: 9px;
+  border-radius: 8px;
+  padding-block: 6px;
+  font-size: var(--chat-size);
+  white-space: nowrap;
+}
+:root[data-look="editor"] .chat-menu [data-highlighted] {
+  background: var(--chat-tint);
+  color: var(--vscode-foreground);
+}
+:root[data-look="editor"] .chat-menu svg {
+  width: 16px;
+  height: 16px;
+}
+:root[data-look="editor"] .chat-menu-hint {
+  margin-left: auto;
+  padding-left: 12px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+/* The + menu spans the message box, as in Codex, each hint right after its name. */
+:root[data-look="editor"] .chat-menu.chat-menu-wide {
+  width: var(--anchor-width);
+  padding: 8px;
+  border-radius: 16px;
+}
+:root[data-look="editor"] .chat-menu-wide .chat-menu-hint {
+  margin-left: 2px;
+  padding-left: 0;
+  font-size: var(--chat-size);
+}
+:root[data-look="editor"] .chat-menu-wide [role="menuitem"],
+:root[data-look="editor"] .chat-menu-wide [role="menuitemcheckbox"] {
+  padding-block: 7px;
+}
+:root[data-look="editor"] .chat-refs {
+  padding: 2px 2px 6px;
+}
+:root[data-look="editor"] .chat-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 3px 0 8px;
+  border-radius: 7px;
+  background: var(--chat-tint);
+  font-size: 12px;
+}
+:root[data-look="editor"] .chat-ref svg {
+  width: 13px;
+  height: 13px;
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-look="editor"] .chat-ref button {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+}
+:root[data-look="editor"] .chat-ref button:hover {
+  background: var(--chat-code-tint);
+}
+:root[data-look="editor"] .chat-goal {
+  border: 1px solid var(--chat-line-strong);
+  border-radius: 12px;
+  background: transparent;
+  font-size: 12px;
+}
+:root[data-look="editor"] .chat-goal-line {
+  color: var(--vscode-descriptionForeground);
+}
+
+/* The task list, in the thread's quiet frame. */
+:root[data-look="editor"] .chat-tasks {
+  background: transparent;
+  border: 1px solid var(--chat-line-strong);
+  border-radius: 12px;
+  font-size: var(--chat-size);
+}
+:root[data-look="editor"] .chat-task[data-status="in_progress"] svg {
+  color: var(--vscode-textLink-foreground);
+}
+
+/*
+ * What the agent waits on, in the message box's place and frame, as Codex shows it:
+ * numbered choices whose number fills in when chosen, a solid pill for the answer it
+ * expects, plain pills for the rest, and commands in the code block's tint.
+ */
+:root[data-look="editor"] .chat-request {
+  background: var(--vscode-input-background, var(--chat-tint));
+  border: 1px solid var(--vscode-input-border, var(--chat-line-strong));
+  border-radius: 20px;
+  font-size: var(--chat-size);
+}
+:root[data-look="editor"] .chat-request-label {
+  color: var(--vscode-descriptionForeground);
+  font-size: calc(var(--chat-size) - 1px);
+}
+:root[data-look="editor"] .chat-request-title {
+  font-size: var(--chat-size);
+}
+:root[data-look="editor"] .chat-request-title p {
+  margin: 0;
+}
+:root[data-look="editor"] .chat-choice {
+  font-size: var(--chat-size);
+}
+:root[data-look="editor"] .chat-choice:hover,
+:root[data-look="editor"] .chat-choice[data-checked],
+:root[data-look="editor"] .chat-choice:focus-within {
+  background: var(--chat-tint);
+}
+:root[data-look="editor"] .chat-choice-note,
+:root[data-look="editor"] .chat-pager {
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-look="editor"] .chat-choice-mark {
+  border-color: var(--chat-line-strong);
+  background: var(--chat-tint);
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-look="editor"] .chat-choice-mark[data-checked] {
+  border-color: var(--vscode-foreground);
+  background: var(--vscode-foreground);
+  color: var(--vscode-input-background, var(--vscode-editor-background));
+}
+:root[data-look="editor"] .chat-recommended {
+  background: var(--chat-tint);
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-look="editor"] .chat-freeform {
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+}
+:root[data-look="editor"] .chat-freeform::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+}
+:root[data-look="editor"] .chat-command {
+  background: var(--chat-code-tint);
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--chat-code-size);
+}
+:root[data-look="editor"] .chat-pill {
+  height: 28px;
+  font-size: var(--chat-size);
+  font-weight: 500;
+  box-shadow: none;
+}
+/* A key on a pill, outlined in the pill's own text colour so it reads on either fill. */
+:root[data-look="editor"] .chat-key {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 45%, transparent);
+  font-weight: 500;
+}
+:root[data-look="editor"] .chat-pill-primary {
+  background: var(--vscode-foreground);
+  color: var(--vscode-input-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-foreground);
+}
+:root[data-look="editor"] .chat-pill-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
+}
+:root[data-look="editor"] .chat-pill-outline {
+  background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+  border: 1px solid var(--chat-line-strong);
+  color: var(--vscode-foreground);
+}
+:root[data-look="editor"] .chat-pill-outline:hover:not(:disabled),
+:root[data-look="editor"] .chat-pill-ghost:hover:not(:disabled) {
+  background: var(--chat-tint);
+}
+:root[data-look="editor"] .chat-pill-ghost {
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font-weight: 400;
+}
+:root[data-look="editor"] .chat-plan-box {
+  border-color: var(--chat-line-strong);
+  background: var(--vscode-editor-background);
+}
+:root[data-look="editor"] .chat-plan-head {
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-look="editor"] .chat-plan-fade {
+  background: linear-gradient(to top, var(--vscode-editor-background) 30%, transparent);
+}
+
+/* A question already asked: one quiet row, its questions and answers fading below. */
+:root[data-look="editor"] .chat-asked summary {
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-look="editor"] .chat-asked summary:hover {
+  color: var(--vscode-foreground);
+}
+:root[data-look="editor"] .chat-asked-question {
+  color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+}
+:root[data-look="editor"] .chat-asked-answer {
+  color: color-mix(in srgb, var(--vscode-foreground) 38%, transparent);
+}
+
+/*
+ * The model picker, as Codex draws it: the effort named in the chart blue (purple at its
+ * most) over the model, and a track of dots filled up to a white thumb.
+ */
+:root[data-look="editor"] .chat-model-name {
+  color: var(--vscode-foreground);
+}
+:root[data-look="editor"] .chat-model-effort {
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-look="editor"] .chat-model-popup {
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--chat-line-strong);
+  border-radius: 16px;
+  color: var(--vscode-foreground);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  font-size: var(--chat-size);
+}
+:root[data-look="editor"] .chat-effort-title {
+  color: var(--vscode-charts-blue, var(--vscode-textLink-foreground));
+}
+:root[data-look="editor"] .chat-effort-title[data-maximum],
+:root[data-look="editor"] .chat-model-effort[data-maximum] {
+  color: var(--vscode-charts-purple, var(--vscode-textLink-foreground));
+}
+:root[data-look="editor"] .chat-model-switch:hover,
+:root[data-look="editor"] .chat-model-reset:hover:not(:disabled),
+:root[data-look="editor"] .chat-model-row:hover {
+  background: var(--chat-tint);
+}
+:root[data-look="editor"] .chat-model-heading,
+:root[data-look="editor"] .chat-model-group,
+:root[data-look="editor"] .chat-model-switch > span:last-child,
+:root[data-look="editor"] .chat-model-reset {
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-look="editor"] .chat-slider-track {
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  box-shadow: inset 0 0 0 0.5px var(--chat-line-strong);
+}
+:root[data-look="editor"] .chat-slider-range {
+  background: var(--vscode-charts-blue, var(--vscode-button-background));
+}
+:root[data-look="editor"] .chat-slider[data-maximum] .chat-slider-range {
+  background: var(--vscode-charts-purple, var(--vscode-button-background));
+}
+:root[data-look="editor"] .chat-slider-tick {
+  background: color-mix(in srgb, var(--vscode-descriptionForeground) 50%, transparent);
+}
+:root[data-look="editor"] .chat-slider-tick[data-on] {
+  background: color-mix(in srgb, white 30%, transparent);
+}
+:root[data-look="editor"] .chat-slider-thumb {
+  background: white;
+  border: 0.5px solid var(--chat-line-strong);
+  box-shadow: 0 0 2px color-mix(in srgb, black 10%, transparent);
+}
+:root[data-look="editor"] .chat-slider input:focus-visible ~ .chat-slider-thumb,
+:root[data-look="editor"] .chat-slider:has(input:focus-visible) .chat-slider-thumb {
+  outline: 2px solid var(--vscode-focusBorder);
+}
+/*
+ * The panel, as Codex's: the sessions as a quiet list on the side bar's own colour, and
+ * the box that starts one at its foot, the folder under it.
+ */
+:root[data-look="editor"] .chat-panel {
+  font-size: var(--chat-size);
+  color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+}
+:root[data-look="editor"] .chat-panel-head,
+:root[data-look="editor"] .chat-panel-when,
+:root[data-look="editor"] .chat-panel-project,
+:root[data-look="editor"] .chat-panel-tool-name,
+:root[data-look="editor"] .chat-panel-more,
+:root[data-look="editor"] .chat-folder,
+:root[data-look="editor"] .chat-folder-heading {
+  color: var(--vscode-descriptionForeground);
+}
+:root[data-look="editor"] .chat-panel-row > :first-child {
+  font-size: var(--chat-size);
+  color: inherit;
+}
+:root[data-look="editor"] .chat-panel-row:hover,
+:root[data-look="editor"] .chat-panel-row:focus-within {
+  background: var(--vscode-list-hoverBackground, var(--chat-tint));
+}
+/* On hover the row's buttons sit at its end: the text keeps clear of them, and the
+ * project and time step aside. */
+:root[data-look="editor"] .chat-panel-row:is(:hover, :focus-within) .chat-panel-roomy {
+  padding-right: 60px;
+}
+:root[data-look="editor"]
+  .chat-panel-row:is(:hover, :focus-within):has(.chat-panel-actions)
+  :is(.chat-panel-project, .chat-panel-when) {
+  display: none;
+}
+/* A narrow panel, as beside three columns, keeps each row to its state, tool and name. */
+:root[data-look="editor"] .chat-panel {
+  container-type: inline-size;
+}
+@container (max-width: 260px) {
+  :root[data-look="editor"] :is(.chat-panel-project, .chat-panel-when) {
+    display: none;
+  }
+}
+/* The session open beside the panel, on the web page. */
+:root[data-look="editor"] .chat-panel-row[data-current] {
+  background: var(--vscode-list-inactiveSelectionBackground, var(--chat-tint));
+  color: var(--vscode-list-inactiveSelectionForeground, var(--vscode-foreground));
+}
+:root[data-look="editor"] .chat-panel-tool:hover,
+:root[data-look="editor"] .chat-panel-tool[aria-current] {
+  background: var(--vscode-toolbar-hoverBackground, var(--chat-tint));
+  color: var(--vscode-foreground);
+}
+:root[data-look="editor"] .chat-panel-waiting {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-foreground));
+}
+/* A search hit that opens a file reads as a row, in the text's colour, not as a link. */
+:root[data-look="editor"] .search-hit {
+  color: inherit;
+  text-decoration: none;
+}
+:root[data-look="editor"] .chat-folder:hover:not(:disabled),
+:root[data-look="editor"] .chat-folder-row:hover {
+  background: var(--chat-tint);
+  color: var(--vscode-foreground);
+}
+:root[data-look="editor"] .chat-folder-popup {
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--chat-line-strong);
+  border-radius: 16px;
+  color: var(--vscode-foreground);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  font-size: var(--chat-size);
+}
+:root[data-look="editor"] .chat-folder-search {
+  border-color: var(--chat-line-strong);
+  color: var(--vscode-foreground);
+}
+:root[data-look="editor"] .chat-folder-popup .border-t {
+  border-color: var(--chat-line-strong);
+}
+:root[data-look="editor"] .chat-folder-check {
+  color: var(--vscode-charts-blue, var(--vscode-textLink-foreground));
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--muted-foreground);
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal {
+  color: var(--primary);
+  font-weight: 600;
+}
+.hljs-string,
+.hljs-number,
+.hljs-attr {
+  color: var(--foreground);
+}
+.hljs-title,
+.hljs-built_in,
+.hljs-type {
+  color: var(--primary);
+}

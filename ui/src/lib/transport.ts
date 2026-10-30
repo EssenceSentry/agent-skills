@@ -34,6 +34,9 @@ export function setTransport(transport: Transport | null, base = "") {
   assetBase = base.replace(/\/+$/, "")
 }
 
+export const transportIdentity = () =>
+  assetBase || (typeof location === "undefined" ? "local" : location.origin)
+
 /** One request to ax; it fails with the server's own words when it says why. */
 export async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
   const reply = await current(method, path, body)
@@ -63,7 +66,21 @@ export function bridge(
   return (method, path, body) =>
     new Promise((resolve) => {
       last += 1
-      waiting.set(last, resolve)
+      const id = last
+      const timer = setTimeout(() => {
+        waiting.delete(id)
+        resolve({
+          status: 504,
+          body: {
+            error:
+              "The extension request timed out. Check the server and retry; a submitted message may need reconciliation.",
+          },
+        })
+      }, 60000)
+      waiting.set(id, (reply) => {
+        clearTimeout(timer)
+        resolve(reply)
+      })
       post(
         body === undefined
           ? { type: "request", id: last, method, path }
@@ -101,7 +118,21 @@ export function extensionCalls(
   return (name, args) =>
     new Promise((resolve, reject) => {
       last += 1
-      waiting.set(last, { resolve, reject })
+      const id = last
+      const timer = setTimeout(() => {
+        waiting.delete(id)
+        reject(new Error("The extension did not answer. Reload the tab and retry."))
+      }, 60000)
+      waiting.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        reject: (error) => {
+          clearTimeout(timer)
+          reject(error)
+        },
+      })
       post(
         args === undefined
           ? { type: "call", id: last, name }

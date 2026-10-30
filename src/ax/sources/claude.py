@@ -90,6 +90,7 @@ def parse(path: Path) -> Session:
         session.branch = as_text(rec.get("gitBranch")) or session.branch
         session.version = as_text(rec.get("version")) or session.version
 
+        event_start = len(session.events)
         if rtype == "user":
             _user(rec, ts, session, pending, line)
         elif rtype == "assistant":
@@ -109,6 +110,9 @@ def parse(path: Path) -> Session:
                 session.cost_usd = cost
         elif rtype not in _IGNORED:
             session.unknown[str(rtype)] += 1
+
+        for event in session.events[event_start:]:
+            event.native_id = rec.get("uuid")
 
     first_prompt = next((e.text for e in session.events if e.kind == "user"), "")
     session.title = (
@@ -215,6 +219,7 @@ def _assistant(rec, ts, session, pending, usage, models):
             )
             if name == "AskUserQuestion":
                 event.ask = asks.ask("claude", block.get("id"), block.get("input"))
+            event.call_id = block.get("id")
             session.events.append(event)
             pending[block.get("id")] = event
 
@@ -233,6 +238,13 @@ def _attach_result(event: Event | None, item: dict, result) -> None:
             asks.answer_from_words(event.ask, _result_text(item.get("content")))
     if not isinstance(result, dict):
         return
+    code = result.get("exitCode", result.get("exit_code"))
+    if isinstance(code, int):
+        event.exit_code = code
+        event.ok = code == 0
+    elapsed = result.get("durationMs", result.get("duration_ms"))
+    if isinstance(elapsed, (int, float)):
+        event.duration_ms = elapsed
     if result.get("agentId"):
         event.child = f"agent-{result['agentId']}"
     patch = result.get("structuredPatch")

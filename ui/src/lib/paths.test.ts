@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { looksLikePath } from "@/lib/paths"
+import { looksLikePath, shortPath } from "@/lib/paths"
 
 describe("code that names a file", () => {
   it("counts paths, file names and file:line", () => {
@@ -39,5 +39,20 @@ describe("code that names a file", () => {
       "",
     ])
       expect(looksLikePath(text), text).toBe(false)
+  })
+})
+
+describe("a path as people read it", () => {
+  it("starts from ~ inside the home folder", () => {
+    expect(shortPath("/Users/me/Documents/Codex/2026-10-27/l")).toBe(
+      "~/Documents/Codex/2026-10-27/l"
+    )
+    expect(shortPath("/home/me/repo")).toBe("~/repo")
+    expect(shortPath("/Users/me")).toBe("~")
+  })
+
+  it("leaves a path outside it as it is", () => {
+    expect(shortPath("/tmp/scratch")).toBe("/tmp/scratch")
+    expect(shortPath("/Users")).toBe("/Users")
   })
 })

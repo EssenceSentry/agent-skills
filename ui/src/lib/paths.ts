@@ -15,3 +15,8 @@ export function looksLikePath(text: string): boolean {
   if (bare.includes("/")) return segments.some((s) => /[A-Za-z]/.test(s))
   return EXTENSION.test(bare) && !/^v?\d/.test(bare) && /[A-Za-z]{2}/.test(bare.split(".")[0] ?? "")
 }
+
+/** A path from ~ when it is inside a home folder (/Users/<name> or /home/<name>). */
+export function shortPath(path: string): string {
+  return path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~")
+}

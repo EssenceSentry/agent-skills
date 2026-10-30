@@ -65,6 +65,21 @@ export function messageStamp(iso: string): string {
   return `${DAY_PART.format(when)} at ${TIME_PART.format(when)}`.replace(/\s/g, " ")
 }
 
+/** When a usage window resets, as a message's date says it: "today at 2:00 PM",
+ * "tomorrow at 9:05 AM", "Fri, Oct 30 at 12:00 AM". */
+export function resetStamp(iso: string, now = new Date()): string {
+  const when = new Date(iso)
+  const tomorrow = new Date(now)
+  tomorrow.setDate(now.getDate() + 1)
+  const day =
+    when.toDateString() === now.toDateString()
+      ? "today"
+      : when.toDateString() === tomorrow.toDateString()
+        ? "tomorrow"
+        : DAY_PART.format(when)
+  return `${day} at ${TIME_PART.format(when)}`.replace(/\s/g, " ")
+}
+
 const PAUSE = 30 * 60_000
 
 /** Whether a message gets a date: the first one, and any after half an hour's quiet. */

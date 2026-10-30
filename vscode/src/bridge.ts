@@ -16,23 +16,46 @@ export type BridgeReply = { type: "reply"; id: number; status: number; body: unk
 
 const ROUTES: Record<string, "GET" | "POST"> = {
   "/api/sessions": "GET",
+  "/api/models": "GET",
+  "/api/usage": "GET",
+  "/api/find": "GET",
+  "/api/commands": "GET",
   "/api/session": "GET",
+  "/api/session/search": "GET",
+  "/api/session/tool": "GET",
+  "/api/session/files": "GET",
+  "/api/session/catalog": "GET",
+  "/api/session/diff": "GET",
+  "/api/session/workspace": "GET",
   "/api/chat": "POST",
 }
 
 const BASE = "http://ax.invalid"
 
-/** Listing sessions, reading one and acting on a chat; nothing else, however it's spelt. */
+/** A job's details, as its page reads them: one key, no deeper path. */
+const JOB = /^\/jobs\/[^/]+\/api\/job$/
+
+/** Listing sessions and models, reading usage, a session or a job's details, searching
+ * with `ax find`, a session's / menu and acting on a chat; nothing else, however it's
+ * spelt. Sharing is the extension's own, never the page's. */
 export function allowed(method: string, path: string): boolean {
   if (!path.startsWith("/") || path.startsWith("//")) return false
   const url = new URL(path, BASE)
-  if (url.origin !== BASE) return false
-  const route = ROUTES[url.pathname]
-  return route === method && path.split("?")[0] === url.pathname
+  if (url.origin !== BASE || path.split("?")[0] !== url.pathname) return false
+  if (JOB.test(url.pathname)) return method === "GET"
+  return ROUTES[url.pathname] === method
 }
 
+const DEFAULT_SERVER = "http://127.0.0.1:8765"
+
+/** Why nothing answers: ax isn't running, or this window's settings point elsewhere, as the
+ * demo's project does, where `ax app start` wouldn't help. */
 const offline = (server: string) =>
-  `ax isn't answering at ${server}: start it with \`ax app start\``
+  server === DEFAULT_SERVER
+    ? `ax isn't answering at ${server}: start it with \`ax app start\``
+    : `ax isn't answering at ${server}, where this window's ax.server setting points: start ` +
+      "what serves it (the demo is `ax demo`), or remove the setting to use your ax at " +
+      DEFAULT_SERVER
 
 export type Answer = { status: number; body: unknown }
 
@@ -83,13 +106,9 @@ export async function forward(
   return { type: "reply", id: request.id, ...answer }
 }
 
-/**
- * Where a link clicked in the page opens: web links in the browser, the app's own pages
- * (a job's dashboard) on the ax server; nothing else. Agents also link files by their
- * absolute path, which the server doesn't serve; those are the editor's to open.
- */
-export function linkTarget(href: string, server: string): string | null {
-  if (href.startsWith("/jobs/")) return server.replace(/\/+$/, "") + href
+/** Where a web link in the page opens: the browser. Never the ax app, which VS Code
+ * replaces: a job's page is its card. */
+export function linkTarget(href: string): string | null {
   try {
     const url = new URL(href)
     return url.protocol === "https:" || url.protocol === "http:" ? url.href : null

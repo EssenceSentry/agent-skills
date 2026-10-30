@@ -24,10 +24,20 @@ function fakeFetch(status: number, body: string, calls: Call[] = []): typeof fet
 }
 
 describe("what the page may ask the ax server", () => {
-  it("lists sessions, reads one and acts on chats", () => {
+  it("lists sessions and both tools' models, reads one, searches, and acts on chats", () => {
     expect(allowed("GET", "/api/sessions")).toBe(true)
+    expect(allowed("GET", "/api/find?q=status%20bar%20usage")).toBe(true)
+    expect(allowed("GET", "/api/commands?provider=codex&cwd=%2Frepo")).toBe(true)
+    expect(allowed("GET", "/api/models")).toBe(true)
+    expect(allowed("GET", "/api/usage")).toBe(true)
+    expect(allowed("GET", "/jobs/demo-scoring/api/job")).toBe(true)
+    expect(allowed("GET", "/jobs/score%20v5/api/job")).toBe(true)
     expect(allowed("GET", "/api/session?provider=claude&id=x&after=3")).toBe(true)
     expect(allowed("POST", "/api/chat")).toBe(true)
+    for (const route of ["search", "tool", "files", "catalog", "diff", "workspace"]) {
+      expect(allowed("GET", `/api/session/${route}?provider=codex&id=one`)).toBe(true)
+      expect(allowed("POST", `/api/session/${route}`)).toBe(false)
+    }
   })
 
   it("refuses anything else, however the path is dressed", () => {
@@ -36,6 +46,17 @@ describe("what the page may ask the ax server", () => {
       ["GET", "/api/note?path=/etc/passwd"],
       ["GET", "/api/chat"],
       ["POST", "/api/sessions"],
+      ["POST", "/api/models"],
+      ["POST", "/api/usage"],
+      ["POST", "/api/find"],
+      ["POST", "/api/commands"],
+      ["GET", "/api/share"],
+      ["POST", "/api/share"],
+      ["POST", "/jobs/demo-scoring/api/job"],
+      ["GET", "/jobs/demo-scoring/"],
+      ["GET", "/jobs/a/b/api/job"],
+      ["GET", "/jobs/../api/job"],
+      ["GET", "/jobs//api/job"],
       ["GET", "/api/session/../act"],
       ["GET", "/api/sessions/../../secret"],
       ["GET", "//evil.example/api/sessions"],
@@ -117,6 +138,22 @@ describe("forwarding a request", () => {
     })
   })
 
+  it("names the setting when this window's ax lives elsewhere, as the demo's does", async () => {
+    const down = (async () => {
+      throw new TypeError("fetch failed")
+    }) as typeof fetch
+    const reply = await forward(
+      "http://127.0.0.1:8798",
+      { type: "request", id: 6, method: "GET", path: "/api/sessions" },
+      down
+    )
+    expect((reply.body as { error: string }).error).toBe(
+      "ax isn't answering at http://127.0.0.1:8798, where this window's ax.server setting " +
+        "points: start what serves it (the demo is `ax demo`), or remove the setting to " +
+        "use your ax at http://127.0.0.1:8765"
+    )
+  })
+
   it("keeps a server address with a trailing slash working", async () => {
     const calls: Call[] = []
     await forward(
@@ -144,14 +181,14 @@ describe("the extension's own requests", () => {
 })
 
 describe("where a link in the page opens", () => {
-  it("opens web links in the browser, and the app's own pages on the ax server", () => {
-    expect(linkTarget("https://example.com/a?b=1", SERVER)).toBe("https://example.com/a?b=1")
-    expect(linkTarget("/jobs/build-42/", SERVER)).toBe("http://127.0.0.1:8765/jobs/build-42/")
+  it("opens web links in the browser, but never the ax app: a job's page is its card", () => {
+    expect(linkTarget("https://example.com/a?b=1")).toBe("https://example.com/a?b=1")
+    expect(linkTarget("/jobs/build-42/")).toBeNull()
   })
 
   it("leaves a file path to the editor, not the ax server", () => {
-    expect(linkTarget("/Users/me/Repos/demo/report.html", SERVER)).toBeNull()
-    expect(linkTarget("/jobsite/x", SERVER)).toBeNull()
+    expect(linkTarget("/Users/me/Repos/demo/report.html")).toBeNull()
+    expect(linkTarget("/jobsite/x")).toBeNull()
   })
 
   it("opens nothing else", () => {
@@ -163,6 +200,6 @@ describe("where a link in the page opens", () => {
       "//evil.example/x",
       "vscode://x",
     ])
-      expect(linkTarget(href, SERVER), href).toBeNull()
+      expect(linkTarget(href), href).toBeNull()
   })
 })

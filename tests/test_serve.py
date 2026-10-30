@@ -179,18 +179,20 @@ def test_the_jobs_panel_shows_running_and_recent_jobs(env):
     assert "<i>rows</i>" not in page and "&lt;i&gt;rows&lt;/i&gt;" in page
 
 
-def test_usage_asks_claude_for_fresh_figures_in_the_background_every_five_minutes(env, monkeypatch):
+def test_usage_asks_codex_every_ten_seconds_and_claude_every_minute(env, monkeypatch):
     calls = []
 
     def claude(config, *, refresh=True, timeout=60):
-        calls.append("refresh" if refresh else "read")
+        calls.append("claude" if refresh else "read")
         return []
 
     monkeypatch.setattr(usage, "claude_windows", claude)
     monkeypatch.setattr(usage, "codex_windows", lambda home, **kw: [])
+    monkeypatch.setattr(usage, "codex_ask", lambda config, **kw: calls.append("codex") or True)
     monkeypatch.setattr(serve, "_usage_cache", serve._fresh_usage_cache())
     run_now = lambda job: job()  # noqa: E731 -- the background thread, run inline
-    for at in (1000.0, 1030.0, 1100.0, 1400.0):
+    for at in (1000.0, 1004.0, 1006.0, 1011.0, 1061.0):
         serve._cached_usage(env.config, now=at, start=run_now)
-    # A refresh at once, a reading reused for a minute, a new reading, a refresh after 5 min.
-    assert calls == ["refresh", "read", "read", "refresh", "read"]
+    # Both asked at once; the readings reused for 5 s, then read again; Codex asked again
+    # after 10 s, Claude after a minute (its /usage answers from a snapshot that old).
+    assert calls == ["claude", "codex", "read", "read", "codex", "read", "claude", "codex", "read"]

@@ -31,7 +31,7 @@ take effect at once; after a change to the dependencies, run the same command wi
 | `ax sync` | Archive new and changed sessions into the vault |
 | `ax doctor` | Check retention, the vault, the last sync and format drift |
 | `ax search "words" [--json]` | Find past sessions by the exact words said in them |
-| `ax find "question" [--in …] [--json]` | One search over conversations, memories, vault notes, the repos' docs and their code (qmd and Semble) |
+| `ax find "question" [--in …] [--json]` | One search over past conversations and both tools' memories (qmd) |
 | `ax index` (`setup`, `refresh`, `eval`) | Build and refresh the index behind `ax find`, and score it on questions with known answers |
 | `ax here` / `ax recall <handle>` | This conversation's handle; an earlier conversation brought into this one, linked in both notes |
 | `ax todo` (`add`, `list`, `done`, `drop`) | To-dos, global or per project, linked to the conversation that raised them and shown in every new conversation's digest |
@@ -42,7 +42,7 @@ take effect at once; after a change to the dependencies, run the same command wi
 | `ax usage` / `ax usage guard` | Allowance left per tool and window, Codex's credit balance, a forecast to reset, and a guard for scripts (exit 0 safe, 1 below, 69 unknown) |
 | `ax serve [--open] [--share cloudflare] [--notify]` | The ax app: what waits for you with its actions, every live Claude and Codex session with its transcript, a box to write to it (pasted pictures, approvals and stop included), the screenshots its tools took, and the jobs it waits on, both tools' usage and credits behind a gauge in the bar, jobs, conversations, and a reader for the vault ([ui/](ui/README.md)); the old page is at `/classic` |
 | `ax app` (`start`, `stop`, `status`, `open`, `service`) | The app served in the background at http://127.0.0.1:8765/, where a browser can install it; `service --apply` keeps it running from login with launchd, and `--share cloudflare --notify` also keeps a Cloudflare link for your phone, sending each new one by ntfy |
-| VS Code extension ([vscode/](vscode/README.md)) | The same sessions in VS Code: a sidebar of every live session, grouped by tool and project with the waiting ones first and counted on a badge, each opening as an editor tab with the app's conversation page in VS Code's colours, new sessions started in a workspace folder, a working line and the turn's task list as the desktop app shows them, a `+` menu for files, the editor's selection and pictures, plan mode, goals, approve for me and the model and effort, files the answers name opened in the editor or their own app, pictures in a gallery, agents' questions answered as cards, a session's changes in VS Code's diff view (since its turn began or the last commit), a notification when one starts waiting, and usage in the status bar; it reads and acts through `ax serve` and installs from a local `.vsix` |
+| VS Code extension ([vscode/](vscode/README.md)) | The same sessions in VS Code: a panel in the right sidebar, as Codex's, listing every live session with the waiting ones first and counted on a badge, each opening as an editor tab with the app's conversation page in VS Code's colours, and a box that starts a new session in a picked folder on any model of either tool, in a tab of its own, a working line and the turn's task list as the desktop app shows them, a `+` menu for files, the editor's selection and pictures, plan mode, goals, approve for me and the model and effort, files the answers name opened in the editor or their own app, pictures in a gallery, agents' questions answered as cards, a session's changes in VS Code's diff view (since its turn began or the last commit), a notification when one starts waiting, and usage in the status bar; it reads and acts through `ax serve` and installs from a local `.vsix` |
 | `ax vault init` / `commit` / `push` | Starter Obsidian views; a commit gitleaks has scanned; a push only to a private GitHub repo |
 | `ax hooks install` | Hooks in Claude Code and Codex: sync when a session ends, and a digest of the last week's work when one starts |
 | `ax schedule install` | A launchd job that syncs every 30 minutes |
@@ -193,13 +193,12 @@ runs a changed hook only after the user approves it with `/hooks`.
 
 ### One search
 
-`ax find` asks qmd (conversation notes, Claude's and Codex's memories and the
-vault's own notes, on a qmd index named `ax`) and Semble (every git checkout
-under `~/Repos` plus `[find] extra_repos`) and interleaves their rankings. Each
-hit is labelled conversation, memory, note or code; conversation hits carry
-their handle, and `--project`, `--provider` and `--since` filter them. `--fast`
-uses keywords only. `ax index setup` builds the indexes once (qmd downloads
-about 2 GB of local models); sync refreshes them whenever it writes notes.
+`ax find` asks qmd for conversation notes and Claude's and Codex's memories, on a
+qmd index named `ax`; it indexes no code, docs or other notes. Each hit is
+labelled conversation or memory (subagent, with `--in subagents`); conversation
+hits carry their handle, and `--project`, `--provider` and `--since` filter
+them. `--fast` uses keywords only. `ax index setup` builds the index once (qmd
+downloads about 2 GB of local models); sync refreshes it whenever it writes notes.
 `ax index serve` keeps qmd's models loaded in a daemon, so a search takes about
 five seconds instead of fifteen to thirty (`--stop` stops it).
 `ax index eval questions.yml` reports how many questions with known answers

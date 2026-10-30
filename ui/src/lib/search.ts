@@ -7,6 +7,8 @@ export type Hit = {
   snippet: string
   note?: string | null
   handle?: string
+  /** A conversation's session id, to open it by. */
+  session?: string
   provider?: string
   project?: string | null
   date?: string
@@ -15,10 +17,7 @@ export type Hit = {
 
 export const KINDS = [
   { kind: "conversation", label: "Conversations", one: "Conversation" },
-  { kind: "note", label: "Notes", one: "Note" },
   { kind: "memory", label: "Memories", one: "Memory" },
-  { kind: "doc", label: "Docs", one: "Doc" },
-  { kind: "code", label: "Code", one: "Code" },
   { kind: "subagent", label: "Subagents", one: "Subagent" },
 ] as const
 

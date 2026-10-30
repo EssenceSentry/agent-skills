@@ -21,7 +21,6 @@ export const flow = [
     items: [
       "Claude Code and Codex transcripts",
       "Both tools' memories",
-      "Your repositories' docs and code",
       "Jobs: SageMaker, Seamless, Runwatch, any command",
       "Your corrections and approvals",
     ],
@@ -31,7 +30,7 @@ export const flow = [
     items: [
       "A SQLite archive and compressed backups",
       "A Markdown vault in git",
-      "A search index over all of it",
+      "A search index over the conversations and memories",
       "Rules with their evidence",
       "Jobs with their estimates",
     ],
@@ -60,8 +59,8 @@ export const areas: Area[] = [
   {
     id: "find",
     area: "Find",
-    title: "One search over everything you've worked on",
-    body: "ax find asks qmd and Semble at once: past conversations, both tools' memories, vault notes, every repository's docs and its code, by meaning as well as words. A small daemon keeps the models loaded. The search box in this app's Notes runs it when you press Enter.",
+    title: "One search over your past conversations and memories",
+    body: "ax find asks qmd for past conversations and both tools' memories, by meaning as well as words. A small daemon keeps the models loaded. The search box in this app's Notes runs it when you press Enter.",
     commands: ["ax find", "ax index"],
     proof: "The first search took 34 s; it now takes about 5 s.",
   },
@@ -163,7 +162,7 @@ export const areas: Area[] = [
 
 export const commands: [string, string][] = [
   ["ax sync", "Archive new and changed conversations into the vault"],
-  ["ax find", "One search over conversations, memories, notes, docs and code"],
+  ["ax find", "One search over past conversations and memories"],
   ["ax search", "Exact words said in past conversations"],
   ["ax here · ax recall", "This conversation's handle; an earlier one brought into this one"],
   ["ax todo", "To-dos, global or per project, in every digest"],
@@ -172,6 +171,7 @@ export const commands: [string, string][] = [
   ["ax usage", "Allowance per tool and window, Codex credits, a guard for scripts"],
   ["ax app", "This app in the background: start, stop, status, open, launchd service"],
   ["ax serve", "Serve this app in the foreground, or share it through Cloudflare"],
+  ["ax demo", "Sessions in a home of their own that show every part of a session page"],
   ["ax profile", "One set of rules, compiled into both tools, their guard and workers"],
   ["ax learn", "Rule proposals from your corrections, and each rule's lifecycle"],
   ["ax workshop", "The rules workshop: status, a run or a dry run, stop"],

@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client"
 
 import "@atelier/theme/direction.css"
 import "./index.css"
+import "./look.css"
+import "./web.css"
 import App from "./App.tsx"
 import { LIVE } from "./lib/ax"
 
@@ -16,6 +18,9 @@ if (new URLSearchParams(window.location.search).has("token")) {
 if (LIVE && "serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => undefined)
 }
+
+// The conversation and the sidebar in the extension's manner (look.css).
+document.documentElement.dataset.look = "editor"
 
 const root = document.getElementById("root")
 if (!root) throw new Error("index.html needs an element with id root")

@@ -1,9 +1,12 @@
 import { PROVIDERS, type Provider } from "@/lib/sessions"
 
-/** What a VS Code tab shows, as the extension wrote it on the page's body. */
+/** What a VS Code tab or the ax panel shows, as the extension wrote it on the page's body:
+ * a session, the form for a new one, the panel, or a search. */
 export type TabView =
   | { screen: "session"; provider: Provider; id: string; server: string }
   | { screen: "new"; folders: string[]; server: string }
+  | { screen: "panel"; folders: string[]; server: string }
+  | { screen: "search"; server: string }
 
 /** VS Code marks its theme on the body; high contrast counts as dark unless it says light. */
 export function themeFor(classes: string): "light" | "dark" {
@@ -25,7 +28,9 @@ function folders(json: string | undefined): string[] {
 export function viewFrom(data: Record<string, string | undefined>): TabView | null {
   const { screen, provider, id, server } = data
   if (!server) return null
-  if (screen === "new") return { screen, folders: folders(data.folders), server }
+  if (screen === "new" || screen === "panel")
+    return { screen, folders: folders(data.folders), server }
+  if (screen === "search") return { screen, server }
   const known = PROVIDERS.find((p) => p.provider === provider)?.provider
   if (screen === "session" && known && id) return { screen, provider: known, id, server }
   return null

@@ -1,6 +1,7 @@
 // Example state, shown when no ax is behind the page (`npm run dev`, `npm run check`).
 // The status in the bar says "Example data" whenever these are on screen.
 import type { Folder, Found, Note, NowState } from "@/lib/ax"
+import type { ModelOffer } from "@/lib/models"
 import type {
   Card,
   ChatState,
@@ -9,6 +10,7 @@ import type {
   SessionView,
   TranscriptEvent,
 } from "@/lib/sessions"
+import type { SlashItem } from "@/lib/slash"
 
 const MINUTE = 60_000
 const at = (minutes: number) => new Date(Date.now() + minutes * MINUTE).toISOString()
@@ -526,36 +528,11 @@ export function exampleFind(query: string): Found {
           "Reserve holds an amount before an expensive call and settle replaces it with the real cost, so parallel workers can't overshoot together.",
       },
       {
-        source: "note",
-        path: `/vault/${RULE}`,
-        note: RULE,
-        title: "run-tests-before-claims",
-        snippet: "Run the tests before saying they pass, and say which ones ran.",
-      },
-      {
         source: "memory",
         path: "/Users/me/.claude/projects/demo/memory/budgets.md",
         note: null,
         title: "budgets",
         snippet: "Annotation spend is capped per research run; ask before raising the cap.",
-      },
-      {
-        source: "doc",
-        path: "/Users/me/Repos/agent-skills/PLAN.md",
-        note: null,
-        title: "PLAN.md",
-        project: "agent-skills",
-        snippet: "Budgets agents register, add to and ask about, with reserve then settle.",
-      },
-      {
-        source: "code",
-        path: "/Users/me/Repos/agent-skills/src/ax/budget.py",
-        note: null,
-        title: "agent-skills/src/ax/budget.py:212-230",
-        project: "agent-skills",
-        line: 212,
-        snippet:
-          'def reserve(data, name, amount, *, note=None):\n    """Hold an amount before spending it; returns the ticket."""',
       },
     ],
   }
@@ -787,4 +764,68 @@ function exampleChat(session: Session): ChatState {
       note: "Running in the background through ax, so the Claude app doesn't show it. Hand it back to continue it elsewhere, such as `claude --resume 0b8e6f55-fetch` in a terminal.",
     }
   return { ...base, note: "Your message continues this thread in the background through ax." }
+}
+
+/** Both tools' models, as `ax serve` lists them for a new session. */
+export function exampleModels(): { claude: ModelOffer[]; codex: ModelOffer[]; errors: string[] } {
+  const claude = ["low", "medium", "high", "xhigh", "max"]
+  const codex = [...claude, "ultra"]
+  return {
+    claude: [
+      {
+        id: "default",
+        label: "Default (recommended)",
+        default: true,
+        efforts: claude,
+        default_effort: null,
+        description: "Opus 5.5 · Best for everyday, complex tasks",
+      },
+      { id: "opus", label: "Opus 5.5", efforts: claude, default_effort: null },
+      { id: "fable", label: "Fable 5.1", efforts: claude, default_effort: null },
+      { id: "sonnet", label: "Sonnet 5.5", efforts: claude, default_effort: null },
+      { id: "haiku", label: "Haiku 5.5", efforts: claude, default_effort: null },
+    ],
+    codex: [
+      {
+        id: "gpt-6.1-sol",
+        label: "GPT-6.1-Sol",
+        default: true,
+        efforts: codex,
+        default_effort: "low",
+        description: "Latest workhorse model for coding and everyday work.",
+      },
+      { id: "gpt-6-astra", label: "GPT-6-Astra", efforts: codex, default_effort: "medium" },
+      { id: "gpt-6-luna", label: "GPT-6-Luna", efforts: claude, default_effort: "medium" },
+    ],
+    errors: [],
+  }
+}
+
+/** What a tool offers the / menu in the examples. */
+export function exampleSlash(provider: string): { commands: SlashItem[]; skills: SlashItem[] } {
+  const item = (
+    name: string,
+    description: string,
+    insert: string,
+    scope: string | null = null
+  ) => ({
+    name,
+    title: name,
+    description,
+    hint: "",
+    insert,
+    scope,
+  })
+  return provider === "codex"
+    ? {
+        commands: [],
+        skills: [item("atelier", "Build dashboards and reports", "$atelier ", "Personal")],
+      }
+    : {
+        commands: [
+          item("compact", "Clear the conversation history but keep a summary", "/compact "),
+          item("atelier", "Build dashboards and reports", "/atelier "),
+        ],
+        skills: [],
+      }
 }

@@ -3,14 +3,24 @@ import { useState } from "react"
 
 import { Eyebrow } from "@/blocks/primitives"
 import { SearchBox } from "@/blocks/search-box"
-import { loadFind, useLoad } from "@/lib/ax"
+import { useStagedFind } from "@/lib/ax"
 import { readHref } from "@/lib/routes"
 import { type Hit, KINDS, kindCounts, ofKind } from "@/lib/search"
+import type { Provider } from "@/lib/sessions"
 import { cn } from "@/lib/utils"
+
+/** Opens a session in VS Code, in its own tab. */
+type Open = (provider: Provider, id: string, name: string) => void
 
 const one = (source: string) => KINDS.find((k) => k.kind === source)?.one ?? source
 
-function HitRow({ hit }: { hit: Hit }) {
+const isProvider = (value: unknown): value is Provider => value === "claude" || value === "codex"
+
+/**
+ * One hit. On the web a vault note opens in the reader; in VS Code (`onOpen`) a
+ * conversation opens as its session's tab and anything else in the editor, at its line.
+ */
+function HitRow({ hit, onOpen }: { hit: Hit; onOpen?: Open }) {
   const meta = [hit.handle, hit.date, hit.project, hit.provider].filter(Boolean).join(" · ")
   const body = (
     <>
@@ -22,12 +32,7 @@ function HitRow({ hit }: { hit: Hit }) {
       </div>
       <div className="text-[14px] leading-snug font-medium break-words">{hit.title}</div>
       {hit.snippet && (
-        <p
-          className={cn(
-            "line-clamp-4 text-[13px] leading-relaxed break-words whitespace-pre-line text-ink-2",
-            hit.source === "code" && "label-mono text-[12px]"
-          )}
-        >
+        <p className="line-clamp-4 text-[13px] leading-relaxed break-words whitespace-pre-line text-ink-2">
           {hit.snippet}
         </p>
       )}
@@ -39,6 +44,30 @@ function HitRow({ hit }: { hit: Hit }) {
       )}
     </>
   )
+  const row = "block w-full space-y-1 px-5 py-3.5 text-left hover:bg-muted"
+  if (onOpen) {
+    const { provider, session } = hit
+    if (hit.source === "conversation" && session && isProvider(provider))
+      return (
+        <li>
+          <button
+            type="button"
+            aria-label={`Open the session ${hit.title}`}
+            className={row}
+            onClick={() => onOpen(provider, session, hit.title)}
+          >
+            {body}
+          </button>
+        </li>
+      )
+    return (
+      <li>
+        <a href={`${hit.path}${hit.line ? `#L${hit.line}` : ""}`} className={cn(row, "search-hit")}>
+          {body}
+        </a>
+      </li>
+    )
+  }
   return hit.note ? (
     <li>
       <a href={readHref(hit.note)} className="block space-y-1 px-5 py-3.5 hover:bg-muted">
@@ -50,7 +79,7 @@ function HitRow({ hit }: { hit: Hit }) {
   )
 }
 
-function Results({ hits }: { hits: Hit[] }) {
+export function Results({ hits, onOpen }: { hits: Hit[]; onOpen?: Open }) {
   const [kind, setKind] = useState<string | null>(null)
   const chips = kindCounts(hits)
   const shown = ofKind(hits, kind)
@@ -82,45 +111,65 @@ function Results({ hits }: { hits: Hit[] }) {
       </fieldset>
       <ul className="panel divide-y overflow-hidden">
         {shown.map((hit) => (
-          <HitRow key={`${hit.path}:${hit.line ?? ""}`} hit={hit} />
+          <HitRow key={`${hit.path}:${hit.line ?? ""}`} hit={hit} onOpen={onOpen} />
         ))}
       </ul>
     </>
   )
 }
 
-/** `ax find` in the app: conversations, memories, notes, docs and code. */
-export function SearchScreen({ query }: { query: string }) {
-  const found = useLoad(query || null, loadFind)
+/** `ax find` in the app: past conversations and memories. In VS Code's search
+ * tab the query is the tab's own (`onSearch`), and hits open in the editor (`onOpen`). */
+export function SearchScreen({
+  query,
+  onSearch,
+  onOpen,
+}: {
+  query: string
+  onSearch?: (query: string) => void
+  onOpen?: Open
+}) {
+  const found = useStagedFind(query || null)
   return (
     <main className="mx-auto max-w-[960px] space-y-4 p-4 md:p-6">
       <header className="space-y-3">
         <div className="space-y-1">
           <Eyebrow>Search</Eyebrow>
-          <h1 className="text-[22px] leading-tight">Everything you've worked on</h1>
+          <h1 className="text-[22px] leading-tight">Past conversations and memories</h1>
         </div>
-        <SearchBox key={query} initial={query} autoFocus={!query} />
+        <SearchBox key={query} initial={query} autoFocus={!query} onSearch={onSearch} />
       </header>
       {!query && (
         <p className="text-sm text-muted-foreground">
-          Past conversations, both tools' memories, vault notes, and every repository's docs and
-          code, by meaning as well as words. Press Enter to search.
+          Claude Code's and Codex's past conversations and both tools' memories, by meaning as well
+          as words. Press Enter to search.
         </p>
       )}
-      {found.loading && (
+      {found?.loading && (
         <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-          <Loader2 className="size-4 animate-spin" /> Searching; this takes a few seconds.
+          <Loader2 className="size-4 animate-spin" /> Searching…
         </p>
       )}
-      {found.error && (
+      {found?.error && (
         <div className="panel p-5 text-sm text-muted-foreground">
           The search didn't run: {found.error}
         </div>
       )}
-      {found.data &&
+      {found?.refining && (
+        <p className="flex items-center gap-2 text-[13px] text-muted-foreground" role="status">
+          <Loader2 className="size-3.5 animate-spin" /> Matches by words so far; looking by meaning
+          too…
+        </p>
+      )}
+      {found?.partial && (
+        <p className="text-[13px] text-muted-foreground">
+          Matches by words only: the search by meaning didn't run ({found.partial}).
+        </p>
+      )}
+      {found?.data &&
         (found.data.hits.length ? (
-          <Results key={found.data.query} hits={found.data.hits} />
-        ) : (
+          <Results key={found.data.query} hits={found.data.hits} onOpen={onOpen} />
+        ) : found.refining ? null : (
           <p className="text-sm text-muted-foreground">Nothing found for “{found.data.query}”.</p>
         ))}
     </main>

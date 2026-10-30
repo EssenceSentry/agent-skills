@@ -1,22 +1,21 @@
-import { ImagePlus, Loader2, Plus, X } from "lucide-react"
+import { ImagePlus, Plus, X } from "lucide-react"
 import { type ClipboardEvent, useContext, useRef, useState } from "react"
 
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import { EditorHost } from "@/lib/host"
+import { EditorLook } from "@/lib/host"
 import { type Pasted, prepare } from "@/lib/images"
 
 /** Pictures for a message: pasted or attached, shrunk to send, removable before sending. */
-export function usePictures(onError: (message: string) => void) {
-  const [pictures, setPictures] = useState<Pasted[]>([])
+export function usePictures(
+  onError: (message: string) => void,
+  controlled?: {
+    pictures: Pasted[]
+    set: (change: Pasted[] | ((was: Pasted[]) => Pasted[])) => void
+  }
+) {
+  const [local, setLocal] = useState<Pasted[]>([])
+  const pictures = controlled?.pictures ?? local
+  const setPictures = controlled?.set ?? setLocal
 
   async function attach(files: File[]) {
     const images = files.filter((f) => f.type.startsWith("image/"))
@@ -89,7 +88,7 @@ export function AttachButton({
   disabled?: boolean
 }) {
   const picker = useRef<HTMLInputElement>(null)
-  const AttachIcon = useContext(EditorHost) ? Plus : ImagePlus
+  const AttachIcon = useContext(EditorLook) ? Plus : ImagePlus
   return (
     <>
       <Button
@@ -115,38 +114,5 @@ export function AttachButton({
         }}
       />
     </>
-  )
-}
-
-/** The second yes a shared link asks for, with the server's own question. */
-export function ConfirmDialog({
-  question,
-  busy,
-  onCancel,
-  onYes,
-}: {
-  question: string | null
-  busy: boolean
-  onCancel: () => void
-  onYes: () => void
-}) {
-  return (
-    <AlertDialog open={question !== null} onOpenChange={(open) => !open && !busy && onCancel()}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Confirm from the shared link</AlertDialogTitle>
-          <AlertDialogDescription className="whitespace-pre-wrap">
-            {question}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
-          <Button onClick={onYes} disabled={busy}>
-            {busy && <Loader2 className="animate-spin" />}
-            Yes, do it
-          </Button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
   )
 }

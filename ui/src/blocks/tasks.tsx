@@ -1,4 +1,4 @@
-import { Check, Circle, CircleDashed, ListChecks } from "lucide-react"
+import { Check, Circle, CircleDashed, CirclePause, ListChecks } from "lucide-react"
 
 import { taskCount } from "@/lib/activity"
 import type { TaskStatus, Tasks } from "@/lib/sessions"
@@ -12,10 +12,12 @@ const MARK: Record<TaskStatus, typeof Check> = {
 
 /**
  * The turn's task list, as the desktop app shows it: each step with its state, the one in
- * progress marked; folded away once every step is done.
+ * progress marked; folded away once every step is done. Once the session stops working
+ * (`stopped`) with a step still in progress, that step shows as stopped, not as going on.
  */
-export function TaskList({ tasks }: { tasks: Tasks }) {
-  const count = taskCount(tasks)
+export function TaskList({ tasks, stopped = false }: { tasks: Tasks; stopped?: boolean }) {
+  const halted = stopped && tasks.items.some((t) => t.status === "in_progress")
+  const count = `${taskCount(tasks)}${halted ? " · stopped" : ""}`
   const finished = tasks.items.every((t) => t.status === "completed")
   return (
     <details
@@ -32,13 +34,14 @@ export function TaskList({ tasks }: { tasks: Tasks }) {
       )}
       <ol className="mt-2 space-y-1.5">
         {tasks.items.map((task, i) => {
-          const Mark = MARK[task.status]
+          const going = task.status === "in_progress" && !halted
+          const Mark = task.status === "in_progress" && halted ? CirclePause : MARK[task.status]
           return (
             <li
               // biome-ignore lint/suspicious/noArrayIndexKey: steps are kept in order
               key={i}
-              data-status={task.status}
-              aria-current={task.status === "in_progress" ? "step" : undefined}
+              data-status={task.status === "in_progress" && halted ? "stopped" : task.status}
+              aria-current={going ? "step" : undefined}
               className={cn(
                 "chat-task flex items-start gap-2",
                 task.status === "completed" && "text-muted-foreground"
@@ -47,7 +50,8 @@ export function TaskList({ tasks }: { tasks: Tasks }) {
               <Mark
                 className={cn(
                   "mt-0.5 size-3.5 shrink-0",
-                  task.status === "in_progress" && "animate-pulse text-primary"
+                  going && "animate-pulse text-primary",
+                  task.status === "in_progress" && halted && "text-muted-foreground"
                 )}
                 aria-hidden
               />

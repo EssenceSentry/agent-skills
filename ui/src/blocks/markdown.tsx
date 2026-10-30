@@ -3,6 +3,8 @@ import ReactMarkdown, { type Components, type Options } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 
+import { CodeBlock } from "@/blocks/code-block"
+import { Diagram } from "@/blocks/diagram"
 import { remarkCallouts } from "@/lib/callouts"
 import { EditorHost } from "@/lib/host"
 import { mathDelimiters } from "@/lib/math"
@@ -77,11 +79,21 @@ const components: Components = {
     }
     return <a href={href}>{children}</a>
   },
-  // A display formula arrives as code inside a <pre>, which it doesn't need.
+  // A display formula arrives as code inside a <pre>, which it doesn't need; so does a
+  // Mermaid diagram, which is drawn instead.
   pre: ({ children, node }) => {
     const first = node?.children[0]
     const classes = first?.type === "element" ? String(first.properties.className ?? "") : ""
-    return mathKind(classes) ? children : <pre>{children}</pre>
+    if (first?.type === "element" && /\blanguage-mermaid\b/.test(classes)) {
+      const source = first.children.map((c) => (c.type === "text" ? c.value : "")).join("")
+      return <Diagram source={source.replace(/\n$/, "")} />
+    }
+    if (mathKind(classes)) return children
+    const source =
+      first?.type === "element"
+        ? first.children.map((c) => (c.type === "text" ? c.value : "")).join("")
+        : ""
+    return <CodeBlock source={source} language={/language-([^\s]+)/.exec(classes)?.[1] ?? ""} />
   },
   code: ({ children, className }) => {
     const kind = mathKind(className)
@@ -89,11 +101,17 @@ const components: Components = {
     if (kind && tex !== null) return <MathTex key={tex} tex={tex} display={kind === "display"} />
     return <code className={className}>{children}</code>
   },
+  // A wide table scrolls on its own, so it never widens the page.
+  table: ({ children }) => (
+    <div className="table-scroll">
+      <table>{children}</table>
+    </div>
+  ),
 }
 
 /**
- * In an editor's tab, code that names a file is also a link to it, a link to a file is
- * marked as one, and a wide table scrolls on its own.
+ * In an editor's tab, code that names a file is also a link to it, and a link to a file is
+ * marked as one.
  */
 const inEditor: Components = {
   ...components,
@@ -107,11 +125,6 @@ const inEditor: Components = {
         {children}
       </a>
     ),
-  table: ({ children }) => (
-    <div className="table-scroll">
-      <table>{children}</table>
-    </div>
-  ),
   code: (props) => {
     const path = text(props.children)
     if (path && !props.className && looksLikePath(path))

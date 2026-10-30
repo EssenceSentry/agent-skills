@@ -12,6 +12,21 @@ const inEditor = (text: string) =>
     </EditorHost.Provider>
   )
 
+describe("a Mermaid diagram in an answer", () => {
+  const source = "flowchart LR\n  A[Ask] --> B[Answer]"
+  const out = html(`Here:\n\n\`\`\`mermaid\n${source}\n\`\`\`\n`)
+
+  it("is a figure drawn from its source, which shows until the diagram is drawn", () => {
+    expect(out).toMatch(/<figure class="mermaid-diagram\b/)
+    expect(out).toContain("A[Ask] --&gt; B[Answer]")
+    expect(out).not.toContain("language-mermaid") // not shown as a code block
+  })
+
+  it("opens full size, to zoom and drag, as pictures do", () => {
+    expect(out).toContain('aria-label="Open the diagram full size"')
+  })
+})
+
 describe("Markdown", () => {
   it("turns a callout into an aside with its title", () => {
     const out = html("> [!warning] Mind the gap\n> Body text.")
@@ -65,10 +80,13 @@ describe("Markdown", () => {
     expect(html("See `src/lib/ax.ts:42`.")).not.toContain("<a")
   })
 
-  it("lets a table scroll on its own in the editor, and marks links to files", () => {
-    const table = inEditor("| a | b |\n|---|--:|\n| x | 1 |")
-    expect(table).toMatch(/^<div class="note-prose[^"]*"><div class="table-scroll"><table>/)
-    expect(html("| a | b |\n|---|--:|\n| x | 1 |")).not.toContain("table-scroll")
+  it("lets a table scroll on its own on every page, never widening the page on a phone", () => {
+    const wrapped = /^<div class="note-prose[^"]*"><div class="table-scroll"><table>/
+    expect(inEditor("| a | b |\n|---|--:|\n| x | 1 |")).toMatch(wrapped)
+    expect(html("| a | b |\n|---|--:|\n| x | 1 |")).toMatch(wrapped)
+  })
+
+  it("marks links to files in the editor", () => {
     expect(inEditor("[the plan](/Users/me/plan.md)")).toContain(
       '<a href="/Users/me/plan.md" data-file="">'
     )

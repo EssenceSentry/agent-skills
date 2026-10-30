@@ -9,6 +9,7 @@ import { preview } from "vite"
 const out = "checks"
 const viewports = [
   { name: "desktop", width: 1440, height: 900 },
+  { name: "column", width: 480, height: 1000 },
   { name: "phone", width: 390, height: 844 },
 ]
 

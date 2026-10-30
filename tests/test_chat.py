@@ -1,8 +1,9 @@
 """Writing to sessions from the ax app: Codex through its app-server or the app's queue,
 Claude through a headless process once nothing else holds the session, streamed replies,
-approvals as answers, and a second confirmation for whatever comes through a shared link."""
+approvals as answers, and the same at once through a shared link."""
 
 import json
+import os
 import sys
 import threading
 import time
@@ -80,8 +81,12 @@ for line in sys.stdin:
             say({"id": 900, "method": "item/commandExecution/requestApproval",
                  "params": {"threadId": "t", "turnId": "turn-1", "itemId": "i",
                             "command": "rm -rf build", "reason": "clean the build"}})
+        elif "slowly" in text:
+            pass  # it works on until it is interrupted
         else:
             say({"method": "turn/completed", "params": {"turn": {"id": "turn-1", "status": "completed"}}})
+    elif method == "turn/steer":
+        say({"id": message["id"], "result": {"turnId": message["params"]["expectedTurnId"]}})
     elif method == "turn/interrupt":
         say({"id": message["id"], "result": {}})
         say({"method": "turn/completed", "params": {"turn": {"id": "turn-1", "status": "interrupted"}}})
@@ -98,6 +103,37 @@ def say(message):
 def delta(text):
     say({"type": "stream_event", "event": {"type": "content_block_delta",
                                            "delta": {"type": "text_delta", "text": text}}})
+waiting, slow, queued = False, False, []
+def turn(text):
+    global waiting, slow
+    say({"type": "system", "subtype": "init"})
+    delta("Looking")
+    delta(" at it.")
+    if "slowly" in text:
+        slow = True  # it works on until it is interrupted
+    elif "approve" in text:
+        waiting = True
+        say({"type": "control_request", "request_id": "perm-1", "request": {
+            "subtype": "can_use_tool", "tool_name": "Bash",
+            "input": {"command": "rm -rf build"}}})
+    elif "ask me" in text:
+        waiting = True
+        say({"type": "control_request", "request_id": "ask-1", "request": {
+            "subtype": "can_use_tool", "tool_name": "AskUserQuestion", "tool_use_id": "tu-1",
+            "input": {"questions": [
+                {"question": "Which format?", "header": "Format", "multiSelect": False,
+                 "options": [{"label": "Summary", "description": "Brief"},
+                             {"label": "Detailed", "description": "Full"}]},
+                {"question": "Which sections?", "header": "Sections", "multiSelect": True,
+                 "options": [{"label": "Intro", "description": ""},
+                             {"label": "End", "description": ""}]}]}}})
+    elif "plan please" in text:
+        waiting = True
+        say({"type": "control_request", "request_id": "plan-1", "request": {
+            "subtype": "can_use_tool", "tool_name": "ExitPlanMode",
+            "input": {"plan": "# Plan\n1. Do it"}}})
+    else:
+        say({"type": "result", "subtype": "success"})
 for line in sys.stdin:
     message = json.loads(line)
     log.write(line); log.flush()
@@ -122,35 +158,23 @@ for line in sys.stdin:
             say({"type": "system", "subtype": "status", "permissionMode": answer["mode"]})
         if subtype == "interrupt":
             say({"type": "result", "subtype": "error_during_execution"})
+            slow = False
+            while queued and not waiting and not slow:
+                turn(queued.pop(0))
     elif message.get("type") == "user":
         text = " ".join(b.get("text", "") for b in message["message"]["content"])
-        delta("Looking")
-        delta(" at it.")
-        if "approve" in text:
-            say({"type": "control_request", "request_id": "perm-1", "request": {
-                "subtype": "can_use_tool", "tool_name": "Bash",
-                "input": {"command": "rm -rf build"}}})
-        elif "ask me" in text:
-            say({"type": "control_request", "request_id": "ask-1", "request": {
-                "subtype": "can_use_tool", "tool_name": "AskUserQuestion", "tool_use_id": "tu-1",
-                "input": {"questions": [
-                    {"question": "Which format?", "header": "Format", "multiSelect": False,
-                     "options": [{"label": "Summary", "description": "Brief"},
-                                 {"label": "Detailed", "description": "Full"}]},
-                    {"question": "Which sections?", "header": "Sections", "multiSelect": True,
-                     "options": [{"label": "Intro", "description": ""},
-                                 {"label": "End", "description": ""}]}]}}})
-        elif "plan please" in text:
-            say({"type": "control_request", "request_id": "plan-1", "request": {
-                "subtype": "can_use_tool", "tool_name": "ExitPlanMode",
-                "input": {"plan": "# Plan\n1. Do it"}}})
+        if waiting or slow:  # as Claude Code does: the message waits, then runs as its own turn
+            queued.append(text)
         else:
-            say({"type": "result", "subtype": "success"})
+            turn(text)
     elif message.get("type") == "control_response":
         if message["response"]["request_id"] == "plan-1" and \
                 message["response"]["response"]["behavior"] == "allow":
             say({"type": "system", "subtype": "status", "permissionMode": "default"})
+        waiting = False
         say({"type": "result", "subtype": "success"})
+        while queued and not waiting:
+            turn(queued.pop(0))
 """
 
 
@@ -194,6 +218,7 @@ def chats(env, tmp_path, monkeypatch):
     monkeypatch.setattr(chat, "CHATS", registry)
     monkeypatch.setattr(chat, "codex_open_in_app", lambda config, tid: False)
     monkeypatch.setattr(chat, "claude_open_elsewhere", lambda config, sid: False)
+    monkeypatch.setattr(chat, "_claude_agents", lambda: {})  # no Claude process but ax's
     yield registry, codex_log, claude_log
     registry.close_all()
 
@@ -241,12 +266,88 @@ def test_a_codex_turn_can_be_stopped(env, chats):
     assert stop["params"] == {"threadId": "t-1", "turnId": "turn-1"}
 
 
-def test_a_session_still_working_takes_no_second_message(env, chats):
+def test_a_codex_turn_takes_a_message_while_it_works(env, chats):
+    _, codex_log, _ = chats
+    chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1",
+                          "text": "work slowly", "cwd": "/repo"})  # fmt: skip
+    until(lambda: chat.state(env.config, "codex", "t-1")["partial"] == "Running the tests.")
+    assert chat.state(env.config, "codex", "t-1")["can_send"] is True
+    said = chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1",
+                                 "text": "also check the docs"})  # fmt: skip
+    assert said["ok"]
+    steer = next(m for m in logged(codex_log) if m.get("method") == "turn/steer")
+    assert steer["params"] == {"threadId": "t-1", "expectedTurnId": "turn-1",
+                               "input": [{"type": "text", "text": "also check the docs"}]}  # fmt: skip
+    live = chat.state(env.config, "codex", "t-1")
+    assert live["busy"] and live["mid_turn"] == ["also check the docs"]
+    assert live["partial"] == "Running the tests."  # the reply so far stays
+    chat.act(env.config, {"action": "stop", "provider": "codex", "id": "t-1"})
+    done = until(lambda: (s := chat.state(env.config, "codex", "t-1")) and not s["busy"] and s)
+    assert done["mid_turn"] == []
+    assert [m.get("method") for m in logged(codex_log)].count("turn/start") == 1
+
+
+def test_a_claude_turn_takes_a_message_while_it_works(env, chats):
+    _, _, claude_log = chats
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1",
+                          "text": "work slowly"})  # fmt: skip
+    until(lambda: chat.state(env.config, "claude", "s-1")["partial"] == "Looking at it.")
+    assert chat.state(env.config, "claude", "s-1")["can_send"] is True
+    said = chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1",
+                                 "text": "also check the docs"})  # fmt: skip
+    assert said["ok"]
+    live = chat.state(env.config, "claude", "s-1")
+    assert live["busy"] and live["mid_turn"] == ["also check the docs"]
+    assert live["partial"] == "Looking at it."  # the reply so far stays
+    chat.act(env.config, {"action": "stop", "provider": "claude", "id": "s-1"})
+    # Stopped, the message waiting runs as a turn of its own, as in Claude Code.
+    done = until(lambda: (s := chat.state(env.config, "claude", "s-1")) and not s["busy"] and s)
+    assert done["mid_turn"] == []
+    texts = [" ".join(b.get("text", "") for b in m["message"]["content"])
+             for m in logged(claude_log) if m.get("type") == "user"]  # fmt: skip
+    assert texts == ["work slowly", "also check the docs"]
+
+
+def test_a_message_while_claude_waits_on_a_tool_refuses_it_and_says_what_to_do(env, chats):
+    _, _, claude_log = chats
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1",
+                          "text": "approve this"})  # fmt: skip
+    until(lambda: chat.state(env.config, "claude", "s-1")["approval"])
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1",
+                          "text": "use make clean instead"})  # fmt: skip
+    answer = next(m for m in logged(claude_log) if m.get("type") == "control_response")
+    assert answer["response"]["request_id"] == "perm-1"
+    assert answer["response"]["response"] == {"behavior": "deny",
+                                              "message": "use make clean instead"}  # fmt: skip
+    done = until(lambda: (s := chat.state(env.config, "claude", "s-1")) and not s["busy"] and s)
+    assert done["approval"] is None and done["mid_turn"] == []
+    assert [m for m in logged(claude_log) if m.get("type") == "user"][-1]["message"]["content"][0][
+        "text"
+    ] == "approve this"  # no second message: the refusal carried it
+
+
+def test_a_message_while_codex_waits_on_an_approval_declines_it_and_steers(env, chats):
+    _, codex_log, _ = chats
     chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1",
                           "text": "approve this", "cwd": "/repo"})  # fmt: skip
     until(lambda: chat.state(env.config, "codex", "t-1")["approval"])
-    with pytest.raises(ValueError, match="still working"):
-        chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1", "text": "more"})
+    chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1",
+                          "text": "skip that, check the docs"})  # fmt: skip
+    sent = logged(codex_log)
+    answer = next(m for m in sent if m.get("id") == 900 and "result" in m)
+    assert answer["result"] == {"decision": "decline"}
+    texts = [m["params"]["input"][0]["text"] for m in sent
+             if m.get("method") in ("turn/steer", "turn/start")]  # fmt: skip
+    assert texts[-1] == "skip that, check the docs"
+
+
+def test_a_claude_turn_that_starts_on_its_own_counts_as_working(env, chats):
+    # A message sent mid-turn can run as a turn of its own once the first one ends: Claude
+    # opens every turn with its init, and that is when ax shows it working again.
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "text": "hi"})
+    until(lambda: not chat.state(env.config, "claude", "s-1")["busy"])
+    chat.CHATS.get("claude", "s-1")._read({"type": "system", "subtype": "init"})
+    assert chat.state(env.config, "claude", "s-1")["busy"] is True
 
 
 def test_a_thread_open_in_the_codex_app_gets_the_message_through_its_queue(env, chats, monkeypatch):
@@ -295,6 +396,21 @@ def test_a_claude_approval_can_be_refused(env, chats):
     assert answer["response"]["response"]["behavior"] == "deny"
 
 
+def test_a_refusal_can_tell_claude_what_to_do_instead(env, chats):
+    """As the apps do for a plan: no, and here is what to do differently."""
+    registry, _, claude_log = chats
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1",
+                          "text": "approve this", "cwd": "/repo"})  # fmt: skip
+    live = until(lambda: chat.state(env.config, "claude", "s-1")["approval"])
+    chat.act(env.config, {"action": "answer", "provider": "claude", "id": "s-1",
+                          "request": live["id"], "allow": False,
+                          "message": "  Keep the old build; only rebuild the charts.  "})  # fmt: skip
+    until(lambda: not chat.state(env.config, "claude", "s-1")["busy"])
+    answer = next(m for m in logged(claude_log) if m.get("type") == "control_response")
+    assert answer["response"]["response"] == {
+        "behavior": "deny", "message": "Keep the old build; only rebuild the charts."}  # fmt: skip
+
+
 def test_an_allowed_claude_tool_runs_with_its_input(env, chats):
     registry, _, claude_log = chats
     chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1",
@@ -308,22 +424,42 @@ def test_an_allowed_claude_tool_runs_with_its_input(env, chats):
                                               "updatedInput": {"command": "rm -rf build"}}  # fmt: skip
 
 
-def test_a_claude_session_open_elsewhere_must_be_taken_over_first(env, chats, monkeypatch):
+def test_a_message_to_a_claude_session_open_elsewhere_waits_until_it_is_closed(
+    env, chats, monkeypatch
+):
     registry, _, claude_log = chats
     open_now = {"s-1": True}
     monkeypatch.setattr(chat, "claude_open_elsewhere", lambda config, sid: open_now.get(sid, False))
     state = chat.state(env.config, "claude", "s-1")
-    assert (state["holder"], state["can_send"], state["take_over"]) == ("elsewhere", False, True)
-    with pytest.raises(ValueError, match="take it over"):
-        chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "text": "hi"})
+    assert (state["holder"], state["can_send"], state["take_over"]) == ("elsewhere", True, True)
+    said = chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1",
+                                 "text": "hi", "cwd": "/repo"})  # fmt: skip
+    assert said["waiting"] and "as soon as it's closed" in said["message"]
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "text": "and this"})
+    state = chat.state(env.config, "claude", "s-1")
+    assert state["pending"] and state["queued"] == "hi\n\nand this"
+    assert chat.CHATS.get("claude", "s-1") is None  # nothing sent while the app holds it
+    open_now["s-1"] = False  # the user closed it in the app
+    chat.dispatch_pending(env.config)
+    state = chat.state(env.config, "claude", "s-1")
+    assert state["holder"] == "ax"
+    sent = until(lambda: [m for m in logged(claude_log) if m.get("type") == "user"])
+    assert [m["message"]["content"][0]["text"] for m in sent] == ["hi", "and this"]
+    chat.state(env.config, "claude", "s-1")  # read again: sent once only
+    assert len([m for m in logged(claude_log) if m.get("type") == "user"]) == 2
+
+
+def test_a_take_over_without_a_message_still_waits_for_the_app(env, chats, monkeypatch):
+    open_now = {"s-1": True}
+    monkeypatch.setattr(chat, "claude_open_elsewhere", lambda config, sid: open_now.get(sid, False))
     said = chat.act(env.config, {"action": "take-over", "provider": "claude", "id": "s-1",
                                  "cwd": "/repo"})  # fmt: skip
     assert said["waiting"] and "Close it in the Claude app" in said["message"]
     assert chat.state(env.config, "claude", "s-1")["pending"]
-    open_now["s-1"] = False  # the user closed it in the app
+    open_now["s-1"] = False
+    chat.dispatch_pending(env.config)
     state = chat.state(env.config, "claude", "s-1")
     assert state["holder"] == "ax" and state["can_send"]
-    assert chat.CHATS.get("claude", "s-1") is not None
 
 
 def test_ax_continues_a_claude_session_by_its_id_and_asks_before_tools():
@@ -341,6 +477,124 @@ def test_handing_a_session_back_closes_ax_s_process(env, chats):
     assert chat.CHATS.get("claude", "s-1") is None
 
 
+def test_handing_back_adds_a_claude_session_the_app_missed(env, chats):
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "text": "Fix it",
+                          "cwd": "/repo", "name": "Fix the axis"})  # fmt: skip
+    until(lambda: not chat.state(env.config, "claude", "s-1")["busy"])
+    # The app wasn't there when ax opened it; it is now, and Hand back adds it.
+    folder = env.config.claude_app_sessions / "acct" / "org"
+    folder.mkdir(parents=True)
+    (folder / "local_app.json").write_text(
+        json.dumps({"sessionId": "local_app", "cliSessionId": "other", "model": "claude-opus-5-5"})
+    )
+    said = chat.act(env.config, {"action": "release", "provider": "claude", "id": "s-1"})
+    assert "Claude app" in said["message"]
+    [record] = [json.loads(p.read_text()) for p in folder.glob("local_*.json")
+                if p.name != "local_app.json"]  # fmt: skip
+    assert (record["cliSessionId"], record["cwd"], record["title"]) == (
+        "s-1", "/repo", "Fix the axis")  # fmt: skip
+    assert "restarted" in said["message"]  # the app reads its sessions when it starts
+    again = chat.act(env.config, {"action": "release", "provider": "claude", "id": "s-1",
+                                  "cwd": "/repo", "name": "Fix the axis"})  # fmt: skip
+    assert "Claude app" in again["message"] and "restarted" not in again["message"]
+    assert len(list(folder.glob("local_*.json"))) == 2  # it was there already
+
+
+def test_when_ax_stops_every_claude_session_it_holds_joins_the_claude_app(env, chats):
+    folder = env.config.claude_app_sessions / "acct" / "org"
+    folder.mkdir(parents=True)
+    (folder / "local_app.json").write_text(json.dumps({"sessionId": "local_app"}))
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "text": "Fix it",
+                          "cwd": "/repo", "name": "Fix the axis"})  # fmt: skip
+    chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1", "text": "Fix it",
+                          "cwd": "/repo"})  # fmt: skip
+    until(lambda: not chat.state(env.config, "codex", "t-1")["busy"])
+    chat.hand_back_all(env.config)
+    assert chat.CHATS.get("claude", "s-1") is None and chat.CHATS.get("codex", "t-1") is None
+    ids = [json.loads(p.read_text()).get("cliSessionId") for p in folder.glob("local_*.json")]
+    assert sorted(i for i in ids if i) == ["s-1"]  # Codex's own app lists every thread
+
+
+def test_handing_back_without_the_claude_app_only_lets_go(env, chats):
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "text": "Fix it",
+                          "cwd": "/repo"})  # fmt: skip
+    until(lambda: not chat.state(env.config, "claude", "s-1")["busy"])
+    said = chat.act(env.config, {"action": "release", "provider": "claude", "id": "s-1"})
+    assert said["message"] == "Handed back: ax no longer holds it."
+    chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1", "text": "Fix it",
+                          "cwd": "/repo"})  # fmt: skip
+    until(lambda: not chat.state(env.config, "codex", "t-1")["busy"])
+    said = chat.act(env.config, {"action": "release", "provider": "codex", "id": "t-1"})
+    assert said["message"] == "Handed back: ax no longer holds it."
+
+
+def app_folder(env):
+    folder = env.config.claude_app_sessions / "acct" / "org"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "local_app.json").write_text(json.dumps({"sessionId": "local_app"}))
+    return folder
+
+
+def in_app(folder):
+    ids = (json.loads(p.read_text()).get("cliSessionId") for p in folder.glob("local_*.json"))
+    return sorted(i for i in ids if i)
+
+
+def test_a_claude_session_ax_opens_joins_the_claude_app_at_once(env, chats):
+    folder = app_folder(env)
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "text": "Fix it",
+                          "cwd": "/repo", "name": "Fix the axis"})  # fmt: skip
+    assert in_app(folder) == ["s-1"]  # before any hand back
+    note = chat.state(env.config, "claude", "s-1")["note"]
+    assert "Claude app" in note and "doesn't show" not in note
+
+
+def test_a_new_claude_session_joins_the_claude_app_at_once(env, chats, tmp_path):
+    folder = app_folder(env)
+    said = chat.act(env.config, {"action": "start", "provider": "claude", "cwd": str(tmp_path),
+                                 "text": "Plan the release"})  # fmt: skip
+    assert in_app(folder) == [said["id"]]
+
+
+def test_ax_lets_go_of_a_session_the_claude_app_opens(env, chats, monkeypatch):
+    _, _, claude_log = chats
+    app_folder(env)
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "text": "Fix it",
+                          "cwd": "/repo"})  # fmt: skip
+    until(lambda: not chat.state(env.config, "claude", "s-1")["busy"])
+    # The app opened it: a process of its own runs the session now (any live one will do).
+    monkeypatch.setattr(chat, "_claude_agents", lambda: {"s-1": {os.getpid()}})
+    monkeypatch.setattr(chat, "claude_open_elsewhere", lambda config, sid: sid == "s-1")
+    chat.yield_held(env.config)
+    state = chat.state(env.config, "claude", "s-1")
+    assert state["holder"] == "elsewhere" and chat.CHATS.get("claude", "s-1") is None
+    said = chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1",
+                                 "text": "and the docs"})  # fmt: skip
+    assert said["waiting"] is True  # kept for when the app lets go, never written beside it
+    texts = [m["message"]["content"][0]["text"] for m in logged(claude_log)
+             if m.get("type") == "user"]  # fmt: skip
+    assert texts == ["Fix it"]
+
+
+def test_ax_knows_its_own_process_from_the_app_s(env, chats, monkeypatch):
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "text": "Fix it",
+                          "cwd": "/repo"})  # fmt: skip
+    until(lambda: not chat.state(env.config, "claude", "s-1")["busy"])
+    mine = chat.CHATS.get("claude", "s-1").process.pid
+    gone = 2**22 + 12345  # a process that has ended, as one ax restarted leaves behind
+    monkeypatch.setattr(chat, "_claude_agents", lambda: {"s-1": {mine, gone, None}})
+    assert chat.state(env.config, "claude", "s-1")["holder"] == "ax"
+
+
+def test_the_sessions_list_lets_go_of_what_the_app_opened(env, chats, monkeypatch):
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "text": "Fix it",
+                          "cwd": "/repo"})  # fmt: skip
+    until(lambda: not chat.state(env.config, "claude", "s-1")["busy"])
+    monkeypatch.setattr(chat, "_claude_agents", lambda: {"s-1": {os.getpid()}})
+    chat.yield_held(env.config)
+    assert chat.CHATS.get("claude", "s-1") is None
+
+
 def test_sessions_ax_holds_are_listed_with_their_state(env, chats):
     chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "text": "approve",
                           "cwd": "/Users/me/Repos/demo", "name": "Fix the fetch helper"})  # fmt: skip
@@ -350,35 +604,6 @@ def test_sessions_ax_holds_are_listed_with_their_state(env, chats):
         "claude", "s-1", "Fix the fetch helper", "ax (background)",
     )  # fmt: skip
     assert (held["state"], held["waiting_for"]) == ("waiting", "approval")
-
-
-# A second confirmation through a shared link
-
-
-def test_a_message_through_a_shared_link_waits_for_a_second_yes(env, chats):
-    ask = {"action": "send", "provider": "codex", "id": "t-1", "text": "Ship it", "cwd": "/repo"}
-    first = chat.act(env.config, dict(ask), remote=True)
-    assert first["ok"] is False and first["confirm"] and "Ship it" in first["question"]
-    assert chat.CHATS.get("codex", "t-1") is None  # nothing sent yet
-    with pytest.raises(ValueError, match="confirm"):
-        chat.act(env.config, {**ask, "text": "Something else", "confirm": first["confirm"]},
-                 remote=True)  # fmt: skip
-    second = chat.act(env.config, {**ask, "confirm": first["confirm"]}, remote=True)
-    assert second["ok"] and second["via"] == "ax"
-    until(lambda: not chat.state(env.config, "codex", "t-1")["busy"])
-    with pytest.raises(ValueError, match="confirm"):  # each confirmation is used once
-        chat.act(env.config, {**ask, "confirm": first["confirm"]}, remote=True)
-
-
-def test_an_approval_through_a_shared_link_waits_for_a_second_yes_too(env, chats):
-    chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1",
-                          "text": "approve this", "cwd": "/repo"})  # fmt: skip
-    live = until(lambda: chat.state(env.config, "codex", "t-1")["approval"])
-    answer = {"action": "answer", "provider": "codex", "id": "t-1", "request": live["id"],
-              "allow": True}  # fmt: skip
-    first = chat.act(env.config, dict(answer), remote=True)
-    assert first["ok"] is False and "run `rm -rf build`" in first["question"]
-    assert chat.act(env.config, {**answer, "confirm": first["confirm"]}, remote=True)["ok"]
 
 
 # Through the app
@@ -407,7 +632,7 @@ def post(url, body, headers=None):
         return error.code, json.loads(error.read() or b"null")
 
 
-def test_the_app_sends_from_this_mac_at_once_and_asks_twice_through_a_tunnel(env, served):
+def test_the_app_sends_at_once_from_this_mac_and_through_a_tunnel_with_its_token(env, served):
     body = {"action": "send", "provider": "codex", "id": "t-1", "text": "Ship it", "cwd": "/r"}
     status, said = post(f"{served}/api/chat", body)
     assert status == 200 and said["ok"] and said["via"] == "ax"
@@ -416,11 +641,9 @@ def test_the_app_sends_from_this_mac_at_once_and_asks_twice_through_a_tunnel(env
     token = app.token(env.config)
     status, _ = post(f"{served}/api/chat", body, remote)
     assert status == 401
-    status, first = post(f"{served}/api/chat?token={token}", body, {**remote, "X-Ax-Token": token})
-    assert status == 200 and first["ok"] is False and first["confirm"]
-    status, second = post(f"{served}/api/chat", {**body, "confirm": first["confirm"]},
-                          {**remote, "X-Ax-Token": token})  # fmt: skip
-    assert status == 200 and second["ok"]
+    status, said = post(f"{served}/api/chat", {**body, "text": "And again"},
+                        {**remote, "X-Ax-Token": token})  # fmt: skip
+    assert status == 200 and said["ok"] and "confirm" not in said  # the token is the only gate
 
 
 def test_a_refused_message_is_a_clear_error(env, served):
@@ -500,16 +723,6 @@ def test_images_are_checked_before_anything_is_sent(env, chats, images, error):
     assert chat.CHATS.get("claude", "s-1") is None
 
 
-def test_a_confirmation_covers_the_images_as_well_as_the_words(env, chats):
-    ask = {"action": "send", "provider": "codex", "id": "t-1", "text": "Look", "cwd": "/repo",
-           "images": [image()]}  # fmt: skip
-    first = chat.act(env.config, dict(ask), remote=True)
-    assert "1 image" in first["question"]
-    with pytest.raises(ValueError, match="confirm"):
-        chat.act(env.config, {**ask, "images": [image(PNG + b"x")], "confirm": first["confirm"]},
-                 remote=True)  # fmt: skip
-
-
 def test_the_app_takes_a_message_with_a_screenshot_in_it(env, served):
     big = image(PNG + b"\0" * 200_000)  # well over the size other actions accept
     body = {"action": "send", "provider": "codex", "id": "t-1", "text": "See", "cwd": "/r",
@@ -557,6 +770,71 @@ def test_a_new_codex_thread_starts_in_a_folder_held_by_ax(env, chats, tmp_path):
     assert turn["params"]["threadId"] == "t-new"
 
 
+def test_a_new_claude_session_starts_on_the_chosen_model_and_effort(env, chats, tmp_path):
+    _, _, claude_log = chats
+    said = chat.act(env.config, {"action": "start", "provider": "claude", "cwd": str(tmp_path),
+                                 "text": "Plan it", "model": "opus", "effort": "max"})  # fmt: skip
+    state = settle(env, "claude", said["id"])
+    launch = json.loads(claude_log.read_text().splitlines()[0])
+    assert launch[1:] == ["new", "max"]  # the effort it starts with, no restart
+    assert [c["model"] for c in controls(claude_log, "set_model")] == ["opus"]
+    assert state["settings"]["model"] == "opus" and state["settings"]["effort"] == "max"
+
+
+def test_a_new_codex_thread_starts_on_the_chosen_model_and_effort(env, chats, tmp_path):
+    _, codex_log, _ = chats
+    said = chat.act(env.config, {"action": "start", "provider": "codex", "cwd": str(tmp_path),
+                                 "text": "Review it", "model": "gpt-6-sol", "effort": "high"})  # fmt: skip
+    settle(env, "codex", said["id"])
+    turn = next(m for m in logged(codex_log) if m.get("method") == "turn/start")
+    assert turn["params"]["model"] == "gpt-6-sol" and turn["params"]["effort"] == "high"
+
+
+def test_a_new_session_starts_in_the_modes_chosen_for_it(env, chats, tmp_path):
+    _, _, claude_log = chats
+    said = chat.act(env.config, {"action": "start", "provider": "claude", "cwd": str(tmp_path),
+                                 "text": "Plan it", "plan": True, "auto": True})  # fmt: skip
+    state = settle(env, "claude", said["id"])
+    assert [c["mode"] for c in controls(claude_log, "set_permission_mode")] == ["plan"]
+    assert state["settings"]["plan"] and state["settings"]["auto"]
+
+
+def test_a_new_session_can_start_on_a_goal(env, chats, tmp_path):
+    _, codex_log, _ = chats
+    said = chat.act(env.config, {"action": "start", "provider": "codex", "cwd": str(tmp_path),
+                                 "text": "All tests pass", "goal": True})  # fmt: skip
+    settle(env, "codex", said["id"])
+    goal = next(m for m in logged(codex_log) if m.get("method") == "thread/goal/set")
+    assert goal["params"]["objective"] == "All tests pass"
+
+
+def test_a_new_session_on_a_model_the_tool_lacks_doesnt_start(env, chats, tmp_path):
+    with pytest.raises(ValueError, match="no model gpt-9"):
+        chat.act(env.config, {"action": "start", "provider": "claude", "cwd": str(tmp_path),
+                              "text": "hi", "model": "gpt-9"})  # fmt: skip
+    assert chat.held() == []
+
+
+def test_both_tools_list_their_models_for_a_new_session(env, tmp_path):
+    claude = script(tmp_path, "claude.py", FAKE_CLAUDE)
+    codex = script(tmp_path, "codex.py", FAKE_CODEX)
+    found = chat.available_models(
+        env.config,
+        claude=[sys.executable, str(claude), str(tmp_path / "c.log"), "-", "new", "-"],
+        codex=[sys.executable, str(codex), str(tmp_path / "x.log")],
+        fresh=True,
+    )
+    assert [m["id"] for m in found["claude"]] == ["default", "opus", "haiku"]
+    assert [m["id"] for m in found["codex"]] == ["gpt-6-astra", "gpt-6-sol"]  # hidden ones out
+    assert [m["default"] for m in found["codex"]] == [True, False]
+    assert found["errors"] == []
+    missing = chat.available_models(env.config, claude=[str(tmp_path / "no-claude")],
+                                    codex=[sys.executable, str(codex), str(tmp_path / "x.log")],
+                                    fresh=True)  # fmt: skip
+    assert missing["claude"] == [] and missing["errors"][0].startswith("claude:")
+    assert [m["id"] for m in missing["codex"]] == ["gpt-6-astra", "gpt-6-sol"]
+
+
 @pytest.mark.parametrize("cwd", [None, "relative/folder", "/no/such/folder/anywhere"])
 def test_a_new_session_needs_a_folder_that_exists(env, chats, cwd):
     with pytest.raises(ValueError, match="folder"):
@@ -567,17 +845,6 @@ def test_a_new_session_needs_a_folder_that_exists(env, chats, cwd):
 def test_a_new_session_needs_something_to_say(env, chats, tmp_path):
     with pytest.raises(ValueError, match="nothing to send"):
         chat.act(env.config, {"action": "start", "provider": "codex", "cwd": str(tmp_path)})
-
-
-def test_starting_a_session_through_a_shared_link_waits_for_a_second_yes(env, chats, tmp_path):
-    ask = {"action": "start", "provider": "codex", "cwd": str(tmp_path), "text": "Look into it"}
-    first = chat.act(env.config, dict(ask), remote=True)
-    assert (
-        first["ok"] is False and "Codex" in first["question"] and str(tmp_path) in first["question"]
-    )
-    assert chat.held() == []
-    second = chat.act(env.config, {**ask, "confirm": first["confirm"]}, remote=True)
-    assert second["ok"] and second["id"] == "t-new"
 
 
 def test_a_just_started_session_shows_before_its_transcript_exists(
@@ -596,6 +863,13 @@ def test_the_app_starts_a_session_and_answers_with_its_id(env, served, tmp_path)
     status, said = post(f"{served}/api/chat", {"action": "start", "provider": "codex",
                                                "cwd": str(tmp_path), "text": "Go"})  # fmt: skip
     assert status == 200 and said["ok"] and said["id"] == "t-new"
+
+
+def test_the_app_lists_both_tools_models(env, served, monkeypatch):
+    offered = {"claude": [{"id": "opus"}], "codex": [{"id": "gpt-6-sol"}], "errors": []}
+    monkeypatch.setattr(chat, "available_models", lambda config: offered)
+    with urllib.request.urlopen(f"{served}/api/models", timeout=5) as response:
+        assert response.status == 200 and json.loads(response.read()) == offered
 
 
 def test_a_session_ax_started_keeps_the_name_of_its_first_message(env, chats, tmp_path):
@@ -636,9 +910,9 @@ def test_a_claude_session_ax_opens_reports_its_models_and_modes(env, chats):
     assert state["settings"] == {"plan": False, "auto": False, "model": None, "effort": None}
     assert state["models"][:2] == [
         {"id": "default", "label": "Default (recommended)", "default_effort": None,
-         "efforts": ["low", "medium", "high", "xhigh", "max"]},
+         "description": "", "default": True, "efforts": ["low", "medium", "high", "xhigh", "max"]},
         {"id": "opus", "label": "Opus 5.5", "default_effort": None,
-         "efforts": ["low", "medium", "high", "xhigh", "max"]},
+         "description": "", "default": False, "efforts": ["low", "medium", "high", "xhigh", "max"]},
     ]  # fmt: skip
     assert state["goal"] is None
 
@@ -704,6 +978,22 @@ def test_a_claude_goal_is_its_goal_command(env, chats):
     assert chat.state(env.config, "claude", "s-1")["goal"] is None
 
 
+def test_a_claude_goal_clears_while_it_works_once_its_turn_ends(env, chats):
+    _, _, claude_log = chats
+    chat.act(env.config, {"action": "goal", "provider": "claude", "id": "s-1",
+                          "objective": "the tests pass"})  # fmt: skip
+    settle(env, "claude", "s-1")
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1",
+                          "text": "approve this"})  # fmt: skip
+    until(lambda: chat.state(env.config, "claude", "s-1")["approval"])  # mid-turn
+    said = chat.act(env.config, {"action": "goal-clear", "provider": "claude", "id": "s-1"})
+    assert said["ok"] and chat.state(env.config, "claude", "s-1")["goal"] is None
+    texts = [
+        m["message"]["content"][0]["text"] for m in logged(claude_log) if m.get("type") == "user"
+    ]
+    assert texts[-1] == "/goal clear"  # queued by Claude until the turn ends
+
+
 def test_a_codex_thread_ax_opens_reports_its_models_and_settings(env, chats):
     _, codex_log, _ = chats
     chat.act(env.config, {"action": "open", "provider": "codex", "id": "t-1"})
@@ -713,9 +1003,9 @@ def test_a_codex_thread_ax_opens_reports_its_models_and_settings(env, chats):
                                  "effort": "xhigh"}  # fmt: skip
     assert state["models"] == [
         {"id": "gpt-6-astra", "label": "GPT-6-Astra", "default_effort": "medium",
-         "efforts": ["low", "medium", "high", "xhigh"]},
+         "description": "", "default": True, "efforts": ["low", "medium", "high", "xhigh"]},
         {"id": "gpt-6-sol", "label": "GPT-6-Sol", "default_effort": "low",
-         "efforts": ["low", "high"]},
+         "description": "", "default": False, "efforts": ["low", "high"]},
     ]  # fmt: skip
     hello = next(m for m in logged(codex_log) if m.get("method") == "initialize")
     assert hello["params"]["capabilities"] == {"experimentalApi": True}
@@ -786,16 +1076,6 @@ def test_a_thread_open_in_the_codex_app_keeps_its_modes_there(env, chats, monkey
         chat.act(env.config, {"action": "settings", "provider": "codex", "id": "t-2", "plan": True})
 
 
-def test_modes_and_goals_through_a_shared_link_wait_for_a_second_yes(env, chats):
-    first = chat.act(env.config, {"action": "settings", "provider": "claude", "id": "s-1",
-                                  "auto": True, "name": "Fix it"}, remote=True)  # fmt: skip
-    assert first["confirm"] and "approve its own actions" in first["question"]
-    goal = chat.act(env.config, {"action": "goal", "provider": "claude", "id": "s-1",
-                                 "objective": "ship it", "name": "Fix it"}, remote=True)  # fmt: skip
-    assert goal["confirm"] and "ship it" in goal["question"]
-    assert chat.CHATS.get("claude", "s-1") is None  # nothing happened yet
-
-
 def test_a_codex_threads_plan_is_the_turns_task_list(env, chats):
     chat.act(env.config, {"action": "send", "provider": "codex", "id": "t-1", "text": "plan steps"})
     state = settle(env, "codex", "t-1")
@@ -827,6 +1107,18 @@ def test_claudes_question_waits_for_answers_and_takes_them_as_the_sdk_says(env, 
                                                 "Which sections?": "Intro, End"}  # fmt: skip
     assert len(given["updatedInput"]["questions"]) == 2
     assert chat.state(env.config, "claude", "s-1")["question"] is None
+
+
+def test_skipping_claudes_question_declines_it(env, chats):
+    _, _, claude_log = chats
+    chat.act(env.config, {"action": "send", "provider": "claude", "id": "s-1", "text": "ask me"})
+    until(lambda: chat.state(env.config, "claude", "s-1")["question"])
+    chat.act(env.config, {"action": "answer", "provider": "claude", "id": "s-1",
+                          "request": "ask-1", "allow": False})  # fmt: skip
+    assert chat.state(env.config, "claude", "s-1")["question"] is None  # at once, not at the end
+    settle(env, "claude", "s-1")
+    answer = next(m for m in logged(claude_log) if m.get("type") == "control_response")
+    assert answer["response"]["response"]["behavior"] == "deny"
 
 
 def test_codexs_blocking_question_is_answered_through_the_app_server(env, chats):
@@ -863,10 +1155,3 @@ def test_a_question_ax_cant_reach_says_where_to_answer_it(env, chats):
     with _pytest.raises(ValueError, match="answer it where"):
         chat.act(env.config, {"action": "answer-question", "provider": "claude", "id": "s-1",
                               "request": "ask-9", "answers": [["A"]]})  # fmt: skip
-
-
-def test_an_answer_through_a_shared_link_waits_for_a_second_yes(env, chats):
-    first = chat.act(env.config, {"action": "answer-question", "provider": "codex", "id": "t-1",
-                                  "via": "codex-async", "call": "c2", "questions": ["May I?"],
-                                  "answers": [["Approve"]], "name": "Fix it"}, remote=True)  # fmt: skip
-    assert first["confirm"] and "Approve" in first["question"]

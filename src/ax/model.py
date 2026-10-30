@@ -22,6 +22,11 @@ class Event:
     # A question asked with options and its answers (see ax.sources.asks), or, on the
     # user's message that answered one later, {"reply": call}.
     ask: dict | None = None
+    native_id: str | None = None
+    turn_id: str | None = None
+    call_id: str | None = None
+    exit_code: int | None = None
+    duration_ms: float | None = None
 
 
 @dataclass

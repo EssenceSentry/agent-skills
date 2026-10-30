@@ -1,0 +1,150 @@
+/*
+ * The web page as VS Code lays out ax's extension: the panel as a sidebar on the left,
+ * the conversation beside it, both drawn by look.css. VS Code sets the --vscode-* colours
+ * that sheet reads; here ax's own theme stands in for them, so the page keeps the
+ * extension's manner in the theme's colours, light and dark.
+ */
+:root[data-look="editor"] {
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --vscode-font-size: 13px;
+  --vscode-editor-font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --vscode-editor-font-size: 12px;
+  --vscode-foreground: var(--foreground);
+  --vscode-editor-foreground: var(--foreground);
+  --vscode-descriptionForeground: var(--muted-foreground);
+  --vscode-disabledForeground: var(--faint);
+  --vscode-editor-background: var(--card);
+  --vscode-sideBar-background: var(--page);
+  --vscode-sideBar-foreground: var(--foreground);
+  --vscode-editorWidget-background: var(--popover);
+  --vscode-editorWidget-foreground: var(--popover-foreground);
+  --vscode-editorWidget-border: var(--border-strong);
+  --vscode-menu-background: var(--popover);
+  --vscode-menu-foreground: var(--popover-foreground);
+  --vscode-panel-border: var(--border);
+  --vscode-widget-border: var(--border);
+  --vscode-input-background: var(--card);
+  --vscode-input-foreground: var(--foreground);
+  --vscode-input-border: var(--input);
+  --vscode-input-placeholderForeground: var(--faint);
+  --vscode-focusBorder: var(--ring);
+  --vscode-button-background: var(--primary);
+  --vscode-button-foreground: var(--primary-foreground);
+  --vscode-button-secondaryBackground: var(--secondary);
+  --vscode-button-secondaryForeground: var(--secondary-foreground);
+  --vscode-textLink-foreground: var(--primary-ink);
+  --vscode-textLink-activeForeground: var(--primary);
+  --vscode-textCodeBlock-background: var(--sunken);
+  --vscode-list-hoverBackground: color-mix(in srgb, var(--foreground) 5%, transparent);
+  --vscode-list-hoverForeground: var(--foreground);
+  --vscode-list-inactiveSelectionBackground: color-mix(in srgb, var(--foreground) 9%, transparent);
+  --vscode-toolbar-hoverBackground: color-mix(in srgb, var(--foreground) 7%, transparent);
+  --vscode-errorForeground: var(--status-critical);
+  --vscode-editorWarning-foreground: var(--status-warning);
+  --vscode-charts-blue: var(--series-1);
+  --vscode-charts-purple: var(--series-5);
+}
+
+/* VS Code marks a light theme on the page; here the viewer's system says it. */
+@media (prefers-color-scheme: light) {
+  :root[data-look="editor"]:not([data-theme="dark"]) {
+    --chat-tint: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+    --chat-code-tint: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+  }
+}
+
+.ax-shell {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  min-height: 100dvh;
+}
+.ax-sidebar {
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  background: var(--vscode-sideBar-background);
+  border-right: 1px solid var(--vscode-panel-border);
+}
+/* Nothing beside the sidebar may widen the page: on a phone a wider page widens the
+ * layout viewport, and the sidebar, fixed to it, then slides in off the screen. */
+.ax-main {
+  min-width: 0;
+  overflow-x: clip;
+  background: var(--page);
+}
+/* A conversation sits on the editor's colour, as in its VS Code tab. */
+.ax-main[data-screen="session"] {
+  background: var(--vscode-editor-background);
+}
+.ax-phonebar,
+.ax-scrim {
+  display: none;
+}
+
+/* The tab's title names a session in VS Code; here its header does, at the chat's scale. */
+:root[data-look="editor"] .chat-title {
+  font-size: calc(var(--chat-size) * 1.25);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* The tools' marks come from the extension's icon font, which only VS Code has. */
+.ax-mark {
+  display: none;
+}
+
+/*
+ * On a phone the conversation takes the screen and the sidebar slides over it from a bar
+ * at the top; the text grows to a phone's size, and the message box to the size that
+ * keeps the browser from zooming in on it.
+ */
+@media (max-width: 767px) {
+  :root[data-look="editor"] {
+    --vscode-font-size: 15px;
+    --vscode-editor-font-size: 13px;
+  }
+  :root[data-look="editor"] .chat-input {
+    font-size: 16px;
+  }
+  .ax-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ax-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 50;
+    width: min(320px, 86vw);
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition:
+      transform 0.2s ease,
+      visibility 0s linear 0.2s;
+  }
+  .ax-shell[data-drawer] .ax-sidebar {
+    transform: none;
+    visibility: visible;
+    transition: transform 0.2s ease;
+  }
+  .ax-shell[data-drawer] .ax-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: color-mix(in srgb, var(--foreground) 28%, transparent);
+  }
+  .ax-phonebar {
+    display: flex;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: var(--vscode-sideBar-background);
+    border-bottom: 1px solid var(--vscode-panel-border);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ax-sidebar,
+  .ax-shell[data-drawer] .ax-sidebar {
+    transition: none;
+  }
+}

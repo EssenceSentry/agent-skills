@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { every, messageStamp, stampsBefore } from "@/lib/time"
+import { every, messageStamp, resetStamp, stampsBefore } from "@/lib/time"
 
 describe("every", () => {
   it("writes an interval the way you would say it", () => {
@@ -23,5 +23,16 @@ describe("dating a message", () => {
     expect(stampsBefore("2026-10-27T12:00:00Z", "2026-10-27T12:20:00Z")).toBe(false)
     expect(stampsBefore("2026-10-27T12:00:00Z", "2026-10-27T12:30:00Z")).toBe(true)
     expect(stampsBefore("2026-10-27T12:00:00Z", null)).toBe(false)
+  })
+})
+
+describe("when a usage window resets", () => {
+  const now = new Date(2026, 9, 27, 12, 0)
+  it("says the day and the time, as a message's date does", () => {
+    expect(resetStamp(new Date(2026, 9, 27, 14, 0).toISOString(), now)).toBe("today at 2:00 PM")
+    expect(resetStamp(new Date(2026, 9, 28, 9, 5).toISOString(), now)).toBe("tomorrow at 9:05 AM")
+    expect(resetStamp(new Date(2026, 9, 30, 0, 0).toISOString(), now)).toBe(
+      "Fri, Oct 30 at 12:00 AM"
+    )
   })
 })

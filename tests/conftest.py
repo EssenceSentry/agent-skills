@@ -53,6 +53,7 @@ def env(tmp_path):
         f'data = "{tmp_path / "data"}"\n'
         f'claude_home = "{claude_home}"\n'
         f'codex_home = "{codex_home}"\n'
+        f'claude_app_sessions = "{tmp_path / "claude-app"}"\n'
     )
     return SimpleNamespace(
         root=tmp_path,

@@ -259,8 +259,8 @@ def test_search_runs_ax_find_and_marks_what_the_reader_can_open(env):
     note = env.vault / "Sessions" / "2026" / "a note.md"
     hits = [
         {"source": "conversation", "path": str(note), "title": "Budgets", "snippet": "reserve"},
-        {"source": "code", "path": "/repos/agent-skills/src/ax/budget.py", "title": "budget.py",
-         "snippet": "def reserve", "project": "agent-skills"},
+        {"source": "memory", "path": "/home/.claude/projects/-Repos-x/memory/budgets.md",
+         "title": "budgets", "snippet": "reserve, then settle"},
     ]  # fmt: skip
     find_ = fake_find(hits)
     found = app.search(env.config, "  reserve then settle ", find_=find_)
@@ -272,6 +272,25 @@ def test_search_runs_ax_find_and_marks_what_the_reader_can_open(env):
         app.search(env.config, "   ", find_=find_)
 
 
+def test_search_has_a_fast_stage_by_keywords_alone(env):
+    find_ = fake_find([])
+    app.search(env.config, "reserve", fast=True, find_=find_)
+    [(_, kw)] = find_.asked
+    assert kw["fast"] is True
+
+
+def test_the_commands_endpoint_asks_the_session_s_tool(served, monkeypatch):
+    from ax import commands
+
+    _, base, _ = served
+    asked = []
+    monkeypatch.setattr(commands, "offered", lambda config, provider, cwd: asked.append(
+        (provider, cwd)) or {"commands": [{"name": "compact"}], "skills": []})  # fmt: skip
+    status, _, body = call(f"{base}/api/commands?provider=claude&cwd=/repo")
+    assert status == 200 and json.loads(body)["commands"][0]["name"] == "compact"
+    assert asked == [("claude", "/repo")]
+
+
 def test_the_find_endpoint_answers_and_says_why_when_it_cannot(served, monkeypatch):
     from ax import find
 
@@ -281,6 +300,10 @@ def test_the_find_endpoint_answers_and_says_why_when_it_cannot(served, monkeypat
          "snippet": "start here"}]))  # fmt: skip
     status, _, body = call(f"{base}/api/find?q=start%20here")
     assert status == 200 and json.loads(body)["hits"][0]["note"] == "Home.md"
+    asked = []
+    monkeypatch.setattr(find, "find", lambda config, query, **kw: asked.append(kw) or [])
+    assert call(f"{base}/api/find?q=start&fast=1")[0] == 200 and asked[-1]["fast"] is True
+    assert call(f"{base}/api/find?q=start")[0] == 200 and asked[-1]["fast"] is False
     assert call(f"{base}/api/find?q=")[0] == 400
 
     def down(config, query, **kw):
@@ -290,6 +313,87 @@ def test_the_find_endpoint_answers_and_says_why_when_it_cannot(served, monkeypat
     status, _, body = call(f"{base}/api/find?q=anything")
     assert status == 503 and "ax index setup" in json.loads(body)["error"]
     assert call(f"{base}/api/find?q=x", headers=REMOTE)[0] == 401  # the tunnel needs the token
+
+
+# Sharing ax on demand
+
+
+class FakeTunnel:
+    """A quick tunnel that comes up at once at the link it is given, or fails to."""
+
+    def __init__(self, url, *, fails=False):
+        self.given, self.fails, self.url, self.closed = url, fails, None, False
+
+    def start(self):
+        if self.fails:
+            raise RuntimeError("cloudflared gave no link in 30 s")
+        self.url = self.given
+        return self.url
+
+    def tick(self):
+        return None
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.fixture
+def sharing(vault, tmp_path):
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "index.html").write_text("<!doctype html><title>ax</title>")
+    made, sent, fails = [], [], []
+
+    def tunnel():
+        made.append(FakeTunnel(f"https://{TUNNEL}", fails=bool(fails)))
+        return made[-1]
+
+    server = serve.make_server(vault.config, port=0, usage_of=fake_usage, web=web, poll=0.05,
+                               tunnel=tunnel, announce=sent.append)  # fmt: skip
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_address[1]}", made, sent, fails
+    server.shutdown()
+    server.server_close()
+
+
+def share(base, on, headers=None, token=None):
+    body = json.dumps({"on": on}).encode()
+    status, _, raw = call(f"{base}/api/share", token=token, data=body,
+                          headers={"Content-Type": "application/json", **(headers or {})})  # fmt: skip
+    return status, json.loads(raw or b"{}")
+
+
+def test_ax_is_shared_on_demand_and_its_link_dies_when_sharing_stops(sharing):
+    base, made, sent, _ = sharing
+    status, _, raw = call(f"{base}/api/share")
+    assert status == 200 and json.loads(raw) == {"shared": False, "link": None}
+    status, said = share(base, True)
+    assert status == 200 and said["shared"], said
+    link = said["link"]
+    assert link.startswith(f"https://{TUNNEL}/?token=")
+    assert sent == [link]  # through ntfy, once
+    assert share(base, True)[1]["link"] == link and sent == [link]  # already shared
+    token = link.split("token=")[1]
+    assert call(f"{base}/api/now", token=token, headers=REMOTE)[0] == 200
+    status, said = share(base, False)
+    assert status == 200 and not said["shared"] and made[0].closed
+    assert call(f"{base}/api/now", token=token, headers=REMOTE)[0] == 401  # the link is dead
+    assert json.loads(call(f"{base}/api/share")[2]) == {"shared": False, "link": None}
+
+
+def test_only_this_mac_sees_or_changes_sharing(sharing):
+    base, _, _, _ = sharing
+    token = share(base, True)[1]["link"].split("token=")[1]
+    assert call(f"{base}/api/share", token=token, headers=REMOTE)[0] == 403
+    assert share(base, False, headers={**REMOTE, "X-Ax-Token": token})[0] == 403  # a valid token
+
+
+def test_a_tunnel_that_does_not_come_up_says_why(sharing):
+    base, _, sent, fails = sharing
+    fails.append(True)
+    status, said = share(base, True)
+    assert status == 502 and "cloudflared" in said["error"] and sent == []
+    assert json.loads(call(f"{base}/api/share")[2])["shared"] is False
 
 
 # Actions
@@ -673,6 +777,21 @@ def test_ax_serve_prints_the_link_with_its_token(env, monkeypatch):
     assert "/classic" in result.output
 
 
+def test_ax_serve_hands_back_what_it_holds_when_it_stops(env, monkeypatch):
+    from typer.testing import CliRunner
+
+    from ax import chat
+    from ax.cli import app as cli
+
+    handed = []
+    monkeypatch.setenv("AX_CONFIG", str(env.config_path))
+    monkeypatch.setattr(serve.ThreadingHTTPServer, "serve_forever", lambda self: None)
+    monkeypatch.setattr(chat, "hand_back_all", lambda config: handed.append(config.vault))
+    result = CliRunner().invoke(cli, ["serve", "--port", "0"])
+    assert result.exit_code == 0, result.output
+    assert handed == [env.vault]
+
+
 # Sharing through a Cloudflare quick tunnel
 
 
@@ -790,7 +909,7 @@ def test_ax_serve_stays_up_on_this_mac_until_the_tunnel_starts(env, cli_serve, m
     assert result.exit_code == 0, result.output
     assert "could not reach Cloudflare" in result.output and "trying again" in result.output
     [(_, title, _, options)] = sent  # nothing was sent before the link existed
-    assert title == "ax is open"
+    assert title == "ax is shared"
     assert options["click"].startswith("https://late.trycloudflare.com/?token=")
 
 

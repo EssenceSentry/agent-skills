@@ -282,15 +282,19 @@ def _todo_item(config, todo) -> dict:
 # Search
 
 
-def search(config, query: str, *, find_=None) -> dict:
-    """`ax find` over conversations, memories, notes, docs and code. Hits in the vault say
-    which note the reader opens; the others carry their path and snippet only."""
+def search(config, query: str, *, fast: bool = False, find_=None) -> dict:
+    """`ax find` over conversations and memories. Hits in the vault say which note the
+    reader opens; the others carry their path and snippet only. A search comes in two
+    stages: `fast`, by keywords alone, in under a second, then the whole one, by meaning
+    too, through qmd's daemon, started here when it isn't running."""
     from ax import find
 
     query = " ".join((query or "").split())
     if not query:
         raise ValueError("say what to look for")
-    hits = (find_ or find.find)(config, query, limit=SEARCH_HITS)
+    if find_ is None and not fast:
+        find.keep_daemon(config)
+    hits = (find_ or find.find)(config, query, limit=SEARCH_HITS, fast=fast)
     for hit in hits:
         hit["note"] = _relative(config, Path(hit["path"])) if hit.get("path") else None
     return {"query": query, "hits": hits}

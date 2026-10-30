@@ -29,6 +29,10 @@ class Config:
     notify_topic: str | None = None
     # Codex's newer skills folder, beside ~/.codex/skills.
     agents_home: Path = Path("~/.agents").expanduser()
+    # Where the Claude desktop app keeps its Code sessions; Hand back adds a session there.
+    claude_app_sessions: Path = Path(
+        "~/Library/Application Support/Claude/claude-code-sessions"
+    ).expanduser()
     # `ax profile`: where repo-scoped rules land (a repo is <root>/<name> unless listed).
     profile_repos_root: Path = Path("~/Repos").expanduser()
     profile_repos: dict = field(default_factory=dict)
@@ -36,10 +40,7 @@ class Config:
     profile_extra_dirs: tuple[Path, ...] = ()
     # `ax sync` labels up to 40 new learner candidates with Haiku (a model call) unless false.
     learn_label_on_sync: bool = True
-    # `ax find`: the repos Semble searches (empty: every git checkout under the repos root),
-    # more repos to add to those, qmd's config folder, and whether sync refreshes the index.
-    find_repos: tuple[Path, ...] = ()
-    find_extra_repos: tuple[Path, ...] = ()
+    # `ax find`: qmd's config folder, and whether sync refreshes the index.
     find_qmd_dir: Path = Path("~/.config/qmd").expanduser()
     find_refresh_on_sync: bool = True
     find_qmd_port: int = 8181  # where `ax index serve` keeps qmd's daemon
@@ -99,6 +100,9 @@ def load(path: Path | None = None) -> Config:
         notify_server=str(notify.get("server", "https://ntfy.sh")),
         notify_topic=notify.get("topic") or None,
         agents_home=p("agents_home", "~/.agents"),
+        claude_app_sessions=p(
+            "claude_app_sessions", "~/Library/Application Support/Claude/claude-code-sessions"
+        ),
         profile_repos_root=Path(prof.get("repos_root", "~/Repos")).expanduser(),
         profile_repos={k: Path(v).expanduser() for k, v in prof.get("repos", {}).items()},
         profile_extra_dirs=tuple(
@@ -108,8 +112,6 @@ def load(path: Path | None = None) -> Config:
             )
         ),
         learn_label_on_sync=bool(learning.get("label_on_sync", True)),
-        find_repos=tuple(Path(r).expanduser() for r in finding.get("repos", ())),
-        find_extra_repos=tuple(Path(r).expanduser() for r in finding.get("extra_repos", ())),
         find_qmd_dir=Path(finding.get("qmd_config_dir", qmd_dir)).expanduser(),
         find_refresh_on_sync=bool(finding.get("refresh_on_sync", True)),
         find_qmd_port=int(finding.get("qmd_port", 8181)),

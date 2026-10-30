@@ -1,7 +1,7 @@
 /** Helpers for showing what a session changed in VS Code's diff view. */
 
-export type Base = "turn" | "commit"
-export type BeforeSide = { provider: "claude" | "codex"; id: string; base: Base }
+export type Base = "turn" | "session" | "commit"
+export type BeforeSide = { provider: "claude" | "codex"; id: string; base: Base; server?: string }
 export type Before = { exists: boolean; text: string }
 
 /** The query of an `ax-before:` address, the left side of a diff: whose file, before what. */
@@ -15,8 +15,13 @@ export function readBeforeQuery(query: string): BeforeSide | null {
   const id = found.get("id")
   const base = found.get("base")
   if ((provider !== "claude" && provider !== "codex") || !id) return null
-  if (base !== "turn" && base !== "commit") return null
-  return { provider, id, base }
+  if (base !== "turn" && base !== "session" && base !== "commit") return null
+  return {
+    provider,
+    id,
+    base,
+    ...(found.get("server") ? { server: found.get("server") ?? undefined } : {}),
+  }
 }
 
 /** Whether a file differs from how it was: changed, added or removed. */
@@ -27,5 +32,5 @@ export function changed(before: Before, now: string | null): boolean {
 
 export function changesTitle(name: string, base: Base, count: number): string {
   const files = count === 1 ? "1 file" : `${count} files`
-  return `${name}: ${files} changed ${base === "turn" ? "this turn" : "since the last commit"}`
+  return `${name}: ${files} changed ${base === "turn" ? "this turn" : base === "session" ? "during this session" : "since the last commit"}`
 }

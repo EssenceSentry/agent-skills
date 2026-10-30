@@ -62,6 +62,8 @@ def clear_cache() -> None:
 
 def read(path: Path, provider: str) -> dict:
     """The line and the list as of the transcript's last complete record."""
+    if path.suffix == ".zst":  # Codex compresses only a rollout it has finished with
+        return {"activity": None, "tasks": None}
     key = str(path)
     try:
         size = path.stat().st_size

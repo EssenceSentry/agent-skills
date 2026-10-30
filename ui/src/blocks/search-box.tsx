@@ -5,22 +5,27 @@ import { Input } from "@/components/ui/input"
 import { searchHref } from "@/lib/routes"
 import { cn } from "@/lib/utils"
 
-/** A box that runs `ax find` when you press Enter; nothing happens while you type. */
+/** A box that runs `ax find` when you press Enter, on the search screen's address or, in
+ * VS Code, through `onSearch`; nothing happens while you type. */
 export function SearchBox({
   initial = "",
   autoFocus = false,
   className,
+  onSearch,
 }: {
   initial?: string
   autoFocus?: boolean
   className?: string
+  onSearch?: (query: string) => void
 }) {
   const [query, setQuery] = useState(initial)
 
   function submit(event: FormEvent) {
     event.preventDefault()
     const wanted = query.trim()
-    if (wanted) window.location.hash = searchHref(wanted)
+    if (!wanted) return
+    if (onSearch) onSearch(wanted)
+    else window.location.hash = searchHref(wanted)
   }
 
   return (
@@ -33,8 +38,8 @@ export function SearchBox({
           autoFocus={autoFocus}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search everything, then Enter"
-          aria-label="Search conversations, memories, notes, docs and code"
+          placeholder="Search sessions and memories, then Enter"
+          aria-label="Search past conversations and memories"
           className="pl-8"
         />
       </form>

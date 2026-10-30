@@ -10,7 +10,9 @@ import {
   composerMode,
   folderSuggestions,
   groupSessions,
+  heldState,
   mergePage,
+  metaLine,
   openQuestions,
   runningNow,
   type Session,
@@ -221,6 +223,15 @@ describe("the composer", () => {
     ...over,
   })
 
+  it("says a session ax holds waits on you while it asks, and works while busy", () => {
+    const question = { id: "q", via: "claude" as const, call: "c", questions: [] }
+    const approval = { id: "a", tool: "Bash", summary: "run `ls`", reason: null, detail: null }
+    expect(heldState(chat({ holder: "ax", busy: true, question }))).toBe("waiting")
+    expect(heldState(chat({ holder: "ax", busy: true, approval }))).toBe("waiting")
+    expect(heldState(chat({ holder: "ax", busy: true }))).toBe("working")
+    expect(heldState(chat({ holder: "ax" }))).toBe("idle")
+  })
+
   it("offers what the session allows now", () => {
     expect(composerMode(chat())).toBe("send")
     expect(composerMode(chat({ holder: "ax", busy: true, can_send: false }))).toBe("busy")
@@ -237,6 +248,7 @@ describe("the composer", () => {
     expect(canSend(chat(), "   ")).toBe(false)
     expect(canSend(chat(), "", 1)).toBe(true) // a picture alone is a message
     expect(canSend(chat({ busy: true, can_send: false }), "hi")).toBe(false)
+    expect(canSend(chat({ busy: true, can_send: true }), "hi")).toBe(true) // mid-turn, as Claude Code
   })
 
   it("keeps the latest screenshots still waiting for an answer", () => {
@@ -265,5 +277,19 @@ describe("a new session", () => {
     expect(canStart("/r/demo", "", 1)).toBe(true)
     expect(canStart("  ", "Plan it", 0)).toBe(false)
     expect(canStart("/r/demo", "  ", 0)).toBe(false)
+  })
+})
+
+describe("the line under a session's name", () => {
+  it("says the tool, the project and the folder from ~", () => {
+    expect(metaLine("claude", "demo", "/Users/me/Repos/demo/app")).toBe(
+      "Claude Code · demo · ~/Repos/demo/app"
+    )
+  })
+
+  it("names the project once when it is the folder's own name", () => {
+    expect(metaLine("codex", "l", "/Users/me/Documents/Codex/2026-10-27/l")).toBe(
+      "Codex · ~/Documents/Codex/2026-10-27/l"
+    )
   })
 })

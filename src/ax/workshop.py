@@ -882,9 +882,11 @@ def _now() -> datetime:
 
 
 def _readings(config):
-    """Both tools' windows, Claude's asked fresh (a built-in /usage: no model call)."""
+    """Both tools' windows, asked fresh (Claude's built-in /usage and Codex's rate-limit
+    read: no model call)."""
     from ax import usage
 
+    usage.codex_ask(config)
     windows = usage.claude_windows(config, refresh=True) + usage.codex_windows(config.codex_home)
     return windows, usage.codex_credits(config.codex_home)
 

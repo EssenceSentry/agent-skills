@@ -40,4 +40,22 @@ describe("the task list card", () => {
     expect(html).not.toContain("<details open")
     expect(html).toContain("2 of 2 done")
   })
+
+  it("shows a step left in progress as stopped once the session stops working", () => {
+    const html = renderToStaticMarkup(
+      <TaskList
+        stopped
+        tasks={{
+          items: [
+            { text: "Find the command", status: "completed" },
+            { text: "Run the suite", status: "in_progress" },
+          ],
+          explanation: null,
+        }}
+      />
+    )
+    expect(html).not.toContain('aria-current="step"')
+    expect(html).toContain('data-status="stopped"')
+    expect(html).toMatch(/Tasks · 1 of 2 done · stopped/)
+  })
 })

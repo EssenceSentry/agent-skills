@@ -1,8 +1,12 @@
 # The ax app
 
-What waits for you (rule proposals and review flags, to-dos, failed or flagged
-jobs, usage near a limit), Claude and Codex usage on every screen, running jobs,
-recent conversations by handle, and a read-only Markdown reader for the vault.
+Laid out as ax's VS Code extension: its sessions panel as the sidebar (both tools'
+usage, every live session, a box that starts one) and the conversation picked there
+beside it, drawn by the same stylesheet (`src/look.css`) in ax's theme colours. The
+sidebar's head reaches what waits for you (rule proposals and review flags, to-dos,
+failed or flagged jobs, usage near a limit), running jobs and recent conversations by
+handle, search, and a read-only Markdown reader for the vault. On a phone the sidebar
+slides over from a bar at the top.
 
 `ax serve` hosts the built app from `src/ax/web/`, so using it needs no Node:
 

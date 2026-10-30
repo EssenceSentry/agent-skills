@@ -1,14 +1,12 @@
-import { CircleHelp } from "lucide-react"
+import { PanelLeft } from "lucide-react"
+import { useEffect, useState } from "react"
 
 import { AppIcon } from "@/app-icon"
-import { AppBar } from "@/blocks/app-bar"
-import { StatusBadge } from "@/blocks/primitives"
-import { UsageIndicator } from "@/blocks/usage-band"
+import { Sidebar } from "@/blocks/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { type LiveStatus, useNow, useTick } from "@/lib/ax"
+import { useNow, useTick } from "@/lib/ax"
+import { EditorLook } from "@/lib/host"
 import { type Route, useRoute } from "@/lib/routes"
-import { ago } from "@/lib/time"
-import { cn } from "@/lib/utils"
 import { HelpScreen } from "@/screens/help"
 import { NowScreen } from "@/screens/now"
 import { ReaderScreen } from "@/screens/reader"
@@ -17,34 +15,6 @@ import { SessionScreen } from "@/screens/session"
 import { SessionsScreen } from "@/screens/sessions"
 import { UsageScreen } from "@/screens/usage"
 
-const LIVE_BADGE: Record<
-  LiveStatus,
-  { status: "running" | "queued" | "warning" | "paused"; label: string }
-> = {
-  live: { status: "running", label: "Live" },
-  connecting: { status: "queued", label: "Connecting" },
-  offline: { status: "warning", label: "Offline" },
-  example: { status: "paused", label: "Example data" },
-  locked: { status: "warning", label: "Locked" },
-}
-
-function NavLink({ href, active, children }: { href: string; active: boolean; children: string }) {
-  return (
-    <a
-      href={href}
-      aria-current={active ? "page" : undefined}
-      className={cn(
-        "rounded-lg px-2 py-1 text-sm transition-colors sm:px-2.5",
-        active
-          ? "bg-primary-soft font-medium text-primary-ink"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground"
-      )}
-    >
-      {children}
-    </a>
-  )
-}
-
 const CRUMBS: Record<Route["screen"], string> = {
   now: "Now",
   help: "Help",
@@ -52,93 +22,85 @@ const CRUMBS: Record<Route["screen"], string> = {
   read: "Notes",
   search: "Search",
   sessions: "Sessions",
-  session: "Sessions",
+  session: "Session",
   usage: "Usage",
 }
 
+/**
+ * ax's page as VS Code shows its extension: the sessions panel as a sidebar on the left,
+ * and beside it the conversation picked there, or another of ax's screens. On a phone
+ * the sidebar slides over from a bar at the top and closes on whatever is picked.
+ */
 export default function App() {
   const route = useRoute()
   const { state, status, refresh } = useNow()
   useTick()
-  const badge = LIVE_BADGE[status]
+  const [drawer, setDrawer] = useState(false)
+  useEffect(() => {
+    const close = () => setDrawer(false)
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close()
+    window.addEventListener("hashchange", close)
+    window.addEventListener("keydown", onKey)
+    return () => {
+      window.removeEventListener("hashchange", close)
+      window.removeEventListener("keydown", onKey)
+    }
+  }, [])
   return (
     <TooltipProvider>
-      <div className="min-h-svh">
-        <AppBar
-          product="ax"
-          icon={<AppIcon />}
-          crumbs={[CRUMBS[route.screen]]}
-          right={
-            <>
-              <nav className="flex items-center gap-1" aria-label="Screens">
-                <NavLink href="#/" active={route.screen === "now"}>
-                  Now
-                </NavLink>
-                <NavLink href="#/sessions" active={["sessions", "session"].includes(route.screen)}>
-                  Sessions
-                </NavLink>
-                <NavLink href="#/notes" active={["notes", "read", "search"].includes(route.screen)}>
-                  Notes
-                </NavLink>
-                <a
-                  href="#/help"
-                  aria-label="What ax can do"
-                  title="What ax can do"
-                  aria-current={route.screen === "help" ? "page" : undefined}
-                  className={cn(
-                    "grid size-8 place-items-center rounded-lg transition-colors",
-                    route.screen === "help"
-                      ? "bg-primary-soft text-primary-ink"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  )}
-                >
-                  <CircleHelp className="size-[18px]" />
-                </a>
-              </nav>
-              {state && <UsageIndicator rows={state.usage} credits={state.credits ?? []} />}
-              <span
-                className="hidden text-[11px] text-muted-foreground md:inline"
-                title="When ax last archived your conversations"
+      <EditorLook.Provider value={true}>
+        <div className="ax-shell" data-drawer={drawer || undefined}>
+          <Sidebar route={route} status={status} />
+          <button
+            type="button"
+            className="ax-scrim"
+            aria-label="Close the sidebar"
+            onClick={() => setDrawer(false)}
+          />
+          <div className="ax-main" data-screen={route.screen}>
+            <header className="ax-phonebar items-center gap-2 px-3 py-2">
+              <button
+                type="button"
+                className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="Show the sessions and screens"
+                aria-expanded={drawer}
+                onClick={() => setDrawer(true)}
               >
-                synced {ago(state?.last_sync)}
-              </span>
-              {/* On a phone the bar has room only for a status that needs reading. */}
-              <StatusBadge
-                status={badge.status}
-                label={badge.label}
-                className={cn((status === "live" || status === "example") && "max-sm:hidden")}
-              />
-            </>
-          }
-        />
-        {route.screen === "help" ? (
-          <HelpScreen />
-        ) : state ? (
-          route.screen === "now" ? (
-            <NowScreen state={state} refresh={refresh} />
-          ) : route.screen === "search" ? (
-            <SearchScreen query={route.query} />
-          ) : route.screen === "usage" ? (
-            <UsageScreen state={state} />
-          ) : route.screen === "sessions" ? (
-            <SessionsScreen />
-          ) : route.screen === "session" ? (
-            <SessionScreen provider={route.provider} id={route.id} />
-          ) : (
-            <ReaderScreen route={route} />
-          )
-        ) : (
-          <main className="mx-auto max-w-[1360px] p-4 md:p-6">
-            <div className="panel p-6 text-sm text-muted-foreground">
-              {status === "locked"
-                ? "This shared link has expired or lost its access. Open the newest link ax sent you."
-                : status === "offline"
-                  ? "ax isn't answering; retrying…"
-                  : "Reading your ax…"}
-            </div>
-          </main>
-        )}
-      </div>
+                <PanelLeft className="size-[18px]" aria-hidden />
+              </button>
+              <AppIcon className="size-5" />
+              <span className="text-[15px] font-semibold">{CRUMBS[route.screen]}</span>
+            </header>
+            {route.screen === "help" ? (
+              <HelpScreen />
+            ) : route.screen === "session" ? (
+              <SessionScreen provider={route.provider} id={route.id} back={false} />
+            ) : state ? (
+              route.screen === "now" ? (
+                <NowScreen state={state} refresh={refresh} />
+              ) : route.screen === "search" ? (
+                <SearchScreen query={route.query} />
+              ) : route.screen === "usage" ? (
+                <UsageScreen state={state} />
+              ) : route.screen === "sessions" ? (
+                <SessionsScreen />
+              ) : (
+                <ReaderScreen route={route} />
+              )
+            ) : (
+              <main className="mx-auto max-w-[1360px] p-4 md:p-6">
+                <div className="panel p-6 text-sm text-muted-foreground">
+                  {status === "locked"
+                    ? "This shared link has expired or lost its access. Open the newest link ax sent you."
+                    : status === "offline"
+                      ? "ax isn't answering; retrying…"
+                      : "Reading your ax…"}
+                </div>
+              </main>
+            )}
+          </div>
+        </div>
+      </EditorLook.Provider>
     </TooltipProvider>
   )
 }

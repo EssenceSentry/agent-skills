@@ -232,6 +232,45 @@ def test_codex_transcripts_are_read_too(env):
     assert [e["kind"] for e in found["events"]] == ["user", "assistant", "assistant"]
 
 
+def compress(path):
+    """A rollout as Codex leaves an older one: `.jsonl.zst`, the plain file gone."""
+    import zstandard
+
+    packed = path.with_name(path.name + ".zst")
+    packed.write_bytes(zstandard.ZstdCompressor().compress(path.read_bytes()))
+    path.unlink()
+    return packed
+
+
+def codex_rollout(env):
+    return next((env.codex_home / "sessions").rglob(f"rollout-*-{CODEX_SESSION}.jsonl"))
+
+
+def test_a_codex_conversation_codex_compressed_is_read_too(env):
+    compress(codex_rollout(env))
+    live_sessions._paths.clear()
+    found = live_sessions.transcript(env.config, "codex", CODEX_SESSION)
+    assert [e["kind"] for e in found["events"]] == ["user", "assistant", "assistant"]
+
+
+def test_an_archived_codex_conversation_is_read_too(env):
+    plain = codex_rollout(env)
+    archive = env.codex_home / "archived_sessions"
+    archive.mkdir()
+    compress(plain.rename(archive / plain.name))
+    live_sessions._paths.clear()
+    found = live_sessions.transcript(env.config, "codex", CODEX_SESSION)
+    assert [e["kind"] for e in found["events"]] == ["user", "assistant", "assistant"]
+
+
+def test_a_codex_conversation_compressed_after_it_was_read_is_found_again(env):
+    live_sessions._paths.clear()
+    live_sessions.transcript(env.config, "codex", CODEX_SESSION)  # its plain file, remembered
+    compress(codex_rollout(env))
+    found = live_sessions.transcript(env.config, "codex", CODEX_SESSION)
+    assert [e["kind"] for e in found["events"]] == ["user", "assistant", "assistant"]
+
+
 def test_an_unknown_session_is_not_found(env):
     with pytest.raises(live_sessions.NotFound):
         live_sessions.transcript(env.config, "claude", "nope")

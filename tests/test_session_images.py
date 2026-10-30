@@ -135,6 +135,21 @@ def test_codex_images_are_found_too(env, codex_thread):
     )
 
 
+def test_codex_images_load_from_a_rollout_codex_compressed(env, codex_thread):
+    import zstandard
+
+    plain = next((env.codex_home / "sessions").rglob(f"rollout-*-{TID}.jsonl"))
+    packed = plain.with_name(plain.name + ".zst")
+    packed.write_bytes(zstandard.ZstdCompressor().compress(plain.read_bytes()))
+    plain.unlink()
+    live_sessions._paths.clear()
+    shot = live_sessions.transcript(env.config, "codex", TID)["events"][1]["shots"][0]
+    assert live_sessions.image(env.config, "codex", TID, shot["line"], shot["n"]) == (
+        JPEG,
+        "image/jpeg",
+    )
+
+
 @pytest.fixture
 def served(env, tmp_path, claude_session, monkeypatch):
     from ax import chat

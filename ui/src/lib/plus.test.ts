@@ -3,12 +3,12 @@ import { describe, expect, it } from "vitest"
 import {
   effortLabel,
   goalLine,
-  modelChoice,
+  mergeReferences,
+  modesElsewhere,
   type Reference,
   referenceLabel,
   withReferences,
 } from "@/lib/plus"
-import type { ChatState } from "@/lib/sessions"
 
 const file: Reference = { kind: "file", path: "/repo/src/a.ts" }
 const folder: Reference = { kind: "folder", path: "/repo/docs" }
@@ -39,88 +39,34 @@ describe("references sent with a message", () => {
     expect(withReferences("Just words", [])).toBe("Just words")
   })
 
+  it("refreshes a reattached unsaved selection without duplicating or reordering chips", () => {
+    const otherRange: Reference = { ...picked, start: 20, end: 22 }
+    const updated: Reference = { ...picked, path: "/repo/src/./b.py", text: "return 2\n" }
+    const refs = mergeReferences([file, picked, otherRange], [updated, folder, folder])
+    expect(refs).toEqual([file, updated, otherRange, folder])
+    expect(withReferences("Review", refs)).toContain("return 2")
+  })
+
   it("labels each one briefly", () => {
-    expect([file, folder, picked].map(referenceLabel)).toEqual(["a.ts", "docs/", "b.py:12–14"])
-    expect(referenceLabel({ ...picked, start: 3, end: 3 })).toBe("b.py:3")
-  })
-})
-
-function chat(over: Partial<ChatState>): ChatState {
-  return {
-    holder: "ax",
-    can_send: true,
-    take_over: false,
-    pending: false,
-    busy: false,
-    partial: "",
-    approval: null,
-    error: null,
-    note: "",
-    settings: { plan: false, auto: false, model: null, effort: null },
-    models: [],
-    goal: null,
-    ...over,
-  }
-}
-
-const codexModels = [
-  {
-    id: "gpt-6-astra",
-    label: "GPT-6-Astra",
-    efforts: ["low", "medium", "xhigh"],
-    default_effort: "medium",
-  },
-  { id: "gpt-6-sol", label: "GPT-6-Sol", efforts: ["low", "high"], default_effort: "low" },
-]
-
-describe("the model picker", () => {
-  it("names the model and effort the session runs", () => {
-    const choice = modelChoice(
-      chat({
-        models: codexModels,
-        settings: { plan: false, auto: true, model: "gpt-6-astra", effort: "xhigh" },
-      })
-    )
-    expect(choice).toEqual({
-      label: "GPT-6-Astra · Extra high",
-      model: "gpt-6-astra",
-      effort: "xhigh",
-      efforts: ["low", "medium", "xhigh"],
-    })
-  })
-
-  it("names the default model while the session runs its own", () => {
-    const choice = modelChoice(
-      chat({
-        models: [
-          {
-            id: "default",
-            label: "Default (recommended)",
-            efforts: ["low", "high"],
-            default_effort: null,
-          },
-        ],
-      })
-    )
-    expect(choice?.label).toBe("Default (recommended)")
-    expect(choice?.efforts).toEqual(["low", "high"])
-  })
-
-  it("shows nothing before the session reports its models", () => {
-    expect(modelChoice(chat({ models: [] }))).toBeNull()
-    expect(modelChoice(chat({ settings: null, models: codexModels }))).toBeNull()
+    expect([file, folder, picked].map(referenceLabel)).toEqual([
+      "src/a.ts",
+      "repo/docs/",
+      "src/b.py:12–14",
+    ])
+    expect(referenceLabel({ ...picked, start: 3, end: 3 })).toBe("src/b.py:3")
   })
 })
 
 describe("efforts by name", () => {
   it("names each effort as people say it", () => {
-    expect(["minimal", "low", "medium", "high", "xhigh", "max"].map(effortLabel)).toEqual([
+    expect(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"].map(effortLabel)).toEqual([
       "Minimal",
       "Low",
       "Medium",
       "High",
       "Extra high",
       "Max",
+      "Ultra",
     ])
     expect(effortLabel("turbo")).toBe("turbo")
   })
@@ -158,5 +104,17 @@ describe("the goal line", () => {
         seconds: null,
       })
     ).toBe("Set")
+  })
+})
+
+describe("modes of a session ax doesn't hold", () => {
+  it("are set where the session is open, and the + menu says where", () => {
+    expect(modesElsewhere("codex app")).toBe("Set its modes in the Codex app")
+    expect(modesElsewhere("elsewhere")).toBe("Take it over to set its modes")
+  })
+
+  it("are ax's to change when ax holds it or nothing does", () => {
+    expect(modesElsewhere("ax")).toBeNull()
+    expect(modesElsewhere(null)).toBeNull()
   })
 })

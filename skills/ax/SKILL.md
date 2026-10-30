@@ -12,10 +12,9 @@ command has `--help`; most take `--json` for agents.
 
 ## Find and build on past work (skill: session-recall)
 
-- `ax find "question"`: one search over past conversations, both tools' memories,
-  the vault's notes, the repos' docs (README, plans, `docs/`) and their code. Use it
-  before redoing an investigation or decision. `--in conversations|memories|notes|docs|code|subagents`,
-  `--project`, `--provider`, `--since`, `--fast`.
+- `ax find "question"`: one search over past conversations and both tools'
+  memories. Use it before redoing an investigation or decision.
+  `--in conversations|memories|subagents`, `--project`, `--provider`, `--since`, `--fast`.
 - `ax search "exact words"`: exact words in archived messages (error text, ids).
 - `ax recall ax:9fe6d7e6`: bring an earlier conversation in by its handle, as an
   outline with the note's path. `--for "task"` (a model read) and `--card` cost money.
@@ -121,6 +120,10 @@ command has `--help`; most take `--json` for agents.
   every live session with its transcript and the jobs it waits on, usage and credits,
   jobs, conversations, a vault reader); `--share cloudflare --notify` reaches their
   phone.
+- `ax demo`: five sessions in a home of their own (`~/.cache/ax-demo`), served on port
+  8798, that show every part of a session page at once: links, tables, math, pictures,
+  questions, approvals, a plan, job cards, a Runwatch notebook. Use it to check how the
+  page or the VS Code tab looks; nothing reaches a model or the real sessions.
 - `ax app` (`start`, `stop`, `status`, `open`, `service`): the app served in the
   background at http://127.0.0.1:8765/, where the user can install it. Start it when
   the user wants the app; `service --apply` keeps it running from login, and with

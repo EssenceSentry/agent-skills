@@ -3,14 +3,19 @@ import { useCallback, useEffect, useState } from "react"
 import {
   exampleFind,
   exampleFolder,
+  exampleModels,
   exampleNote,
   exampleNow,
   exampleSession,
   exampleSessions,
+  exampleSlash,
 } from "@/lib/example"
+import type { ModelGroup } from "@/lib/models"
 import type { Hit } from "@/lib/search"
-import { mergePage, openQuestions, type Sessions, type SessionView } from "@/lib/sessions"
-import { request } from "@/lib/transport"
+import { SessionFeed } from "@/lib/session-feed"
+import type { Sessions, SessionView } from "@/lib/sessions"
+import type { SlashItem } from "@/lib/slash"
+import { request, transportIdentity } from "@/lib/transport"
 
 export type UsageRow = {
   provider: string
@@ -182,9 +187,68 @@ export const loadNote = (path: string): Promise<Note> =>
 
 export type Found = { query: string; hits: Hit[] }
 
-/** `ax find` through the server: a few seconds, as on the command line. */
-export const loadFind = (query: string): Promise<Found> =>
-  LIVE ? getJson(`/api/find?q=${encodeURIComponent(query)}`) : Promise.resolve(exampleFind(query))
+/** `ax find` through the server: under a second for its keyword stage (`fast`), a few
+ * seconds for the whole search, by meaning too. */
+export const loadFind = (query: string, fast = false): Promise<Found> =>
+  LIVE
+    ? getJson(`/api/find?q=${encodeURIComponent(query)}${fast ? "&fast=1" : ""}`)
+    : Promise.resolve(exampleFind(query))
+
+type Stages = {
+  key: string
+  fast?: Found
+  full?: Found
+  fastError?: string
+  fullError?: string
+}
+
+export type FoundStage = {
+  data?: Found
+  loading: boolean
+  /** The keyword stage is shown while the search by meaning goes on. */
+  refining: boolean
+  /** Why only the keyword stage is shown: the search by meaning failed. */
+  partial?: string
+  error?: string
+}
+
+/** What a two-stage search shows from what has answered so far. */
+export function foundStage(s: Stages): FoundStage {
+  if (s.full) return { data: s.full, loading: false, refining: false }
+  if (s.fast)
+    return s.fullError
+      ? { data: s.fast, loading: false, refining: false, partial: s.fullError }
+      : { data: s.fast, loading: false, refining: true }
+  if (s.fullError && s.fastError) return { loading: false, refining: false, error: s.fullError }
+  return { loading: true, refining: false }
+}
+
+/**
+ * `ax find` in two stages asked at once: keywords answer in under a second and show at
+ * once, then the whole search, by meaning too, takes their place.
+ */
+export function useStagedFind(query: string | null): FoundStage | null {
+  const [stages, setStages] = useState<Stages | null>(null)
+  useEffect(() => {
+    if (query === null) return
+    let current = true
+    setStages({ key: query })
+    const settle = (part: Partial<Stages>) =>
+      current && setStages((was) => (was?.key === query ? { ...was, ...part } : was))
+    loadFind(query, true).then(
+      (fast) => settle({ fast }),
+      (e: Error) => settle({ fastError: e.message })
+    )
+    loadFind(query).then(
+      (full) => settle({ full }),
+      (e: Error) => settle({ fullError: e.message })
+    )
+    return () => {
+      current = false
+    }
+  }, [query])
+  return query !== null && stages?.key === query ? foundStage(stages) : null
+}
 
 /**
  * The Now state: fetched at once, pushed by `ax serve` on `/events` when it changes, and
@@ -265,18 +329,42 @@ export function useTick(ms = 30_000) {
   }, [ms])
 }
 
-/** Every live session of both tools, read again every few seconds while on screen. */
-export function useSessions(every = 5_000) {
-  const [found, setFound] = useState<{ data?: Sessions; error?: string }>(
-    LIVE ? {} : { data: exampleSessions() }
+/** The models each tool offers a new session, asked once; a tool that can't answer
+ * offers none. */
+export function useModels(): ModelGroup[] {
+  const [found, setFound] = useState(() => (LIVE ? null : exampleModels()))
+  useEffect(() => {
+    if (!LIVE) return
+    let current = true
+    getJson<ReturnType<typeof exampleModels>>("/api/models").then(
+      (data) => current && setFound(data),
+      () => undefined
+    )
+    return () => {
+      current = false
+    }
+  }, [])
+  if (!found) return []
+  const groups: ModelGroup[] = [
+    { provider: "claude", label: "Claude Code", models: found.claude },
+    { provider: "codex", label: "Codex", models: found.codex },
+  ]
+  return groups.filter((g) => g.models.length > 0)
+}
+
+/** Both tools' usage windows and Codex's credits, read again every 10 s; null until the
+ * first reading. */
+export function useUsage(every = 10_000): Pick<NowState, "usage" | "credits"> | null {
+  const [found, setFound] = useState<Pick<NowState, "usage" | "credits"> | null>(() =>
+    LIVE ? null : { usage: exampleNow.usage, credits: exampleNow.credits }
   )
   useEffect(() => {
     if (!LIVE) return
     let current = true
     const load = () =>
-      getJson<Sessions>("/api/sessions").then(
-        (data) => current && setFound({ data }),
-        (error: Error) => current && setFound((was) => ({ ...was, error: error.message }))
+      getJson<Pick<NowState, "usage" | "credits">>("/api/usage").then(
+        (data) => current && setFound(data),
+        () => undefined
       )
     load()
     const timer = setInterval(load, every)
@@ -288,76 +376,133 @@ export function useSessions(every = 5_000) {
   return found
 }
 
+export type SlashOffers = { commands: SlashItem[]; skills: SlashItem[]; error?: string }
+
+const offers = new Map<string, Promise<SlashOffers>>()
+
+/** What a session's tool offers its / menu, asked once a page per folder, when the menu
+ * first opens; a failed answer is asked again the next time. */
+export function useSlashOffers(
+  provider: string,
+  cwd: string | null,
+  wanted: boolean
+): { data?: SlashOffers; loading: boolean } {
+  const key = `${provider}:${cwd ?? ""}`
+  const [found, setFound] = useState<{ key: string; data: SlashOffers } | null>(null)
+  const have = found?.key === key
+  useEffect(() => {
+    if (!wanted || have) return
+    let current = true
+    let asked = offers.get(key)
+    if (!asked) {
+      const where = cwd ? `&cwd=${encodeURIComponent(cwd)}` : ""
+      asked = LIVE
+        ? getJson<SlashOffers>(`/api/commands?provider=${encodeURIComponent(provider)}${where}`)
+        : Promise.resolve(exampleSlash(provider))
+      asked = asked.then(
+        (data) => {
+          if (data.error) offers.delete(key)
+          return data
+        },
+        (e: Error) => {
+          offers.delete(key)
+          return { commands: [], skills: [], error: e.message }
+        }
+      )
+      offers.set(key, asked)
+    }
+    asked.then((data) => current && setFound({ key, data }))
+    return () => {
+      current = false
+    }
+  }, [key, wanted, have, provider, cwd])
+  return have && found ? { data: found.data, loading: false } : { loading: wanted }
+}
+
+/** Every live session of both tools, read again every few seconds while on screen. */
+export function useSessions(every = 5_000) {
+  // `at`: when ax last answered, kept with its last reading for once it stops answering.
+  const [found, setFound] = useState<{ data?: Sessions; error?: string; at?: string }>(
+    LIVE ? {} : { data: exampleSessions() }
+  )
+  useEffect(() => {
+    if (!LIVE) return
+    let current = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const load = () =>
+      getJson<Sessions>("/api/sessions")
+        .then(
+          (data) => current && setFound({ data, at: new Date().toISOString() }),
+          (error: Error) => current && setFound((was) => ({ ...was, error: error.message }))
+        )
+        .finally(() => {
+          if (current) timer = setTimeout(load, every)
+        })
+    void load()
+    return () => {
+      current = false
+      clearTimeout(timer)
+    }
+  }, [every])
+  return found
+}
+
 /** The questions a reading asks for again, as the query takes them. */
-const again = (asked: number[]) => (asked.length ? `&again=${asked.join(",")}` : "")
 
 /**
  * One session: its state and job cards, and its transcript, to which each reading adds
  * what happened since the last one and the answers to questions it showed open.
  */
+const feeds = new Map<string, SessionFeed>()
+
 export function useSession(provider: string, id: string, every = 3_000, streaming = 1_000) {
-  const [found, setFound] = useState<{ data?: SessionView; error?: string }>(() =>
-    LIVE ? {} : { data: exampleSession(provider, id) }
-  )
+  const key = `${transportIdentity()}:${provider}:${id}`
+  let feed = feeds.get(key)
+  if (!feed) {
+    const base = `/api/session?provider=${encodeURIComponent(provider)}&id=${encodeURIComponent(id)}`
+    feed = new SessionFeed((query) => getJson<SessionView>(`${base}&${query}`), every, streaming)
+    feeds.set(key, feed)
+  }
+  const currentFeed = feed
+  const [snapshot, setSnapshot] = useState(() => ({ feed: currentFeed, value: currentFeed.state }))
+  const found = LIVE
+    ? snapshot.feed === currentFeed
+      ? snapshot.value
+      : currentFeed.state
+    : { data: exampleSession(provider, id) }
   useEffect(() => {
     if (!LIVE) return
-    let current = true
-    let shown: SessionView | undefined
-    setFound({})
-    const base = `/api/session?provider=${encodeURIComponent(provider)}&id=${encodeURIComponent(id)}`
-    const load = () =>
-      getJson<SessionView>(
-        `${base}&after=${shown?.next ?? 0}${again(shown ? openQuestions(shown) : [])}`
-      ).then(
-        (page) => {
-          if (!current) return
-          if (shown) {
-            // The transcript adds up; the session, its cards and the chat are the latest.
-            const { events, next, first, running, earlier, shots } = mergePage(shown, page)
-            shown = { ...page, events, next, first, running, earlier, shots }
-          } else shown = page
-          setFound({ data: shown })
-        },
-        (error: Error) => current && setFound((was) => ({ ...was, error: error.message }))
-      )
-    // Every few seconds, and every second while a reply streams in or a send settles.
-    let timer: ReturnType<typeof setTimeout>
-    const tick = () => {
-      load().finally(() => {
-        if (!current) return
-        const quick = shown?.chat?.busy || Date.now() < hurryUntil
-        timer = setTimeout(tick, quick ? streaming : every)
-      })
+    const visible = () =>
+      currentFeed.visibility(!document.hidden && document.body.dataset.hostVisible !== "false")
+    visible()
+    const unsubscribe = currentFeed.subscribe((value) => setSnapshot({ feed: currentFeed, value }))
+    const refresh = () => void currentFeed.refresh()
+    const hostVisible = (e: Event) => {
+      document.body.dataset.hostVisible = String((e as CustomEvent<boolean>).detail)
+      visible()
     }
-    tick()
-    const hurry = () => {
-      hurryUntil = Date.now() + 30_000
-      clearTimeout(timer)
-      tick()
-    }
-    window.addEventListener("ax:hurry", hurry)
+    window.addEventListener("ax:hurry", refresh)
+    window.addEventListener("ax:visibility", hostVisible)
+    document.addEventListener("visibilitychange", visible)
+    visible()
     return () => {
-      current = false
-      clearTimeout(timer)
-      window.removeEventListener("ax:hurry", hurry)
+      unsubscribe()
+      window.removeEventListener("ax:hurry", refresh)
+      window.removeEventListener("ax:visibility", hostVisible)
+      document.removeEventListener("visibilitychange", visible)
     }
-  }, [provider, id, every, streaming])
-  return found
+  }, [currentFeed])
+  return { ...found, loadEarlier: () => currentFeed.earlier() }
 }
 
-let hurryUntil = 0
-
-/** Ask the open session page to read again now, and quickly for a while. */
 export const hurry = () => window.dispatchEvent(new Event("ax:hurry"))
 
-/** What `/api/chat` answers: done, or (through a shared link) a question to confirm. */
+/** What `/api/chat` answers. */
 export type ChatAnswer = {
   ok: boolean
   message?: string
   via?: string
   waiting?: boolean
-  confirm?: string
-  question?: string
 }
 
 /** Send, answer, stop, take over or hand back; the server says why not as an error. */

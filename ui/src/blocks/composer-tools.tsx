@@ -1,9 +1,9 @@
 import {
-  ChevronDown,
   FileText,
   Folder,
   ImagePlus,
   Lightbulb,
+  LogOut,
   Paperclip,
   Plus,
   ShieldCheck,
@@ -12,7 +12,7 @@ import {
   X,
 } from "lucide-react"
 import { type RefObject, useRef } from "react"
-
+import { ModelEffortPicker } from "@/blocks/model-picker"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -20,13 +20,12 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { effortLabel, goalLine, modelChoice, type Reference, referenceLabel } from "@/lib/plus"
-import type { ChatSettings, ChatState, Goal } from "@/lib/sessions"
+import type { ModelGroup, ModelPick } from "@/lib/models"
+import { goalLine, type Reference, referenceKey, referenceLabel } from "@/lib/plus"
+import type { ChatSettings, ChatState, Goal, Provider } from "@/lib/sessions"
 
 export type Change = Partial<ChatSettings>
 
@@ -44,15 +43,22 @@ export function PlusMenu({
   onPictures,
   onChange,
   onGoal,
+  modesNote,
+  handBack,
 }: {
   box: RefObject<HTMLElement | null>
   settings: ChatSettings | null | undefined
   disabled?: boolean
-  onFiles: () => void
-  onSelection: () => void
+  /** Files and the editor's selection, offered only where an editor is behind the page. */
+  onFiles?: () => void
+  onSelection?: () => void
   onPictures: (files: File[]) => void
   onChange: (change: Change) => void
   onGoal: () => void
+  /** Where the modes are set when ax can't change them; they show, disabled, saying so. */
+  modesNote?: string | null
+  /** For a session ax holds: let go of it, to continue it elsewhere; `note` says how. */
+  handBack?: { note: string; disabled: boolean; onSelect: () => void }
 }) {
   const picker = useRef<HTMLInputElement>(null)
   return (
@@ -75,14 +81,18 @@ export function PlusMenu({
         >
           <DropdownMenuGroup>
             <DropdownMenuLabel>Add</DropdownMenuLabel>
-            <DropdownMenuItem onClick={onFiles}>
-              <Paperclip /> Files and folders
-              <span className="chat-menu-hint">From the workspace or anywhere</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onSelection}>
-              <TextSelect /> Current selection
-              <span className="chat-menu-hint">The code selected in the editor</span>
-            </DropdownMenuItem>
+            {onFiles && (
+              <DropdownMenuItem onClick={onFiles}>
+                <Paperclip /> Files and folders
+                <span className="chat-menu-hint">From the workspace or anywhere</span>
+              </DropdownMenuItem>
+            )}
+            {onSelection && (
+              <DropdownMenuItem onClick={onSelection}>
+                <TextSelect /> Current selection
+                <span className="chat-menu-hint">The code selected in the editor</span>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onClick={() => picker.current?.click()}>
               <ImagePlus /> Pictures
               <span className="chat-menu-hint">Or paste them in the box</span>
@@ -91,29 +101,48 @@ export function PlusMenu({
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
             <DropdownMenuLabel>Mode</DropdownMenuLabel>
-            <DropdownMenuItem onClick={onGoal}>
+            <DropdownMenuItem onClick={onGoal} disabled={Boolean(modesNote)}>
               <Target /> Goal
-              <span className="chat-menu-hint">Set a goal to keep pursuing</span>
+              <span className="chat-menu-hint">{modesNote ?? "Set a goal to keep pursuing"}</span>
             </DropdownMenuItem>
             <DropdownMenuCheckboxItem
               checked={settings?.plan ?? false}
+              disabled={Boolean(modesNote)}
               onCheckedChange={(on) => onChange({ plan: on })}
             >
               <Lightbulb /> Plan mode
               <span className="chat-menu-hint">
-                {settings?.plan ? "Turn plan mode off" : "Turn plan mode on"}
+                {modesNote ?? (settings?.plan ? "Turn plan mode off" : "Turn plan mode on")}
               </span>
             </DropdownMenuCheckboxItem>
             <DropdownMenuCheckboxItem
               checked={settings?.auto ?? false}
+              disabled={Boolean(modesNote)}
               onCheckedChange={(on) => onChange({ auto: on })}
             >
               <ShieldCheck /> Approve for me
               <span className="chat-menu-hint">
-                {settings?.auto ? "Ask before its actions again" : "Approve its actions for you"}
+                {modesNote ??
+                  (settings?.auto ? "Ask before its actions again" : "Approve its actions for you")}
               </span>
             </DropdownMenuCheckboxItem>
           </DropdownMenuGroup>
+          {handBack && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Session</DropdownMenuLabel>
+                <DropdownMenuItem
+                  onClick={handBack.onSelect}
+                  disabled={handBack.disabled}
+                  title={handBack.note}
+                >
+                  <LogOut /> Hand back
+                  <span className="chat-menu-hint">Let go of it, to continue it elsewhere</span>
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
       <input
@@ -172,67 +201,37 @@ export function ModeChips({
   )
 }
 
-/** The model and effort the session runs, and the others it offers. */
+/** The session's model and effort, in Codex's picker, among its own tool's models. */
 export function ModelPicker({
   chat,
+  provider,
   disabled,
   onChange,
 }: {
   chat: ChatState
+  provider: Provider
   disabled?: boolean
   onChange: (change: Change) => void
 }) {
-  const choice = modelChoice(chat)
-  if (!choice) return null
   const models = chat.models ?? []
-  const pick = (id: string) => {
-    const model = models.find((m) => m.id === id)
-    const keeps = choice.effort !== null && model?.efforts.includes(choice.effort)
-    const effort =
-      model?.efforts.length && !keeps ? (model.default_effort ?? model.efforts[0]) : undefined
-    onChange(effort ? { model: id, effort } : { model: id })
-  }
+  if (!chat.settings || !models.length) return null
+  const groups: ModelGroup[] = [{ provider, label: provider, models }]
+  const pick: ModelPick = { provider, model: chat.settings.model, effort: chat.settings.effort }
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        className="chat-model"
-        aria-label={`Model: ${choice.label}`}
-        disabled={disabled}
-      >
-        {choice.label}
-        <ChevronDown />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="end" className="chat-menu w-60">
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>Model</DropdownMenuLabel>
-          <DropdownMenuRadioGroup value={choice.model} onValueChange={(id) => pick(String(id))}>
-            {models.map((m) => (
-              <DropdownMenuRadioItem key={m.id} value={m.id}>
-                {m.label}
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-        </DropdownMenuGroup>
-        {choice.efforts.length > 0 && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>Effort</DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                value={choice.effort ?? ""}
-                onValueChange={(effort) => onChange({ effort: String(effort) })}
-              >
-                {choice.efforts.map((e) => (
-                  <DropdownMenuRadioItem key={e} value={e}>
-                    {effortLabel(e)}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuGroup>
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <ModelEffortPicker
+      groups={groups}
+      pick={pick}
+      disabled={disabled}
+      onPick={(next) => {
+        const change: Change = {}
+        // Claude's "Default" entry is set as itself on a running session.
+        const model = next.model ?? (provider === "claude" ? "default" : null)
+        if (model && model !== chat.settings?.model) change.model = model
+        if (next.effort !== chat.settings?.effort || next.model !== chat.settings?.model)
+          change.effort = next.effort
+        if (Object.keys(change).length) onChange(change)
+      }}
+    />
   )
 }
 
@@ -240,24 +239,33 @@ export function ModelPicker({
 export function GoalBar({
   goal,
   disabled,
+  clearNote,
   onClear,
 }: {
   goal: Goal
   disabled?: boolean
+  /** When clearing takes effect, if not at once. */
+  clearNote?: string | null
   onClear: () => void
 }) {
   return (
     <div className="chat-goal flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs">
       <Target className="size-3.5 shrink-0" aria-hidden />
-      <span className="min-w-0 flex-1 truncate" title={goal.objective}>
+      {/* In a narrow column the goal keeps half the line; its time and tokens give way. */}
+      <span className="min-w-[45%] flex-1 truncate" title={goal.objective}>
         {goal.objective}
       </span>
-      <span className="chat-goal-line shrink-0 text-muted-foreground">{goalLine(goal)}</span>
+      <span
+        className="chat-goal-line min-w-0 truncate text-muted-foreground"
+        title={goalLine(goal)}
+      >
+        {goalLine(goal)}
+      </span>
       <button
         type="button"
         className="chat-goal-clear grid size-5 shrink-0 place-items-center rounded-full"
         aria-label="Clear the goal"
-        title="Clear the goal"
+        title={clearNote ? `Clear the goal. ${clearNote}` : "Clear the goal"}
         onClick={onClear}
         disabled={disabled}
       >
@@ -283,7 +291,7 @@ export function ReferenceTray({
       {refs.map((ref, i) => {
         const Icon = ICONS[ref.kind]
         return (
-          <li key={`${ref.kind}:${referenceLabel(ref)}`} className="chat-ref" title={ref.path}>
+          <li key={referenceKey(ref)} className="chat-ref" title={ref.path}>
             <Icon aria-hidden />
             {referenceLabel(ref)}
             <button

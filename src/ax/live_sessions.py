@@ -12,7 +12,9 @@ parsers, again only when the file grew, and redacted before they leave ax.
 import base64
 import binascii
 import contextlib
+import hashlib
 import json
+import os
 import queue
 import subprocess
 import threading
@@ -26,7 +28,7 @@ from ax import job_card, jobs
 from ax.redact import redact
 from ax.sources import claude as claude_source
 from ax.sources import codex as codex_source
-from ax.sources.common import claude_images, codex_images, first_line, project_name
+from ax.sources.common import claude_images, codex_images, first_line, open_text, project_name
 
 # A Codex thread untouched this long, and not open anywhere, isn't live.
 RECENT = 24 * 3600.0
@@ -41,6 +43,7 @@ _ORDER = {"waiting": 0, "working": 1, "idle": 2}
 _paths: dict[tuple[str, str, str], Path] = {}  # (tool home, provider, session id)
 _parsed: dict[str, tuple[tuple[int, int], object]] = {}  # path -> (size and time, parsed)
 _listings: dict[str, tuple[float, dict]] = {}
+_listing_lock = threading.RLock()
 
 
 class NotFound(LookupError):
@@ -125,11 +128,16 @@ def _tail_records(path: Path | None):
     if path is None:
         return
     try:
-        with path.open("rb") as f:
-            f.seek(0, 2)
-            size = f.tell()
-            f.seek(max(0, size - TAIL_BYTES))
-            chunk = f.read().decode("utf-8", "replace")
+        if path.suffix == ".zst":  # a compressed rollout reads from its start
+            with open_text(path) as fh:
+                text = fh.read()
+            size, chunk = len(text), text[-TAIL_BYTES:]
+        else:
+            with path.open("rb") as f:
+                f.seek(0, 2)
+                size = f.tell()
+                f.seek(max(0, size - TAIL_BYTES))
+                chunk = f.read().decode("utf-8", "replace")
     except OSError:
         return
     lines = chunk.splitlines()
@@ -293,13 +301,27 @@ def _codex_state(status: dict, turn_open: bool, moved, is_open: bool, now: float
 
 
 def _codex_path(config, sid: str) -> Path | None:
+    """A thread's rollout: plain while Codex writes it, `.jsonl.zst` once it compresses an
+    older one, in `sessions/` or `archived_sessions/`. The newest copy, looked for again
+    when the one remembered has gone (compressed or archived since)."""
     key = (str(config.codex_home), "codex", sid)
-    if key not in _paths:
-        found = next((config.codex_home / "sessions").rglob(f"rollout-*-{sid}.jsonl"), None)
-        if found is None:
+    known = _paths.get(key)
+    if known is None or not known.exists():
+        copies = [path for root in ("sessions", "archived_sessions")
+                  for pattern in (f"rollout-*-{sid}.jsonl", f"rollout-*-{sid}.jsonl.zst")
+                  for path in (config.codex_home / root).rglob(pattern)]  # fmt: skip
+        if not copies:
+            _paths.pop(key, None)
             return None
-        _paths[key] = found
+        _paths[key] = max(copies, key=_age)
     return _paths[key]
+
+
+def _age(path: Path) -> int:
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:  # compressed or archived while we looked
+        return -1
 
 
 # Together
@@ -321,6 +343,7 @@ def listing(config, *, claude_of=claude, codex_of=codex) -> dict:
     from ax import chat
 
     listed = {(s["provider"], s["id"]): s for s in sessions}
+    chat.yield_held(config)  # what the Claude app opened since, ax lets go of
     for mine in chat.held():  # what ax holds itself: its state is the true one
         found = listed.get((mine["provider"], mine["id"]))
         if found:
@@ -328,6 +351,33 @@ def listing(config, *, claude_of=claude, codex_of=codex) -> dict:
                          name=mine["name"])  # its first words, over the tool's placeholder  # fmt: skip
         else:
             sessions.append(mine)
+    from ax import chat_store
+
+    for row in sessions:
+        meta = chat_store.metadata(config, row["provider"], row["id"])
+        row.update(
+            {k: v for k, v in meta.items() if k in ("name", "pinned", "archived", "group", "order")}
+        )
+    present = {(row["provider"], row["id"]) for row in sessions}
+    for meta in chat_store.all_metadata(config):
+        if (meta["provider"], meta["id"]) not in present and meta.get("name"):
+            sessions.append(
+                {
+                    **_session(
+                        meta["provider"],
+                        meta["id"],
+                        meta["name"],
+                        meta.get("cwd"),
+                        None,
+                        None,
+                        kind="saved",
+                        started=None,
+                        updated=None,
+                        last=None,
+                    ),
+                    **meta,
+                }
+            )
     counts = job_card.counts(config)
     for s in sessions:
         s["jobs"] = counts.get((s["provider"], s["id"]), 0)
@@ -346,12 +396,13 @@ def cached_listing(config, *, ttl: float = LISTING_TTL) -> dict:
     """The listing at most `ttl` seconds old: the app asks every few seconds, and asking
     both tools costs about a second."""
     key = str(config.data)
-    found = _listings.get(key)
-    if found and time.monotonic() - found[0] < ttl:
-        return found[1]
-    fresh = listing(config)
-    _listings[key] = (time.monotonic(), fresh)
-    return fresh
+    with _listing_lock:
+        found = _listings.get(key)
+        if found and time.monotonic() - found[0] < ttl:
+            return found[1]
+        fresh = listing(config)
+        _listings[key] = (time.monotonic(), fresh)
+        return fresh
 
 
 def _parsed_session(provider: str, path: Path):
@@ -400,7 +451,8 @@ def _shown(i: int, e, provider: str = "", sid: str = "", shots=()) -> dict:
         text = "\n\n".join(p for p in text.split("\n\n") if p.strip() != "[image]")
     return {
         "i": i, "kind": e.kind, "text": redact(_clip(text, TEXT_CHARS)),
-        "tool": e.tool, "ok": e.ok, "output": redact(_clip(e.output or "", OUTPUT_CHARS)),
+        "native_id": e.native_id, "turn_id": e.turn_id, "call_id": e.call_id,
+        "tool": e.tool, "ok": e.ok, "exit_code": e.exit_code, "duration_ms": e.duration_ms, "output": redact(_clip(e.output or "", OUTPUT_CHARS)),
         "ts": e.ts.isoformat(timespec="seconds") if e.ts else None,
         "images": [_picture(provider, sid, ref) for ref in e.images],
         "shots": [_picture(provider, sid, ref) for ref in shots],
@@ -409,7 +461,8 @@ def _shown(i: int, e, provider: str = "", sid: str = "", shots=()) -> dict:
 
 
 def transcript(config, provider: str, sid: str, *, after: int = 0, limit: int = 300,
-               again: Iterable[int] = ()) -> dict:  # fmt: skip
+               again: Iterable[int] = (), before: int | None = None, include_tools=False,
+               cursor: str | None = None, query: str | None = None) -> dict:  # fmt: skip
     """The user's messages and the agent's answers from event `after`, or the last `limit`
     of them at first, redacted, and the command running now, if any.
 
@@ -424,14 +477,52 @@ def transcript(config, provider: str, sid: str, *, after: int = 0, limit: int = 
     if path is None or not path.exists():
         raise NotFound(f"no transcript for {provider} session {sid}")
     events = _parse(provider, path)
+    reset = False
+
+    def anchor(offset):
+        digest = hashlib.sha256()
+        for event in events[:offset]:
+            digest.update(
+                f"{event.kind}:{event.ts}:{event.native_id}:{event.text}\n".encode(
+                    "utf-8", "replace"
+                )
+            )
+        return digest.hexdigest()[:20]
+
+    if cursor:
+        try:
+            offset, stamp = json.loads(base64.urlsafe_b64decode(cursor))
+            if offset > len(events) or anchor(offset) != stamp:
+                after, reset = 0, True
+            else:
+                after = offset
+        except (ValueError, TypeError):
+            raise ValueError("invalid history cursor") from None
+    limit = max(1, min(int(limit), 500))
     # The conversation: your messages, its answers and the questions it asked you; a reply
     # that answered a question shows as the question's answer, not again as a message.
     chat = [i for i, e in enumerate(events)
             if (e.kind in ("user", "assistant") and not (e.ask and e.ask.get("reply")))
-            or _is_question(e)]  # fmt: skip
-    picked = [i for i in chat if i >= after] if after else chat[-limit:]
+            or _is_question(e) or (include_tools and e.kind in ("tool", "notice"))]  # fmt: skip
+    excerpts = {}
+    if query:
+        needle = query.casefold()
+        for call_id, raw in _raw_tool_outputs(provider, path):
+            clean = redact(raw)
+            index = clean.casefold().find(needle)
+            if index >= 0:
+                excerpts[call_id] = clean[max(0, index - 250) : index + 750]
+        chat = [
+            i
+            for i in chat
+            if needle in redact(f"{events[i].text}\n{events[i].output}").casefold()
+            or events[i].call_id in excerpts
+        ]
+    eligible = [i for i in chat if before is None or i < before]
+    picked = [i for i in eligible if i >= after][:limit] if after else eligible[-limit:]
+    next_offset = picked[-1] + 1 if after and len(picked) == limit else len(events)
     if after:
-        asked = {i for i in again if 0 <= i < min(after, len(events)) and _is_question(events[i])}
+        asked = {i for i in again if 0 <= i < min(after, len(events)) and events[i].kind == "tool"}
         picked = sorted(asked) + picked
     since = chat[-1] + 1 if chat else 0
     running = [i for i in range(since, len(events))
@@ -445,21 +536,50 @@ def transcript(config, provider: str, sid: str, *, after: int = 0, limit: int = 
         elif e.kind == "assistant":
             shots[i], waiting = waiting, []
     return {
-        "events": [_shown(i, events[i], provider, sid, shots.get(i, ())) for i in picked],
+        "events": [
+            {
+                **_shown(i, events[i], provider, sid, shots.get(i, ())),
+                **(
+                    {"output": excerpts[events[i].call_id]} if events[i].call_id in excerpts else {}
+                ),
+            }
+            for i in picked
+        ],
         "running": [_shown(i, events[i], provider, sid) for i in running[-1:]],
         "shots": [_picture(provider, sid, ref) for ref in waiting],  # no answer after them yet
-        "next": len(events),
-        "first": after if after else (picked[0] if picked else 0),
-        "earlier": 0 if after else len(chat) - len(picked),
+        "next": next_offset,
+        "first": after if after and not cursor else (picked[0] if picked else (before or 0)),
+        "earlier": sum(i < picked[0] for i in chat) if picked else 0,
+        "cursor": base64.urlsafe_b64encode(
+            json.dumps([next_offset, anchor(next_offset)]).encode()
+        ).decode(),
+        "reset": reset,
     }
 
 
 _offsets: dict[str, tuple[int, list[int]]] = {}
 
 
+_packed: dict = {}  # the last compressed rollout read whole: its path, its stamp, its lines
+
+
+def _packed_line(path: Path, number: int) -> bytes | None:
+    """One line of a compressed rollout, which no longer grows: decompressed once, split
+    as the parsers split it, so line numbers agree."""
+    stamp = path.stat().st_mtime_ns
+    if _packed.get("path") != str(path) or _packed.get("stamp") != stamp:
+        with open_text(path) as fh:
+            lines = [line.encode() for line in fh]
+        _packed.update(path=str(path), stamp=stamp, lines=lines)
+    lines = _packed["lines"]
+    return lines[number] if 0 <= number < len(lines) else None
+
+
 def _line_at(path: Path, number: int) -> bytes | None:
     """One line of a growing transcript, from an index of where its lines start that is
     extended as the file grows."""
+    if path.suffix == ".zst":
+        return _packed_line(path, number)
     size = path.stat().st_size
     scanned, starts = _offsets.get(str(path), (0, [0]))
     if size < scanned:  # replaced, not grown
@@ -505,7 +625,8 @@ def image(config, provider: str, sid: str, line: int, n: int) -> tuple[bytes, st
 
 
 def session_view(config, provider: str, sid: str, *, after: int = 0,
-                 again: Iterable[int] = ()) -> dict:  # fmt: skip
+                 again: Iterable[int] = (), before: int | None = None, include_tools=False,
+                 cursor: str | None = None, query: str | None = None) -> dict:  # fmt: skip
     """One session for the app: its state, its transcript from `after` with the questions
     named in `again`, its job cards, what it is doing now and its turn's task list. One ax
     has just started shows before its tool has written a transcript."""
@@ -513,7 +634,17 @@ def session_view(config, provider: str, sid: str, *, after: int = 0,
 
     held = next((s for s in chat.held() if s["provider"] == provider and s["id"] == sid), None)
     try:
-        found = transcript(config, provider, sid, after=after, again=again)
+        found = transcript(
+            config,
+            provider,
+            sid,
+            after=after,
+            again=again,
+            before=before,
+            include_tools=include_tools,
+            cursor=cursor,
+            query=query,
+        )
     except NotFound:
         if held is None:
             raise
@@ -528,9 +659,121 @@ def session_view(config, provider: str, sid: str, *, after: int = 0,
                    "name": getattr(parsed, "title", None) or sid[:8], "cwd": cwd,
                    "project": project_name(cwd) if cwd else None}  # fmt: skip
 
+    from ax import chat_store
+
+    session.update(chat_store.metadata(config, provider, sid))
     now = (session_activity.read(path, provider) if path and path.exists()
            else {"activity": None, "tasks": None})  # fmt: skip
     talk = chat.state(config, provider, sid)
     return {"session": session, **found, "cards": job_card.session_cards(config, provider, sid),
             "chat": talk, "activity": now["activity"],
             "tasks": now["tasks"] or talk.get("tasks")}  # a Codex plan arrives only live  # fmt: skip
+
+
+def tool_output(config, provider, sid, index, offset=0):
+    path = transcript_path(config, provider, sid)
+    if path is None:
+        raise NotFound("No transcript")
+    events = _parse(provider, path)
+    if not 0 <= index < len(events):
+        raise ValueError("No such event")
+    event = events[index]
+    output = event.output or ""
+    if event.call_id:
+        from collections import Counter
+
+        from ax.sources import claude as claude_source
+        from ax.sources import codex as codex_source
+        from ax.sources.common import iter_records
+
+        for record in iter_records(path, Counter()):
+            if provider == "claude" and record.get("type") == "user":
+                content = (record.get("message") or {}).get("content") or []
+                for block in content if isinstance(content, list) else []:
+                    if isinstance(block, dict) and block.get("tool_use_id") == event.call_id:
+                        output = claude_source._result_text(block.get("content"))
+            elif provider == "codex":
+                item = record.get("payload") or {}
+                if item.get("call_id") == event.call_id and item.get("type") in (
+                    "function_call_output",
+                    "custom_tool_call_output",
+                ):
+                    output = codex_source._output_text(item.get("output"))
+    output = redact(output)
+    offset = max(0, offset)
+    return {
+        "text": output[offset : offset + 16000],
+        "next": offset + 16000 if len(output) > offset + 16000 else None,
+    }
+
+
+def context_files(cwd, query):
+    import re
+
+    root = Path(cwd).expanduser().resolve()
+    if not root.is_dir():
+        raise ValueError("Choose a working folder first")
+    match = re.fullmatch(r"(.*?)(?::(\d+)(?:[-–](\d+))?)?", query)
+    needle = (match[1] if match else query).casefold()
+    try:
+        run = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-co", "--exclude-standard", "-z"],
+            capture_output=True,
+            timeout=10,
+            check=True,
+        )
+        files = [root / os.fsdecode(p) for p in run.stdout.split(b"\0") if p][:5000]
+    except (OSError, subprocess.SubprocessError):
+        files = []
+        for folder, dirs, names in os.walk(root):
+            dirs[:] = [
+                d
+                for d in dirs
+                if not d.startswith(".") and d not in ("node_modules", "__pycache__", "dist")
+            ]
+            files.extend(Path(folder) / name for name in names)
+            if len(files) >= 2000:
+                break
+    result = []
+    for file in [f for f in files if needle in str(f).casefold()][:30]:
+        if match and match[2]:
+            text = file.read_text()
+            lines = text.splitlines()
+            start, end = int(match[2]), int(match[3] or match[2])
+            if not 1 <= start <= end <= len(lines):
+                continue
+            result.append(
+                {
+                    "kind": "selection",
+                    "path": str(file),
+                    "start": start,
+                    "end": end,
+                    "text": "\n".join(lines[start - 1 : end]),
+                    "language": "",
+                }
+            )
+        else:
+            result.append({"kind": "file", "path": str(file)})
+    return result
+
+
+def _raw_tool_outputs(provider, path):
+    from collections import Counter
+
+    from ax.sources import claude as claude_source
+    from ax.sources import codex as codex_source
+    from ax.sources.common import iter_records
+
+    for record in iter_records(path, Counter()):
+        if provider == "claude" and record.get("type") == "user":
+            content = (record.get("message") or {}).get("content") or []
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get("tool_use_id"):
+                    yield block["tool_use_id"], claude_source._result_text(block.get("content"))
+        elif provider == "codex":
+            item = record.get("payload") or {}
+            if item.get("call_id") and item.get("type") in (
+                "function_call_output",
+                "custom_tool_call_output",
+            ):
+                yield item["call_id"], codex_source._output_text(item.get("output"))

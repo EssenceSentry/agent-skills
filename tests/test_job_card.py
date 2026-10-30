@@ -70,6 +70,7 @@ def test_a_failure_from_long_ago_is_not_shown(env):
 
 CONTEXT = {
     "run": {"status": "running", "kernel_epoch": 2, "current_cell_index": 4},
+    "source_path": "/runs/r1/source.ipynb",
     "cells": [
         {"cell_id": "a", "cell_index": 0, "label": "# Train", "status": "skipped"},
         {"cell_id": "b", "cell_index": 1, "label": "Train", "status": "succeeded"},
@@ -98,6 +99,7 @@ def test_a_notebook_card_shows_its_cell_its_count_and_what_is_still_running(env,
         jobs._save(db, job)
     card = job_card.card(env.config, jobs.get(env.config, "nb"))
     assert card["notebook"] == {
+        "path": "/runs/r1/source.ipynb",  # the notebook Runwatch runs, to open at the cell
         "cell": {"index": 4, "label": "Release"},
         "cells": {"done": 2, "total": 4},
         "resources": [{"label": "news-scoring-test", "kind": "sagemaker processing_job",

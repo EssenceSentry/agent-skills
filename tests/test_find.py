@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 import pytest
 import yaml
@@ -14,20 +13,11 @@ from conftest import CLAUDE_SESSION, CODEX_SESSION
 
 
 @pytest.fixture
-def indexed(env, tmp_path):
-    repos = tmp_path / "Repos"
-    for name in ("demo", "other"):
-        (repos / name / ".git").mkdir(parents=True)
-    (repos / "notes-only").mkdir()
-    env.config_path.write_text(
-        env.config_path.read_text() + f'\n[profile]\nrepos_root = "{repos}"\n'
-    )
-    env.config = load(env.config_path)
+def indexed(env):
     sync_module.sync(env.config)
     with Store(env.config.db_path) as store:
         notes = {r["session_id"]: r["note_path"] for r in store.all_sessions() if r["note_path"]}
     env.notes = notes
-    env.repos = repos
     return env
 
 
@@ -37,62 +27,64 @@ def qmd_hit(collection, rel, title="T", snippet="@@ -1,2 @@ (0 before, 1 after)\
 
 
 class Runner:
-    def __init__(self, qmd=(), semble=()):
-        self.qmd, self.semble, self.calls = list(qmd), list(semble), []
+    def __init__(self, qmd=()):
+        self.qmd, self.calls = list(qmd), []
 
     def __call__(self, argv, **kwargs):
         self.calls.append(argv)
-        if argv[0] == "qmd":
-            return json.dumps(self.qmd)
-        repos = {Path(p).name: p for p in argv if p.startswith("/") and Path(p).is_dir()}
-        return json.dumps({"results": self.semble, "repos": repos})
+        return json.dumps(self.qmd)
 
 
 def note_rel(env, session_id):
     return env.notes[session_id].removeprefix("Sessions/")
 
 
-def test_setup_writes_one_qmd_collection_per_source(indexed):
+def test_setup_writes_a_qmd_collection_for_each_tool_s_conversations_and_memories(indexed):
     path = find.write_qmd_config(indexed.config)
     assert path == indexed.root / "qmd" / "ax.yml"
     found = yaml.safe_load(path.read_text())["collections"]
+    assert set(found) == {"claude", "codex", "subagents", "claude-memory", "codex-memory"}
     assert found["claude"]["path"] == str(indexed.vault / "Sessions")
     assert (
         "claude" in found["claude"]["pattern"] and "**/_subagents/**" in found["claude"]["ignore"]
     )
     assert found["subagents"]["includeByDefault"] is False
     assert found["claude-memory"]["path"] == str(indexed.claude_home / "projects")
-    assert "Sessions/**" in found["notes"]["ignore"]
     assert all(c["context"]["/"] for c in found.values())
-
-
-def test_repositories_are_the_git_checkouts_under_repos_root(indexed):
-    assert [p.name for p in find.repos(indexed.config)] == ["demo", "other"]
 
 
 def test_hits_are_merged_labelled_and_carry_handles(indexed, monkeypatch):
     runner = Runner(
         qmd=[qmd_hit("claude", note_rel(indexed, CLAUDE_SESSION), "Add retries"),
              qmd_hit("claude-memory", "-Users-me-Repos-demo/memory/retries.md", "Retries")],
-        semble=[{"file_path": "demo/src/fetch.py", "start_line": 4, "end_line": 9,
-                 "score": 0.02, "content": "def fetch(url):\n    retry()"}],
     )  # fmt: skip
     monkeypatch.setattr(find, "_run", runner)
     hits = find.find(indexed.config, "where is the fetch retry helper", limit=5)
-    assert [h["source"] for h in hits] == ["conversation", "code", "memory"]
-    talk, code, memory = hits
+    assert [h["source"] for h in hits] == ["conversation", "memory"]
+    talk, memory = hits
     assert talk["handle"] == "ax:11111111" and talk["project"] == "demo"
+    assert talk["session"] == "11111111-1111-4111-8111-111111111111"  # to open it by
+    assert talk["started"].startswith(talk["date"])  # when it began, to tell it from its twins
     assert talk["path"] == str(indexed.vault / indexed.notes[CLAUDE_SESSION])
-    assert talk["snippet"] == "the passage"
-    assert code["path"] == str(indexed.repos / "demo" / "src" / "fetch.py") and code["line"] == 4
+    assert talk["snippet"] == "You: Add a retry to the fetch helper"  # what was said, from the note
     assert memory["path"].endswith("memory/retries.md")
-    [qmd_call] = [c for c in runner.calls if c[0] == "qmd"]
-    assert qmd_call[1:4] == ["--index", "ax", "query"]
-    assert {"claude", "codex", "claude-memory", "codex-memory", "notes", "docs-demo",
-            "docs-other"} == {qmd_call[i + 1] for i, a in enumerate(qmd_call) if a == "-c"}  # fmt: skip
+    [qmd_call] = runner.calls  # qmd alone answers
+    assert qmd_call[1:5] == ["--index", "ax", "query", "lex: where is the fetch retry helper\n"
+                             "vec: where is the fetch retry helper"]  # fmt: skip
+    assert "--no-rerank" in qmd_call
+    assert {"claude", "codex", "claude-memory", "codex-memory"} == {
+        qmd_call[i + 1] for i, a in enumerate(qmd_call) if a == "-c"}  # fmt: skip
 
 
-def test_filters_apply_through_the_archive_and_the_repo_names(indexed, monkeypatch):
+def test_only_conversations_and_memories_are_searched(indexed, monkeypatch):
+    runner = Runner(qmd=[qmd_hit("notes", "Profile/rules/tabs.md")])  # an older index's note
+    monkeypatch.setattr(find, "_run", runner)
+    assert find.find(indexed.config, "tabs", sources=["notes", "docs", "code"]) == []
+    assert runner.calls == []  # nothing left to ask
+    assert find.find(indexed.config, "tabs") == []  # nor shown when qmd still has it
+
+
+def test_filters_apply_through_the_archive(indexed, monkeypatch):
     runner = Runner(
         qmd=[qmd_hit("claude", note_rel(indexed, CLAUDE_SESSION)),
              qmd_hit("codex", note_rel(indexed, CODEX_SESSION))],
@@ -101,17 +93,139 @@ def test_filters_apply_through_the_archive_and_the_repo_names(indexed, monkeypat
     only_claude = find.find(indexed.config, "q", sources=["conversations"], provider="claude")
     assert [h["handle"] for h in only_claude] == ["ax:11111111"]
     assert find.find(indexed.config, "q", sources=["conversations"], since="2030-01-01") == []
-    find.find(indexed.config, "q", sources=["code"], project="other")
-    [semble] = [c for c in runner.calls if c[0] == "semble"]
-    assert str(indexed.repos / "other") in semble and str(indexed.repos / "demo") not in semble
 
 
-def test_fast_search_skips_the_models_and_code_only_skips_qmd(indexed, monkeypatch):
+def test_a_fast_search_skips_the_models(indexed, monkeypatch):
     runner = Runner()
     monkeypatch.setattr(find, "_run", runner)
     find.find(indexed.config, "q", sources=["conversations"], fast=True)
-    find.find(indexed.config, "q", sources=["code"])
-    assert runner.calls[0][3] == "search" and [c[0] for c in runner.calls] == ["qmd", "semble"]
+    assert runner.calls[0][3] == "search"
+
+
+def test_qmd_snippets_leave_out_hunk_headers_and_line_numbers():
+    passage = (
+        "81: @@ -80,4 @@ (79 before, 177 after)\n82: \n83: Do not build it.\n84: Keep it small."
+    )
+    assert find._snippet(passage) == "Do not build it. Keep it small."
+    assert find._snippet("@@ -1,2 @@ (0 before, 1 after)\nthe passage") == "the passage"
+    mentioned = "12: the diff starts with @@ -1,2 @@ in the patch"  # not a header: words before it
+    assert find._snippet(mentioned) == "the diff starts with @@ -1,2 @@ in the patch"
+
+
+def test_snippets_read_markdown_escapes_as_the_characters_they_stand_for(tmp_path):
+    note = tmp_path / "note.md"
+    note.write_text("Keep the cache\\_id, and \\*never\\* the key.\n")
+    assert find._passage(note, "cache id", "memory") == "Keep the cache_id, and *never* the key."
+    hunk = "@@ -1,2 @@ (0 before, 1 after)\n1: the cache\\_id"
+    assert find._snippet(hunk) == "the cache_id"
+
+
+CONVERSATION = """---
+session_id: "s-1"
+title: "ax"
+project: "demo"
+---
+# ax
+
+Claude · demo · 2026-10-24 13:28–17:36 · claude-opus-5-5
+
+Builds on: [[2026-10-20 claude demo - other (abc)|other]]
+
+## 13:28 · You
+
+Why is the **status bar** usage stale?
+
+### Claude
+
+- ran `grep usage src`
+- read `/repo/src/usage.py`
+
+The `codex` reading comes from its logs, so the usage goes stale between turns.
+"""
+
+
+def test_a_conversation_shows_what_was_said_that_matched_not_its_note_header(tmp_path):
+    note = tmp_path / "note.md"
+    note.write_text(CONVERSATION)
+    assert find._passage(note, "codex usage", "conversation") == (
+        "Claude: The codex reading comes from its logs, so the usage goes stale between turns."
+    )
+    assert (
+        find._passage(note, "status bar", "conversation")
+        == "You: Why is the status bar usage stale?"
+    )
+    # Found by meaning, not by these words: what was asked first.
+    assert (
+        find._passage(note, "freshness", "conversation")
+        == "You: Why is the status bar usage stale?"
+    )
+
+
+def test_a_memory_shows_what_it_is_about(tmp_path):
+    memory = tmp_path / "agent-tooling.md"
+    memory.write_text('---\nname: agent-tooling\ndescription: "The agent layer: what is built"\n'
+                      "metadata:\n  type: project\n---\n\nax is built.\n")  # fmt: skip
+    assert find._passage(memory, "ax", "memory") == "The agent layer: what is built"
+
+
+def test_a_passage_shows_its_matching_line_as_plain_words(tmp_path):
+    doc = tmp_path / "README.md"
+    doc.write_text("# Agent skills\n\n| Skill | What |\n| --- | --- |\n"
+                   "| [ax](skills/ax/SKILL.md) | The map of every `ax` command |\n")  # fmt: skip
+    assert find._passage(doc, "ax command", "memory") == "ax · The map of every ax command"
+    assert find._passage(doc, "nothing here", "memory") is None  # qmd's own passage, then
+    rules = tmp_path / "CLAUDE.md"
+    rules.write_text("<!-- ax:profile:start · generated by ax -->\n## Working rules\n\n"
+                     "- Search with ax find\n<!--\nax notes\n-->\n")  # fmt: skip
+    assert find._passage(rules, "ax", "memory") == "Search with ax find"  # never a comment
+
+
+def test_a_long_passage_is_cut_around_what_matched(tmp_path):
+    doc = tmp_path / "long.md"
+    doc.write_text("word " * 80 + "the retry helper waits " + "word " * 80 + "\n")
+    found = find._passage(doc, "retry helper", "memory")
+    assert found.startswith("…") and found.endswith("…") and "retry helper" in found
+    assert len(found) <= find.PASSAGE + 2
+
+
+def test_a_memory_copied_for_the_other_tool_is_left_out_beside_the_memory(indexed, monkeypatch):
+    runner = Runner(qmd=[
+        qmd_hit("claude-memory", "-Users-me-Repos-demo/memory/retries.md", "retries"),
+        qmd_hit("codex-memory", "notes/claude-Repos-demo-retries.md", "From Claude Code's memory: retries"),
+    ])  # fmt: skip
+    monkeypatch.setattr(find, "_run", runner)
+    hits = find.find(indexed.config, "retries", sources=["memories"])
+    assert [h["title"] for h in hits] == ["retries"]
+    assert hits[0]["project"] == "demo"  # the project whose memory it is
+
+
+def test_the_search_daemon_is_started_when_down_and_not_again_at_once(indexed, monkeypatch):
+    find.write_qmd_config(indexed.config)
+    monkeypatch.setattr(find, "_tried", {})
+    state = {"up": False, "starts": 0}
+
+    def start(config):
+        state["starts"] += 1
+        state["up"] = True
+
+    def up(config):
+        return state["up"]
+
+    assert find.keep_daemon(indexed.config, start=start, up=up, now=1000.0)
+    assert find.keep_daemon(indexed.config, start=start, up=up, now=1001.0)  # still up
+    state["up"] = False  # it went away
+    assert not find.keep_daemon(indexed.config, start=start, up=up, now=1100.0)  # tried lately
+    assert find.keep_daemon(indexed.config, start=start, up=up, now=1400.0)
+    assert state["starts"] == 2
+
+
+def test_no_search_daemon_is_started_before_the_index_is_set_up(indexed, monkeypatch):
+    monkeypatch.setattr(find, "_tried", {})
+
+    def start(config):
+        raise AssertionError("started without an index")
+
+    assert not find.keep_daemon(indexed.config, start=start, up=lambda c: False, now=1.0)
 
 
 def test_the_command_prints_hits_and_says_when_setup_is_missing(indexed, monkeypatch):
@@ -166,35 +280,23 @@ def test_sync_refreshes_the_index_when_it_wrote_notes(env, tmp_path, monkeypatch
     assert len(refreshed) == 1  # nothing written, nothing to refresh
 
 
-def test_setup_embeds_everything_and_indexes_each_repository(indexed, monkeypatch):
+def test_setup_indexes_and_embeds_everything(indexed, monkeypatch):
     runner = Runner()
     monkeypatch.setattr(find, "_run", runner)
     find.setup(indexed.config, say=lambda text: None)
-    qmd = [c[3:] for c in runner.calls if c[0] == "qmd"]
-    assert qmd == [["update"], ["embed", "--timeout", "0"]]
-    assert [c[3] for c in runner.calls if c[0] == "semble"] == [
-        str(indexed.repos / "demo"), str(indexed.repos / "other")]  # fmt: skip
+    assert [c[0] for c in runner.calls] == ["qmd", "qmd"]
+    assert [c[3:] for c in runner.calls] == [["update"], ["embed", "--timeout", "0"]]
 
 
-@pytest.mark.parametrize(
-    "query, code",
-    [("where is VCR computed", True), ("load_rules in profile.py", True),
-     ("what does parse_since return", True), ("why did we set LightRAG aside", False),
-     ("what did we decide about the gallery undo stack", False)],
-)  # fmt: skip
-def test_a_query_counts_as_about_code_when_it_names_code(query, code):
-    assert find.code_like(query) is code
-
-
-def test_code_comes_after_the_rest_for_a_question_that_is_not_about_code(indexed, monkeypatch):
-    runner = Runner(
-        qmd=[qmd_hit("claude", note_rel(indexed, CLAUDE_SESSION)),
-             qmd_hit("notes", "Profile/rules/tabs.md")],
-        semble=[{"file_path": "demo/a.css", "start_line": 1, "end_line": 2, "content": "light"}],
-    )  # fmt: skip
-    monkeypatch.setattr(find, "_run", runner)
-    hits = find.find(indexed.config, "why did we set LightRAG aside")
-    assert [h["source"] for h in hits] == ["conversation", "note", "code"]
+def test_a_refresh_drops_the_collections_an_older_setup_wrote(indexed, monkeypatch):
+    monkeypatch.setattr(find, "_run", Runner())
+    path = find.qmd_config(indexed.config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    older = {"path": str(indexed.vault), "pattern": "**/*.md"}
+    path.write_text(yaml.safe_dump({"collections": {"notes": older, "docs-demo": older}}))
+    find.refresh(indexed.config)
+    found = yaml.safe_load(path.read_text())["collections"]
+    assert "notes" not in found and "docs-demo" not in found and "claude" in found
 
 
 def test_a_running_qmd_daemon_answers_without_loading_models_again(indexed, monkeypatch):
@@ -212,36 +314,8 @@ def test_a_running_qmd_daemon_answers_without_loading_models_again(indexed, monk
     assert hit["handle"] == "ax:11111111" and runner.calls == []
     url, body = posted[0]
     assert url.endswith(":8181/query") and body["collections"] == ["claude", "codex"]
-    assert [s["type"] for s in body["searches"]] == ["lex", "vec"] and body["rerank"] is True
-    assert body["candidateLimit"] == find.RERANK
-
-
-def test_each_repository_gets_a_docs_collection(indexed):
-    found = find.qmd_collections(indexed.config)
-    docs = found["docs-demo"]
-    assert docs["path"] == str(indexed.repos / "demo")
-    assert docs["pattern"] == "docs/**/*.md,*.md" and "demo" in docs["context"]["/"]
-    assert "docs-other" in found and "docs-notes-only" not in found  # not a git checkout
-
-
-def test_doc_hits_are_labelled_and_filtered_by_project(indexed, monkeypatch):
-    runner = Runner(qmd=[qmd_hit("docs-demo", "docs/guide.md", "Guide")])
-    monkeypatch.setattr(find, "_run", runner)
-    [hit] = find.find(indexed.config, "how to deploy", sources=["docs"], project="demo")
-    assert hit["source"] == "doc" and hit["project"] == "demo"
-    assert hit["path"] == str(indexed.repos / "demo" / "docs" / "guide.md")
-    [qmd_call] = runner.calls
-    assert [qmd_call[i + 1] for i, a in enumerate(qmd_call) if a == "-c"] == ["docs-demo"]
-
-
-def test_a_refresh_registers_repositories_cloned_since_setup(indexed, monkeypatch):
-    monkeypatch.setattr(find, "_run", Runner())
-    find.write_qmd_config(indexed.config)
-    (indexed.repos / "newer" / ".git").mkdir(parents=True)
-    find.refresh(indexed.config)
-    assert (
-        "docs-newer" in yaml.safe_load(find.qmd_config(indexed.config).read_text())["collections"]
-    )
+    # By words and by meaning, not reranked: the reranker took five of a search's seven seconds.
+    assert [s["type"] for s in body["searches"]] == ["lex", "vec"] and body["rerank"] is False
 
 
 def test_sync_refreshes_a_stale_index_even_without_new_notes(env, monkeypatch):
@@ -260,4 +334,4 @@ def test_sync_refreshes_a_stale_index_even_without_new_notes(env, monkeypatch):
     assert len(refreshed) == 1  # nothing new, refreshed moments ago
     monkeypatch.setattr(find, "stale", lambda config: True)
     assert CliRunner().invoke(app, ["sync"], env=run).exit_code == 0
-    assert len(refreshed) == 2  # an hour on: edited docs get picked up
+    assert len(refreshed) == 2  # an hour on: edited memories get picked up

@@ -87,6 +87,68 @@ def test_codex_credits_come_from_the_newest_rate_limit_report(tmp_path):
     assert later.status == "stale"
 
 
+class FakeCodex:
+    """Codex's app server, answering `account/rateLimits/read` as it did live."""
+
+    def __init__(self, answer=None, *, fails=False):
+        self.answer, self.fails, self.asked, self.closed = answer, fails, [], False
+
+    def request(self, method, params=None, timeout=20.0):
+        self.asked.append(method)
+        if self.fails:
+            raise RuntimeError("codex app-server gave no answer to " + method)
+        return self.answer
+
+    def close(self):
+        self.closed = True
+
+
+ANSWER = {
+    "rateLimits": {
+        "limitId": "codex",
+        "primary": {"usedPercent": 3, "windowDurationMins": 10080, "resetsAt": 1793617571},
+        "secondary": None,
+        "credits": {"hasCredits": True, "unlimited": False, "balance": "62430.7782515000"},
+        "planType": "prolite",
+    }
+}
+# The fixture's own report: 12% used, written at 13:06 that day.
+AFTER_REPORT = datetime(2026, 10, 20, 14, tzinfo=UTC)
+
+
+@pytest.fixture
+def asked(monkeypatch):
+    monkeypatch.setattr(usage, "_asked", {})
+
+
+def test_codex_answers_for_its_usage_when_asked_and_its_answer_wins_while_newer(env, asked):
+    now = datetime(2026, 10, 27, 16, tzinfo=UTC)
+    server = FakeCodex(ANSWER)
+    assert usage.codex_ask(env.config, server=server, now=now)
+    assert server.asked == ["account/rateLimits/read"] and server.closed
+    [weekly] = usage.codex_windows(env.config.codex_home, now=now)
+    assert (weekly.name, weekly.used, weekly.status) == ("weekly", 3.0, "fresh")
+    assert weekly.observed_at == now and weekly.window_minutes == 10080
+    assert weekly.resets_at == datetime.fromtimestamp(1793617571, UTC)
+    credits = usage.codex_credits(env.config.codex_home, now=now)
+    assert credits.balance == pytest.approx(62430.778) and credits.observed_at == now
+
+
+def test_a_newer_report_in_codex_logs_wins_over_an_older_answer(env, asked):
+    usage.codex_ask(env.config, server=FakeCodex(ANSWER), now=AFTER_REPORT - timedelta(hours=2))
+    [weekly] = usage.codex_windows(env.config.codex_home, now=AFTER_REPORT)
+    assert weekly.used == 12.0
+
+
+def test_when_codex_cannot_answer_its_logs_still_do(env, asked):
+    server = FakeCodex(fails=True)
+    assert not usage.codex_ask(env.config, server=server, now=AFTER_REPORT)
+    assert server.closed
+    assert not usage.codex_ask(env.config, server=FakeCodex({}), now=AFTER_REPORT)
+    [weekly] = usage.codex_windows(env.config.codex_home, now=AFTER_REPORT)
+    assert weekly.used == 12.0
+
+
 def test_claude_windows_come_from_the_delegation_usage_helper(usage_env):
     windows = {w.name: w for w in usage.claude_windows(usage_env, refresh=False)}
     assert windows["session"].used == 40.0

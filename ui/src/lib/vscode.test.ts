@@ -19,6 +19,12 @@ describe("the page inside VS Code", () => {
     expect(
       viewFrom({ screen: "new", folders: '["/a","/b"]', server: "http://127.0.0.1:8765" })
     ).toEqual({ screen: "new", folders: ["/a", "/b"], server: "http://127.0.0.1:8765" })
+    expect(viewFrom({ screen: "panel", folders: '["/a"]', server: "s" })).toEqual({
+      screen: "panel",
+      folders: ["/a"],
+      server: "s",
+    })
+    expect(viewFrom({ screen: "search", server: "s" })).toEqual({ screen: "search", server: "s" })
   })
 
   it("shows nothing for a page it can't read", () => {

@@ -18,10 +18,9 @@ TOOLS = [
     {
         "name": "find",
         "description": (
-            "Search the user's past Claude Code and Codex conversations, both tools' "
-            "memories, their vault notes and the code in their repositories, in one go. "
-            "Use it before redoing an investigation or a decision, for 'have we done this "
-            "before', 'what did we decide about X' and 'where is X in the code'. "
+            "Search the user's past Claude Code and Codex conversations and both tools' "
+            "memories, in one go. Use it before redoing an investigation or a decision, "
+            "for 'have we done this before' and 'what did we decide about X'. "
             "Conversation hits carry a handle (ax:xxxxxxxx) to pass to recall. Confirm "
             "anything you rely on against the current code or data."
         ),
@@ -32,7 +31,7 @@ TOOLS = [
                 "sources": {
                     "type": "array",
                     "items": {"type": "string", "enum": list(find.SOURCES)},
-                    "description": "Where to look; default conversations, memories, notes, code.",
+                    "description": "Where to look; default conversations and memories.",
                 },
                 "project": {"type": "string", "description": "Only this project (repo name)."},
                 "provider": {"type": "string", "enum": ["claude", "codex"]},

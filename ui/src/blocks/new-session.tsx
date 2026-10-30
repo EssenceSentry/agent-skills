@@ -1,11 +1,16 @@
 import { Loader2, Play, X } from "lucide-react"
 import { type KeyboardEvent, useId, useState } from "react"
-
-import { AttachButton, ConfirmDialog, PictureTray, usePictures } from "@/blocks/message-input"
+import { ReferenceTray } from "@/blocks/composer-tools"
+import { ContextPicker } from "@/blocks/context-picker"
+import { AttachButton, PictureTray, usePictures } from "@/blocks/message-input"
+import { ModelEffortPicker } from "@/blocks/model-picker"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { chatAct } from "@/lib/ax"
+import { chatAct, useModels } from "@/lib/ax"
+import { useDraft } from "@/lib/drafts"
+import { type ModelPick, startingPick } from "@/lib/models"
+import { mergeReferences, type Reference, withReferences } from "@/lib/plus"
 import { sessionHref } from "@/lib/routes"
 import { canStart, PROVIDERS, type Provider } from "@/lib/sessions"
 import { cn } from "@/lib/utils"
@@ -19,7 +24,8 @@ const HELD = {
 }
 
 /**
- * A session of either tool, started by ax in a folder with its first message. Once it
+ * A session of either tool, started by ax in a folder with its first message, on the
+ * model and effort picked from both tools' lists: picking a model picks the tool. Once it
  * starts, its page opens; in VS Code `onStarted` opens its tab instead.
  */
 export function NewSession({
@@ -31,13 +37,25 @@ export function NewSession({
   onClose: () => void
   onStarted?: (provider: Provider, id: string, name: string) => void
 }) {
-  const [provider, setProvider] = useState<Provider>("claude")
+  const groups = useModels()
+  const [chosenPick, setPick] = useState<ModelPick | null>(null)
+  const pick = chosenPick ?? startingPick(groups)
+  const provider = pick.provider
+  const setProvider = (p: Provider) => setPick({ provider: p, model: null, effort: null })
   const [folder, setFolder] = useState(folders[0] ?? "")
-  const [text, setText] = useState("")
+  const [draft, setDraft, draftError] = useDraft(`new:card:${folder}`)
+  const text = draft.text
+  const setText = (text: string) => setDraft((was) => ({ ...was, text }))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [ask, setAsk] = useState<{ question: string; payload: Payload } | null>(null)
-  const pictures = usePictures(setError)
+  const pictures = usePictures(setError, {
+    pictures: draft.pictures,
+    set: (change) =>
+      setDraft((was) => ({
+        ...was,
+        pictures: typeof change === "function" ? change(was.pictures) : change,
+      })),
+  })
   const list = useId()
   const field = useId()
 
@@ -45,15 +63,14 @@ export function NewSession({
     setBusy(true)
     setError(null)
     try {
-      const said = await chatAct(payload)
-      if (said.confirm) {
-        setAsk({
-          question: said.question ?? "Confirm?",
-          payload: { ...payload, confirm: said.confirm },
-        })
-        return
-      }
-      setAsk(null)
+      const signature = JSON.stringify(payload)
+      const start =
+        draft.start?.signature === signature ? draft.start : { signature, id: crypto.randomUUID() }
+      setDraft((was) => ({ ...was, start }))
+      const said = await chatAct({ ...payload, client_message_id: start.id })
+      setDraft((was) =>
+        was.text === text ? { ...was, text: "", refs: [], pictures: [], start: undefined } : was
+      )
       const id = (said as { id?: string }).id
       // ax names it by its first line; the tab can show that before the listing does.
       const name = text.trim().split("\n")[0]?.slice(0, 60) || "New session"
@@ -66,15 +83,17 @@ export function NewSession({
     }
   }
 
-  const ready = canStart(folder, text, pictures.pictures.length) && !busy
+  const ready = canStart(folder, text, pictures.pictures.length + draft.refs.length) && !busy
   const start = () =>
     ready &&
     run({
       action: "start",
       provider,
       cwd: folder.trim(),
-      text: text.trim(),
+      text: withReferences(text, draft.refs),
       images: pictures.payload(),
+      model: pick.model,
+      effort: pick.effort,
     })
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -92,25 +111,28 @@ export function NewSession({
         </Button>
       </div>
 
-      <fieldset className="flex flex-wrap gap-1.5">
-        <legend className="sr-only">Tool</legend>
-        {PROVIDERS.map((p) => (
-          <button
-            key={p.provider}
-            type="button"
-            aria-pressed={provider === p.provider}
-            onClick={() => setProvider(p.provider)}
-            className={cn(
-              "rounded-full px-3 py-1 text-[13px] transition-colors",
-              provider === p.provider
-                ? "bg-primary-soft font-medium text-primary-ink"
-                : "bg-muted text-ink-2 hover:text-foreground"
-            )}
-          >
-            {p.label}
-          </button>
-        ))}
-      </fieldset>
+      {/* Until both tools have listed their models, the tool alone. */}
+      {groups.length === 0 && (
+        <fieldset className="flex flex-wrap gap-1.5">
+          <legend className="sr-only">Tool</legend>
+          {PROVIDERS.map((p) => (
+            <button
+              key={p.provider}
+              type="button"
+              aria-pressed={provider === p.provider}
+              onClick={() => setProvider(p.provider)}
+              className={cn(
+                "rounded-full px-3 py-1 text-[13px] transition-colors",
+                provider === p.provider
+                  ? "bg-primary-soft font-medium text-primary-ink"
+                  : "bg-muted text-ink-2 hover:text-foreground"
+              )}
+            >
+              {p.label}
+            </button>
+          ))}
+        </fieldset>
+      )}
 
       <div className="space-y-1.5">
         <label htmlFor={field} className="block text-xs text-muted-foreground">
@@ -133,6 +155,12 @@ export function NewSession({
       </div>
 
       <div className="rounded-xl border bg-card p-2 focus-within:ring-2 focus-within:ring-ring/40">
+        <ReferenceTray
+          refs={draft.refs}
+          onRemove={(index) =>
+            setDraft((was) => ({ ...was, refs: was.refs.filter((_, n) => n !== index) }))
+          }
+        />
         <PictureTray pictures={pictures.pictures} onRemove={pictures.remove} />
         <div className="flex items-end gap-2">
           <AttachButton onFiles={(files) => void pictures.attach(files)} disabled={busy} />
@@ -147,6 +175,11 @@ export function NewSession({
             className="max-h-60 min-h-16 flex-1 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
           />
         </div>
+        {groups.length > 0 && (
+          <div className="flex justify-end">
+            <ModelEffortPicker groups={groups} pick={pick} onPick={setPick} disabled={busy} />
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -156,14 +189,31 @@ export function NewSession({
           Start
         </Button>
       </div>
-      {error && <p className="text-xs text-critical">{error}</p>}
-
-      <ConfirmDialog
-        question={ask?.question ?? null}
-        busy={busy}
-        onCancel={() => setAsk(null)}
-        onYes={() => ask && run(ask.payload)}
+      <ContextPicker
+        text={text}
+        setText={setText}
+        cwd={folder}
+        add={(found: Reference[]) =>
+          setDraft((was) => ({
+            ...was,
+            refs: mergeReferences(was.refs, found),
+          }))
+        }
       />
+      {draftError && <p className="text-xs text-critical">{draftError}</p>}
+      {error && <p className="text-xs text-critical">{error}</p>}
+      {error?.includes("already starting") && (
+        <button
+          type="button"
+          className="text-xs underline"
+          onClick={() => {
+            setDraft((was) => ({ ...was, start: undefined }))
+            setError(null)
+          }}
+        >
+          Use a new start ID (may create a duplicate chat)
+        </button>
+      )}
     </section>
   )
 }

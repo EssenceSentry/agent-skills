@@ -1,6 +1,6 @@
 ---
 name: session-recall
-description: Find and build on past Claude Code and Codex conversations, memories, vault notes and code with `ax find`, `ax recall` and `ax here`. Use when the user refers to earlier work ("we discussed", "last week", "what did we decide about X", "have we done this before"), gives a conversation handle such as ax:9fe6d7e6 or asks to continue or build on another conversation, asks for this conversation's id or handle, or asks where something is in their code; and before re-deriving a decision or repeating an investigation that may already have been done.
+description: Find and build on past Claude Code and Codex conversations and memories with `ax find`, `ax recall` and `ax here`. Use when the user refers to earlier work ("we discussed", "last week", "what did we decide about X", "have we done this before"), gives a conversation handle such as ax:9fe6d7e6 or asks to continue or build on another conversation, or asks for this conversation's id or handle; and before re-deriving a decision or repeating an investigation that may already have been done.
 ---
 
 # Session recall
@@ -46,17 +46,15 @@ ax recall ax:9fe6d7e6 --card                 # a cached summary: goal, decisions
 ```bash
 ax find "how we cap fetch retries" --json --limit 5
 ax find "gallery undo stack" --in conversations --project auto-classifier --since 30d
-ax find "where is VCR computed" --in code
 ax search "cleanupPeriodDays" --json   # exact words, error text, file names
 ```
 
-- `ax find` searches conversations, both tools' memories, the vault's notes, the
-  repositories' docs (README, plans, `docs/`) and their code at once, by meaning as
-  well as words. `--in` narrows it: `conversations`, `memories`, `notes`, `docs`,
-  `code`, `subagents`.
+- `ax find` searches past conversations and both tools' memories at once, by
+  meaning as well as words; it doesn't search code (use grep or the editor for
+  that). `--in` narrows it: `conversations`, `memories`, `subagents`.
   `--project`, `--provider claude|codex` and `--since` filter conversations.
   `--fast` skips the models when a keyword search is enough.
-- Each hit is labelled `[conversation]`, `[memory]`, `[note]`, `[doc]` or `[code]`.
+- Each hit is labelled `[conversation]`, `[memory]` or `[subagent]`.
   Conversation hits carry their handle; recall one to read more.
 - `ax search` finds exact words in messages. Use it for error text, names and
   ids; use `ax find` for questions.

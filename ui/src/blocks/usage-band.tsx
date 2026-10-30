@@ -1,4 +1,4 @@
-import { Gauge, Hourglass, TriangleAlert } from "lucide-react"
+import { Gauge } from "lucide-react"
 
 import type { Credits, UsageRow } from "@/lib/ax"
 import { ago } from "@/lib/time"
@@ -19,28 +19,17 @@ const PACE_HINT = {
   spare: `Well over an even ${Math.round(EVEN_PER_DAY)}% a day left: room to use before it resets`,
 }
 
-function Window({ row }: { row: UsageRow }) {
+function Window({ row, now }: { row: UsageRow; now?: number }) {
   const meta = WINDOWS[row.window] ?? { label: row.window.replace(/_/g, " "), hint: "", order: 9 }
-  const level = usageTone(row)
-  // Yellow means tight unless what is left is spare; the icon and hint say which.
-  const pace = level === "warning" ? usagePace(row) : null
+  const level = usageTone(row, now)
+  // The colour says it; yellow means tight unless what is left is spare, and the hint on
+  // hover says which.
+  const pace = level === "warning" ? usagePace(row, now) : null
   const off = pace === "tight" || pace === "spare"
-  const foot = row.used === null ? (UNREAD[row.status] ?? row.status) : usageFoot(row)
-  const PaceIcon = pace === "spare" ? Hourglass : TriangleAlert
+  const foot = row.used === null ? (UNREAD[row.status] ?? row.status) : usageFoot(row, now)
   return (
     <div className="min-w-0" title={off ? PACE_HINT[pace] : meta.hint}>
-      <div className="flex items-center justify-between gap-1.5">
-        <span className="truncate text-[11.5px] text-muted-foreground">{meta.label}</span>
-        {level !== "primary" && (
-          <PaceIcon
-            className={cn(
-              "size-3.5 shrink-0",
-              level === "critical" ? "text-critical" : "text-warning"
-            )}
-            aria-label={off ? PACE_HINT[pace] : "near the limit"}
-          />
-        )}
-      </div>
+      <div className="truncate text-[11.5px] text-muted-foreground">{meta.label}</div>
       <div className="mt-0.5 flex items-baseline gap-0.5">
         <span className={cn("figure text-[22px]", row.used === null && "text-faint")}>
           {row.used === null ? "—" : Math.round(row.used)}
@@ -110,8 +99,25 @@ function CreditCell({ credits }: { credits: Credits }) {
   )
 }
 
-/** Both tools' allowance, every window and Codex's credits, one tool per row. */
-export function UsageDetails({ rows, credits }: { rows: UsageRow[]; credits: Credits[] }) {
+/** Each tool's mark in the VS Code extension's icon font, the one its status bar uses. */
+export const MARK: Record<string, string> = { claude: "\uE001", codex: "\uE002" }
+
+/**
+ * Both tools' allowance, every window and Codex's credits, one tool per row. Stacked, as
+ * in ax's narrow VS Code panel, each tool's mark and name head its windows, which take
+ * the whole width, three to a row where their labels fit and two elsewhere.
+ */
+export function UsageDetails({
+  rows,
+  credits,
+  stacked = false,
+  now,
+}: {
+  rows: UsageRow[]
+  credits: Credits[]
+  stacked?: boolean
+  now?: number
+}) {
   return (
     <section aria-label="Usage" className="flex flex-col gap-4">
       {PROVIDERS.map((provider) => {
@@ -119,21 +125,41 @@ export function UsageDetails({ rows, credits }: { rows: UsageRow[]; credits: Cre
           .filter((r) => r.provider === provider.id)
           .sort((a, b) => (WINDOWS[a.window]?.order ?? 9) - (WINDOWS[b.window]?.order ?? 9))
         const balance = credits.filter((c) => c.provider === provider.id)
-        return (
+        const tiles =
+          windows.length + balance.length ? (
+            <div
+              key="tiles"
+              className={cn(
+                "grid min-w-0 flex-1",
+                stacked ? "grid-cols-2 gap-3 @[240px]:grid-cols-3" : "grid-cols-3 gap-4"
+              )}
+            >
+              {windows.map((row) => (
+                <Window key={row.window} row={row} now={now} />
+              ))}
+              {balance.map((c) => (
+                <CreditCell key={`credits-${c.provider}`} credits={c} />
+              ))}
+            </div>
+          ) : (
+            <div key="tiles" className="pt-px text-[12px] text-muted-foreground">
+              not reported
+            </div>
+          )
+        return stacked ? (
+          <div key={provider.id} className="@container min-w-0 space-y-2">
+            <div className="flex items-center gap-1.5 text-[12.5px] font-semibold">
+              <span className="ax-mark text-[17px] font-normal" aria-hidden>
+                {MARK[provider.id]}
+              </span>
+              {provider.name}
+            </div>
+            {tiles}
+          </div>
+        ) : (
           <div key={provider.id} className="flex min-w-0 gap-3">
             <div className="w-12 shrink-0 pt-px text-[13px] font-semibold">{provider.name}</div>
-            {windows.length + balance.length ? (
-              <div className="grid min-w-0 flex-1 grid-cols-3 gap-4">
-                {windows.map((row) => (
-                  <Window key={row.window} row={row} />
-                ))}
-                {balance.map((c) => (
-                  <CreditCell key={`credits-${c.provider}`} credits={c} />
-                ))}
-              </div>
-            ) : (
-              <div className="pt-px text-[12px] text-muted-foreground">not reported</div>
-            )}
+            {tiles}
           </div>
         )
       })}

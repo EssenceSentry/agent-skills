@@ -89,7 +89,8 @@ def _unheard(config, job: jobs.Job) -> str | None:
 
 
 def notebook(job: jobs.Job, *, clock=time.monotonic) -> dict | None:
-    """A Runwatch run's current cell, its cells done, and what it started that still runs."""
+    """A Runwatch run's notebook and current cell, its cells done, and what it started
+    that still runs."""
     rw = job_sources.runwatch_spec(job)
     if not rw or not rw.get("binary") or not rw.get("run"):
         return None
@@ -113,6 +114,7 @@ def _view(context: dict) -> dict:
     at = next((c for c in cells if c.get("cell_index") == current), None)
     counted = [c for c in cells if c.get("status") != "skipped"]
     return {
+        "path": context.get("source_path"),  # the notebook it runs, which a card can open
         "cell": {
             "index": current,
             "label": job_sources.section_label(at.get("label")) if at else None,

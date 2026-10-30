@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { globMatches, openWith, unplaced } from "./opening"
+import { globMatches, openWith, saveStart, unplaced } from "./opening"
 
 const editors = ["*.pdf", "*.{jpg,jpe,jpeg,png,bmp,gif,ico,webp,avif}", "*.{mp4,webm}"]
 
@@ -44,5 +44,30 @@ describe("a reference that can't be placed", () => {
     expect(unplaced("models/a.py", "/repo")).toBeNull()
     expect(unplaced("https://example.com", null)).toBeNull()
     expect(unplaced("#/sessions", null)).toBeNull()
+  })
+})
+
+describe("where a web page opens", () => {
+  it("opens in the browser, drawn, not as its code", () => {
+    expect(openWith("/repo/dist/index.html", { editors, text: true })).toBe("browser")
+    expect(openWith("/repo/Report.HTM", { editors, text: true })).toBe("browser")
+  })
+
+  it("opens at a line in the editor when the link names one: that is about its code", () => {
+    expect(openWith("/repo/index.html", { editors, text: true, line: 42 })).toBe("editor")
+  })
+})
+
+describe("where saving a page's Markdown starts", () => {
+  it("is the session's folder, under the page's name for the file", () => {
+    expect(saveStart("/repo", "plan-themed-charts.md", "/home/me")).toBe(
+      "/repo/plan-themed-charts.md"
+    )
+  })
+
+  it("is home without a folder, and only ever a file name, never a path", () => {
+    expect(saveStart(null, "plan.md", "/home/me")).toBe("/home/me/plan.md")
+    expect(saveStart("/repo", "../../etc/plan.md", "/home/me")).toBe("/repo/plan.md")
+    expect(saveStart("/repo", 3, "/home/me")).toBe("/repo/plan.md")
   })
 })

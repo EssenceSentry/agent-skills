@@ -2,9 +2,10 @@
 
 Claude's figures come from the delegation skill's usage helper, which asks the
 CLI's built-in /usage (no model turn) and reads the cache it refreshes. Codex
-writes its rate limits into every rollout, so the newest report is read from
-the logs without a network call. Readings are stored, and the forecast is a
-range between two burn rates: since the window began and over the last hours.
+writes its rate limits into every rollout, and answers for them when asked
+(`codex_ask`, no model turn either), so its reading is the newer of the two.
+Readings are stored, and the forecast is a range between two burn rates: since
+the window began and over the last hours.
 """
 
 import contextlib
@@ -87,19 +88,73 @@ def claude_windows(config: Config, *, refresh: bool = True, timeout: int = 60) -
 
 
 def codex_windows(codex_home: Path, *, now: datetime | None = None) -> list[Window]:
-    """The newest rate-limit report in Codex's own rollouts."""
+    """Codex's windows in its newest rate-limit report."""
     now = now or datetime.now(UTC)
-    rollouts = sorted(codex_rollouts(codex_home), key=_mtime, reverse=True)
-    for path in rollouts[:30]:
+    newest = _newest_report(codex_home)
+    if newest:
+        observed, limits = newest
+        return [
+            _codex_window(limits.get(slot), observed, now)
+            for slot in ("primary", "secondary")
+            if isinstance(limits.get(slot), dict)
+        ]
+    return [Window("codex", "weekly", None, None, None, "unavailable")]
+
+
+# Codex's own latest answer for its rate limits, by its home: (when, report).
+_asked: dict[Path, tuple[datetime, dict]] = {}
+
+
+def codex_ask(config: Config, *, server=None, now: datetime | None = None) -> bool:
+    """Ask Codex's app server for the account's rate limits now (`account/rateLimits/read`:
+    under a second, no model turn), so they are fresh between Codex's own turns. The
+    answer is kept beside its rollouts' reports, the newer of which the readers take.
+    False when Codex can't answer."""
+    from ax import live_sessions
+
+    now = now or datetime.now(UTC)
+    try:
+        server = server or live_sessions.AppServer(live_sessions.codex_command(config)).start()
+        try:
+            answer = server.request("account/rateLimits/read", {}) or {}
+        finally:
+            server.close()
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
+        return False
+    report = _rollout_report(answer.get("rateLimits"))
+    if not report:
+        return False
+    _asked[config.codex_home] = (now, report)
+    return True
+
+
+def _rollout_report(limits) -> dict | None:
+    """The app server's rate limits in the words Codex's rollouts use for them."""
+    if not isinstance(limits, dict):
+        return None
+    report = {}
+    for slot in ("primary", "secondary"):
+        window = limits.get(slot)
+        if isinstance(window, dict):
+            report[slot] = {"used_percent": window.get("usedPercent"),
+                            "window_minutes": window.get("windowDurationMins"),
+                            "resets_at": window.get("resetsAt")}  # fmt: skip
+    credits = limits.get("credits")
+    if isinstance(credits, dict):
+        report["credits"] = {"has_credits": credits.get("hasCredits"),
+                             "unlimited": credits.get("unlimited"),
+                             "balance": credits.get("balance")}  # fmt: skip
+    return report or None
+
+
+def _newest_report(codex_home: Path) -> tuple[datetime, dict] | None:
+    """The newer of Codex's latest answer when asked and the latest report in its rollouts."""
+    newest = _asked.get(codex_home)
+    for path in sorted(codex_rollouts(codex_home), key=_mtime, reverse=True)[:30]:
         latest = _latest_rate_limits(path)
         if latest:
-            observed, limits = latest
-            return [
-                _codex_window(limits.get(slot), observed, now)
-                for slot in ("primary", "secondary")
-                if isinstance(limits.get(slot), dict)
-            ]
-    return [Window("codex", "weekly", None, None, None, "unavailable")]
+            return latest if not newest or latest[0] > newest[0] else newest
+    return newest
 
 
 @dataclass
@@ -120,22 +175,17 @@ CREDITS_STALE = timedelta(days=1)
 def codex_credits(codex_home: Path, *, now: datetime | None = None) -> Credits | None:
     """The credit balance in Codex's newest rate-limit report, when it carries one."""
     now = now or datetime.now(UTC)
-    for path in sorted(codex_rollouts(codex_home), key=_mtime, reverse=True)[:30]:
-        latest = _latest_rate_limits(path)
-        if not latest:
-            continue
-        observed, limits = latest
-        block = limits.get("credits")
-        if not isinstance(block, dict):
-            return None
-        try:
-            balance = float(block.get("balance"))
-        except (TypeError, ValueError):
-            balance = None
-        status = "stale" if now - observed > CREDITS_STALE else "fresh"
-        return Credits("codex", balance, bool(block.get("unlimited")),
-                       bool(block.get("has_credits")), observed, status)  # fmt: skip
-    return None
+    newest = _newest_report(codex_home)
+    if not newest or not isinstance(newest[1].get("credits"), dict):
+        return None
+    observed, block = newest[0], newest[1]["credits"]
+    try:
+        balance = float(block.get("balance"))
+    except (TypeError, ValueError):
+        balance = None
+    status = "stale" if now - observed > CREDITS_STALE else "fresh"
+    return Credits("codex", balance, bool(block.get("unlimited")),
+                   bool(block.get("has_credits")), observed, status)  # fmt: skip
 
 
 def forecast(

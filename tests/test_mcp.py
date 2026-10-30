@@ -24,7 +24,7 @@ def test_the_server_lists_its_tools_and_answers_calls(env, monkeypatch):
         find,
         "find",
         lambda config, query, **kw: [
-            {"source": "code", "title": "demo/a.py:1-2", "path": "/r/demo/a.py", "snippet": query}
+            {"source": "memory", "title": "retries", "path": "/m/retries.md", "snippet": query}
         ],
     )
     replies = exchange(
@@ -33,7 +33,7 @@ def test_the_server_lists_its_tools_and_answers_calls(env, monkeypatch):
          "params": {"protocolVersion": "2025-06-18", "capabilities": {}}},
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-        call(3, "find", query="retry helper", sources=["code"]),
+        call(3, "find", query="retry helper", sources=["memories"]),
         call(4, "recall", ref="ax:11111111"),
         call(5, "recall", ref="ax:0badcafe"),
         {"jsonrpc": "2.0", "id": 6, "method": "nope"},

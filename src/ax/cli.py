@@ -128,10 +128,14 @@ def runs_stop(run_id: str = typer.Argument(..., help="An id, or its start, from 
     typer.echo(f"asked {run.id} to stop")
 
 
-_CACHED = typer.Option(False, "--cached", help="Use the last readings; don't ask Claude /usage.")
+_CACHED = typer.Option(
+    False, "--cached", help="Use the last readings; don't ask Claude's /usage or Codex."
+)
 
 
 def _windows(config, cached: bool):
+    if not cached:
+        usage_module.codex_ask(config)  # fresh figures between Codex's own turns
     windows = usage_module.claude_windows(config, refresh=not cached)
     windows += usage_module.codex_windows(config.codex_home)
     usage_module.record(config, windows)
@@ -481,7 +485,6 @@ def serve(
     notify: bool = typer.Option(False, "--notify", help="Send the link with ntfy."),
 ):
     """The ax app: what waits for you, usage, jobs, conversations and the vault's notes."""
-    import secrets
     import signal
     import threading
 
@@ -501,51 +504,37 @@ def serve(
             err=True,
         )
         raise typer.Exit(2)
-    # A shared link carries a token that lives only as long as this run.
-    run_token = secrets.token_urlsafe(32) if share == "cloudflare" else None
-    server = serve_module.make_server(config, port=port, share_token=run_token)
+    # A shared link, whether shared from the start or later from VS Code, is printed and
+    # sent through ntfy when it is set up; its token works only while sharing lasts.
+    to_ntfy = serve_module._announcer(config)
+
+    def announce_shared(link: str) -> None:
+        typer.echo(f"shared at {link} (it works until sharing stops)")
+        to_ntfy(link)
+
+    server = serve_module.make_server(config, port=port, announce=announce_shared)
+    # Searches go through qmd's daemon, models loaded: start it with the app.
+    from ax import find
+
+    threading.Thread(target=find.keep_daemon, args=(config,), daemon=True).start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
     url = f"{base}/?token={app_module.token(config)}"
     typer.echo(f"ax at {url} (Ctrl-C to stop)\nThe classic page is at {base}/classic.")
-    link, tunnel, stop, sent = url, None, threading.Event(), []
-
-    def announce(new_link: str) -> None:
-        if ntfy is None:
-            return
-        title = "ax has a new link" if sent else "ax is open"
-        sent.append(new_link)
-        error = job_notify.send(
-            ntfy, title,
-            "What waits for you, usage, jobs and notes. The link works while `ax serve` runs.",
-            tags=("computer",), click=new_link,
-        )  # fmt: skip
-        typer.echo(f"ntfy: {error}" if error else "sent the link with ntfy")
 
     if share == "cloudflare":
-        from ax import job_tunnel
-
-        tunnel = job_tunnel.Share(base, on_url=server.allow_url)
-        try:
-            link = f"{tunnel.start()}/?token={run_token}"
-            typer.echo(f"shared at {link} (it stops working when this stops)")
-        except RuntimeError as exc:  # at login the network may not be up yet
-            link = None
-            typer.echo(f"no tunnel yet: {exc}. ax keeps serving on this Mac, trying again "
-                       "every 30 s, and sends the link when it is up.")  # fmt: skip
-
-        def relinked(new: str) -> None:
-            fresh = f"{new}/?token={run_token}"
-            typer.echo(f"shared at {fresh}")
-            announce(fresh)
-
-        threading.Thread(
-            target=serve_module.keep_shared, args=(tunnel, relinked), kwargs={"stop": stop},
-            daemon=True,
-        ).start()  # fmt: skip
-    elif notify:
+        # At login the network may not be up yet: the tunnel is tried every 30 s, and
+        # its link announced when it comes up.
+        if not server.sharing.start(wait=False):
+            typer.echo(f"no tunnel yet: {server.sharing.error}. ax keeps serving on this Mac, "
+                       "trying again every 30 s, and sends the link when it is up.")  # fmt: skip
+    elif ntfy is not None:
         typer.echo("the link opens only on this Mac; --share cloudflare reaches your phone")
-    if link:
-        announce(link)
+        error = job_notify.send(
+            ntfy, "ax is open",
+            "What waits for you, usage, jobs and notes. The link works while `ax serve` runs.",
+            tags=("computer",), click=url,
+        )  # fmt: skip
+        typer.echo(f"ntfy: {error}" if error else "sent the link with ntfy")
     if open_browser:
         import webbrowser
 
@@ -561,9 +550,33 @@ def serve(
         pass  # the loop has already stopped: it ran in this thread
     finally:
         signal.signal(signal.SIGTERM, previous)
-        stop.set()
-        if tunnel is not None:
-            tunnel.close()
+        server.sharing.stop()
+        server.server_close()
+        # What ax held goes back as Hand back sends it: Claude's to the Claude app's list.
+        from ax import chat
+
+        chat.hand_back_all(config)
+
+
+@app.command()
+def demo(
+    port: int = typer.Option(8798, help="Port on 127.0.0.1."),
+    root: Path = typer.Option(Path("~/.cache/ax-demo"), help="Where the demo's home is written."),
+):
+    """Every part of a session page at once, in sessions of a home of its own."""
+    from ax import demo as demo_module
+
+    made, server = demo_module.serve(root.expanduser(), port)
+    typer.echo(
+        f"ax's demo at http://127.0.0.1:{port}/#/sessions (Ctrl-C to stop)\n"
+        f"In VS Code, open {made.project} in a new window: its settings point the "
+        "extension here."
+    )
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
         server.server_close()
 
 
@@ -1094,7 +1107,7 @@ def sync(quiet: bool = typer.Option(False, "--quiet", "-q", help="Print nothing 
                 from ax import memshare
 
                 memshare.export(config)  # Claude's memories, for Codex to merge
-            fresh_notes = report.written or find.stale(config)  # edited docs count too
+            fresh_notes = report.written or find.stale(config)  # edited memories count too
             if fresh_notes and config.find_refresh_on_sync and find.ready(config):
                 try:
                     find.refresh(config)  # new notes become findable
@@ -1187,19 +1200,19 @@ def recall_cmd(
 
 @app.command("find")
 def find_cmd(
-    query: str = typer.Argument(..., help="What to look for, in your own words or code terms."),
+    query: str = typer.Argument(..., help="What to look for, in your own words."),
     sources: str = typer.Option(
-        "conversations,memories,notes,docs,code", "--in",
-        help="Any of conversations, memories, notes, docs, code, subagents, comma-separated.",
+        "conversations,memories", "--in",
+        help="Any of conversations, memories, subagents, comma-separated.",
     ),
     project: str = typer.Option(None, help="Only this project (git repo name)."),
     provider: str = typer.Option(None, help="Only conversations in claude or codex."),
     since: str = typer.Option(None, help="Only conversations since YYYY-MM-DD or 7d, 2w."),
     limit: int = typer.Option(10, help="Most hits to show."),
-    fast: bool = typer.Option(False, "--fast", help="Keywords only for notes: no models."),
+    fast: bool = typer.Option(False, "--fast", help="Keywords only: no models."),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output for agents."),
 ):  # fmt: skip
-    """Search past conversations, memories, vault notes and code in one go."""
+    """Search past conversations and both tools' memories in one go."""
     from ax import find
 
     config = load()
@@ -1351,7 +1364,7 @@ app.add_typer(index_app, name="index")
 
 @index_app.command("setup")
 def index_setup():
-    """Register the qmd collections, then index and embed them and every repository."""
+    """Register the qmd collections, then index and embed them."""
     from ax import find
 
     try:
@@ -1363,7 +1376,7 @@ def index_setup():
 
 @index_app.command("refresh")
 def index_refresh():
-    """Index and embed conversations, memories and notes that changed."""
+    """Index and embed the conversations and memories that changed."""
     from ax import find
 
     try:

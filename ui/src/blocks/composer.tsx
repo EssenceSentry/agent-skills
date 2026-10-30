@@ -1,16 +1,5 @@
-import {
-  ArrowUp,
-  Info,
-  Loader2,
-  LogOut,
-  SendHorizontal,
-  ShieldQuestion,
-  Square,
-  Target,
-  X,
-} from "lucide-react"
-import { type KeyboardEvent, useContext, useRef, useState } from "react"
-
+import { ArrowUp, CornerDownRight, Info, Loader2, SendHorizontal, Target, X } from "lucide-react"
+import { type KeyboardEvent, useContext, useEffect, useRef, useState } from "react"
 import {
   type Change,
   GoalBar,
@@ -19,16 +8,30 @@ import {
   PlusMenu,
   ReferenceTray,
 } from "@/blocks/composer-tools"
-import { Markdown } from "@/blocks/markdown"
-import { AttachButton, ConfirmDialog, PictureTray, usePictures } from "@/blocks/message-input"
-import { QuestionCard } from "@/blocks/question"
+import { ContextPicker } from "@/blocks/context-picker"
+import { AttachButton, PictureTray, usePictures } from "@/blocks/message-input"
+import { PendingMessages } from "@/blocks/pending-messages"
+import { PendingRequests } from "@/blocks/pending-requests"
+import { QuestionPanel } from "@/blocks/question"
+import { ApprovalPanel, PlanPanel } from "@/blocks/request"
+import { useSlash } from "@/blocks/slash-menu"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { chatAct, hurry } from "@/lib/ax"
-import { EditorHost } from "@/lib/host"
-import { type Reference, referenceLabel, withReferences } from "@/lib/plus"
-import { type Approval, type ChatState, canSend, composerMode, type Session } from "@/lib/sessions"
-import { askExtension } from "@/lib/transport"
+import { useDraft } from "@/lib/drafts"
+import { EditorHost, EditorLook } from "@/lib/host"
+import {
+  mergeReferences,
+  modesElsewhere,
+  type Reference,
+  referenceKey,
+  withReferences,
+} from "@/lib/plus"
+import { usePreferences } from "@/lib/preferences"
+import { type ChatState, canSend, composerMode, type Question, type Session } from "@/lib/sessions"
+import { askExtension, inExtension } from "@/lib/transport"
+import { cn } from "@/lib/utils"
+import { CopyButton } from "./copy-button"
 
 type Payload = Record<string, unknown>
 
@@ -50,95 +53,95 @@ export function Inline({ text }: { text: string }) {
   )
 }
 
-function ApprovalCard({
-  approval,
-  onAnswer,
-  busy,
-}: {
-  approval: Approval
-  onAnswer: (allow: boolean) => void
-  busy: boolean
-}) {
-  return (
-    <div className="chat-approval space-y-2.5 rounded-xl border border-warning/40 bg-warning/8 p-3.5">
-      <div className="flex items-start gap-2">
-        <ShieldQuestion className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
-        <div className="min-w-0 space-y-1">
-          <div className="text-[13.5px] font-medium">
-            It asks to <Inline text={approval.summary} />
-          </div>
-          {approval.reason && (
-            <div className="text-xs text-muted-foreground">{approval.reason}</div>
-          )}
-        </div>
-      </div>
-      {approval.plan && (
-        <div className="chat-plan max-h-80 overflow-auto rounded-lg border bg-card px-3.5 py-3">
-          <Markdown className="text-[13px] leading-relaxed">{approval.plan}</Markdown>
-        </div>
-      )}
-      {approval.detail && (
-        <details>
-          <summary className="cursor-pointer text-xs text-muted-foreground">Details</summary>
-          <pre className="label-mono mt-1.5 max-h-48 overflow-auto rounded-md bg-sunken/70 p-2.5 text-[11.5px] whitespace-pre-wrap">
-            {approval.detail}
-          </pre>
-        </details>
-      )}
-      <div className="flex gap-2">
-        <Button size="sm" onClick={() => onAnswer(true)} disabled={busy}>
-          {approval.plan ? "Go ahead" : "Allow"}
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => onAnswer(false)} disabled={busy}>
-          {approval.plan ? "Keep planning" : "Refuse"}
-        </Button>
-      </div>
-    </div>
-  )
-}
-
 /**
- * Writing to the session: a box to send from, approvals to answer, a stop, and a way to
- * take a session over from the Claude app. Through a shared link, each message and
- * approval asks a second yes.
+ * Writing to the session: a box to send from, always there, and a stop. What it waits on
+ * (an approval, a plan, questions) shows above the box until answered. A Claude session
+ * open in another app keeps its box too: a message sent waits until it is closed there.
+ * Through a shared link, each message and answer asks a second yes.
  */
-export function Composer({ session, chat }: { session: Session; chat: ChatState }) {
-  const [text, setText] = useState("")
+export function Composer({
+  session,
+  chat,
+  asked,
+}: {
+  session: Session
+  chat: ChatState
+  /** Codex's async question still open, answered by a reply. */
+  asked?: { call: string; questions: Question[] } | null
+}) {
+  const [draft, setDraft, draftError] = useDraft(`${session.provider}:${session.id}`)
+  const text = draft.text
+  const setText = (text: string) => setDraft((was) => ({ ...was, text }))
   const [inFlight, setInFlight] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [ask, setAsk] = useState<{ question: string; payload: Payload } | null>(null)
-  const pictures = usePictures(setError)
-  const [refs, setRefs] = useState<Reference[]>([])
+  // What handing it back did, such as adding it to the Claude app's sessions.
+  const [handedBack, setHandedBack] = useState<string | null>(null)
+  const pictures = usePictures(setError, {
+    pictures: draft.pictures,
+    set: (change) =>
+      setDraft((was) => ({
+        ...was,
+        pictures: typeof change === "function" ? change(was.pictures) : change,
+      })),
+  })
+  const refs = draft.refs
+  const setRefs = (change: Reference[] | ((was: Reference[]) => Reference[])) =>
+    setDraft((was) => ({ ...was, refs: typeof change === "function" ? change(was.refs) : change }))
   const [goalMode, setGoalMode] = useState(false)
+  const [setAside, setSetAside] = useState<string | null>(null)
   const box = useRef<HTMLTextAreaElement>(null)
   const frame = useRef<HTMLDivElement>(null)
   const mode = composerMode(chat)
+  const preferences = usePreferences()
+  const excludedContext = useRef(new Set<string>())
   // In VS Code, as in Codex: an up arrow to send, and the note about who holds the session
   // folded into the hand-back icon beside the plus instead of a line under the box.
   const editor = useContext(EditorHost)
-  const SendIcon = editor ? ArrowUp : SendHorizontal
+  const look = useContext(EditorLook)
+  const SendIcon = look ? ArrowUp : SendHorizontal
   const base = { provider: session.provider, id: session.id, cwd: session.cwd, name: session.name }
 
-  async function run(payload: Payload) {
+  useEffect(() => {
+    const receipts = new Set(chat.receipts ?? [])
+    if (draft.failed?.some((item) => receipts.has(item.id)))
+      setDraft((was) => ({ ...was, failed: was.failed?.filter((item) => !receipts.has(item.id)) }))
+  }, [chat.receipts, draft.failed, setDraft])
+
+  async function run(payload: Payload, retryId?: string) {
     setInFlight(true)
     setError(null)
+    setHandedBack(null)
+    const sending = payload.action === "send" || payload.action === "goal"
+    const messageId = retryId ?? crypto.randomUUID()
+    const outgoing = retryId
+      ? payload
+      : { ...base, ...payload, ...(sending ? { client_message_id: messageId } : {}) }
+    if (sending && !retryId) {
+      setDraft((was) => ({
+        ...was,
+        text: "",
+        refs: [],
+        pictures: [],
+        failed: [
+          ...(was.failed ?? []),
+          {
+            id: messageId,
+            text: was.text,
+            payload: outgoing,
+            refs: was.refs,
+            pictures: was.pictures,
+          },
+        ],
+      }))
+      setGoalMode(false)
+    }
     try {
-      const said = await chatAct({ ...base, ...payload })
-      if (said.confirm) {
-        setAsk({
-          question: said.question ?? "Confirm?",
-          payload: { ...payload, confirm: said.confirm },
-        })
-        return
-      }
-      setAsk(null)
-      if (payload.action === "send" || payload.action === "goal") {
-        setText("")
-        pictures.clear()
-        setRefs([])
-        setGoalMode(false)
-      }
+      const reply = await chatAct(outgoing)
+      if (payload.action === "release") setHandedBack(reply.message ?? null)
+      if (sending)
+        setDraft((was) => ({ ...was, failed: was.failed?.filter((f) => f.id !== messageId) }))
       hurry()
+      return reply
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -149,21 +152,19 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
   const ready = goalMode
     ? text.trim().length > 0 && !chat.busy
     : canSend(chat, text, pictures.pictures.length + refs.length)
-  const send = () =>
+  const send = (
+    delivery: "steer" | "queue" = chat.delivery?.includes("steer") === false ? "queue" : "steer"
+  ) =>
     ready &&
     !inFlight &&
     run(
       goalMode
         ? { action: "goal", objective: withReferences(text, refs) }
-        : { action: "send", text: withReferences(text, refs), images: pictures.payload() }
+        : { action: "send", text: withReferences(text, refs), images: pictures.payload(), delivery }
     )
   const change = (c: Change) => run({ action: "settings", ...c })
   // Files and the selection come from the editor; each joins the message once.
-  const add = (found: Reference[]) =>
-    setRefs((was) => {
-      const seen = new Set(was.map(referenceLabel))
-      return [...was, ...found.filter((r) => !seen.has(referenceLabel(r)))]
-    })
+  const add = (found: Reference[]) => setRefs((was) => mergeReferences(was, found))
   const addFiles = () =>
     askExtension<Reference[]>("pickFiles").then(add, (e: Error) => setError(e.message))
   const addSelection = () =>
@@ -177,158 +178,417 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
     // After the menu has closed and handed the focus back to its button.
     setTimeout(() => box.current?.focus(), 0)
   }
+  const settings = chat.settings
+  const slash = useSlash({
+    text,
+    setText,
+    provider: session.provider,
+    cwd: session.cwd,
+    off: goalMode,
+    execute: (action) => {
+      if (action === "history" || action === "session") {
+        const target = document.querySelector<HTMLElement>(
+          action === "history" ? "[data-history-search]" : "[data-session-actions]"
+        )
+        let parent: HTMLElement | null = target
+        while (parent) {
+          if (parent instanceof HTMLDetailsElement) parent.open = true
+          parent = parent.parentElement
+        }
+        target?.focus()
+      } else
+        void run({ action }).then(async (reply) => {
+          const fork = reply as { id?: string } | undefined
+          if (action === "fork" && fork?.id) {
+            if (inExtension())
+              await askExtension("openSession", { provider: session.provider, id: fork.id })
+            else location.hash = `#/sessions/${session.provider}/${fork.id}`
+          }
+        })
+    },
+    focus: () => box.current?.focus(),
+    actions: [
+      {
+        name: "goal",
+        title: "Goal",
+        description: "Set a goal to keep pursuing",
+        icon: "goal",
+        run: startGoal,
+      },
+      {
+        name: "plan",
+        title: "Plan mode",
+        description: settings?.plan ? "Turn plan mode off" : "Turn plan mode on",
+        icon: "plan",
+        run: () => change({ plan: !settings?.plan }),
+      },
+      {
+        name: "approve",
+        title: "Approve for me",
+        description: settings?.auto
+          ? "Ask before its actions again"
+          : "Approve its actions for you",
+        icon: "auto",
+        run: () => change({ auto: !settings?.auto }),
+      },
+    ],
+  })
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault()
-      send()
+    if (slash.onKey(e)) return
+    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey) {
+        e.preventDefault()
+        send("queue")
+        return
+      }
+      if (!e.shiftKey && (preferences.sendKey === "enter" || e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        send()
+      }
     }
   }
   const placeholder = goalMode
     ? "What should it keep working toward?"
     : chat.holder === "codex app"
-      ? "Message it through the Codex app…"
-      : `Message ${session.name}…`
+      ? "Queue its next turn in the Codex app…"
+      : mode === "busy"
+        ? "Message it while it works…"
+        : `Message ${session.name}…`
+
+  const live = chat.question
+  const later = asked && asked.call !== setAside ? asked : null
+  const approval = chat.approval
+  const request = chat.requests?.length ? (
+    <PendingRequests
+      requests={chat.requests}
+      session={session}
+      answer={(payload) => void run(payload)}
+      busy={inFlight}
+    />
+  ) : approval ? (
+    approval.plan != null ? (
+      <PlanPanel
+        key={approval.id}
+        plan={approval.plan}
+        provider={session.provider}
+        cwd={session.cwd}
+        busy={inFlight}
+        onAnswer={(allow, message) =>
+          run({ action: "answer", request: approval.id, allow, message })
+        }
+      />
+    ) : (
+      <ApprovalPanel
+        key={approval.id}
+        approval={approval}
+        provider={session.provider}
+        busy={inFlight}
+        onAnswer={(allow) => run({ action: "answer", request: approval.id, allow })}
+      />
+    )
+  ) : live ? (
+    <QuestionPanel
+      key={live.id}
+      questions={live.questions}
+      busy={inFlight}
+      onAnswer={(answers) => run({ action: "answer-question", request: live.id, answers })}
+      onSkipAll={
+        live.via === "claude"
+          ? () => run({ action: "answer", request: live.id, allow: false })
+          : undefined
+      }
+    />
+  ) : later ? (
+    <QuestionPanel
+      key={later.call}
+      questions={later.questions}
+      busy={inFlight}
+      onAnswer={(answers) =>
+        run({
+          action: "answer-question",
+          via: "codex-async",
+          call: later.call,
+          questions: later.questions.map((q) => q.question),
+          answers,
+        })
+      }
+      onSkipAll={() => setSetAside(later.call)}
+    />
+  ) : null
 
   return (
     <div className="chat-composer sticky bottom-0 z-10 -mx-4 space-y-2 bg-background/90 px-4 pt-2 pb-4 backdrop-blur-md md:-mx-6 md:px-6">
       {chat.goal && (
+        // A goal clears while it works: Codex's at once, Claude's with its next message.
         <GoalBar
           goal={chat.goal}
-          disabled={inFlight || chat.busy}
+          disabled={inFlight}
+          clearNote={
+            session.provider === "claude" && chat.busy
+              ? "It stops pursuing it once this turn ends."
+              : null
+          }
           onClear={() => run({ action: "goal-clear" })}
         />
       )}
-      {chat.question && (
-        <QuestionCard
-          ask={{
-            via: chat.question.via,
-            call: chat.question.call,
-            status: "open",
-            questions: chat.question.questions,
-            answers: null,
-          }}
-          busy={inFlight}
-          onAnswer={(answers) =>
-            run({ action: "answer-question", request: chat.question?.id, answers })
-          }
-        />
+      {(chat.requests?.length ?? 0) > 1 && (
+        <p className="text-xs text-muted-foreground">
+          {chat.requests?.length} requests waiting. Each remains here until answered.
+        </p>
       )}
-      {chat.approval && (
-        <ApprovalCard
-          approval={chat.approval}
-          busy={inFlight}
-          onAnswer={(allow) => run({ action: "answer", request: chat.approval?.id, allow })}
-        />
-      )}
-
-      {mode === "take-over" || mode === "waiting" ? (
-        <div className="chat-takeover flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-3.5">
-          <p className="min-w-0 flex-1 text-[13px] text-ink-2">
-            <Inline text={chat.note} />
-          </p>
-          {mode === "take-over" ? (
-            <Button size="sm" onClick={() => run({ action: "take-over" })} disabled={inFlight}>
-              Take over
-            </Button>
-          ) : (
-            <Button size="sm" variant="outline" onClick={() => run({ action: "release" })}>
-              <Loader2 className="animate-spin" /> Waiting · cancel
-            </Button>
-          )}
+      {request}
+      {(draft.failed ?? []).map((failed) => (
+        <div key={failed.id} className="rounded-lg border p-2 text-xs">
+          <span>Unconfirmed message: {failed.text || "Attachments"}</span>{" "}
+          <button
+            type="button"
+            disabled={inFlight}
+            onClick={() => void run(failed.payload, failed.id)}
+          >
+            Retry delivery
+          </button>{" "}
+          <button
+            type="button"
+            disabled={Boolean(text || refs.length || pictures.pictures.length)}
+            onClick={() =>
+              setDraft((was) => ({
+                ...was,
+                text: failed.text,
+                refs: failed.refs ?? [],
+                pictures: failed.pictures ?? [],
+                failed: was.failed?.filter((f) => f.id !== failed.id),
+              }))
+            }
+          >
+            Recover draft and attachments
+          </button>
         </div>
-      ) : (
-        <div
-          ref={frame}
-          className="chat-box rounded-xl border bg-card p-2 focus-within:ring-2 focus-within:ring-ring/40"
+      ))}
+      {chat.delivery_paused && (chat.outbox?.length ?? 0) > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Pending messages are saved with delivery paused. Retry a message to resume.
+        </p>
+      )}
+      <PendingMessages
+        messages={chat.outbox ?? []}
+        busy={inFlight}
+        run={(payload) => void run(payload)}
+      />
+      {chat.busy && (
+        <button
+          type="button"
+          className="text-xs text-muted-foreground"
+          disabled={!ready || inFlight}
+          onClick={() => send("queue")}
         >
-          {goalMode && (
+          Queue next task (⌘/Ctrl+Shift+Enter)
+        </button>
+      )}
+      {(mode === "take-over" || mode === "waiting") && (
+        <div className="chat-elsewhere flex items-start justify-between gap-3 px-1 text-[12px] text-muted-foreground">
+          <span className="flex min-w-0 items-start gap-1.5">
+            {mode === "waiting" && <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin" />}
+            <span>
+              <Inline text={chat.note} />
+            </span>
+          </span>
+          {mode === "waiting" && (
             <button
               type="button"
-              className="chat-chip chat-goal-chip"
-              aria-label="Goal: cancel"
-              title="Your message sets a goal it keeps pursuing. Click to send a plain message."
-              onClick={() => setGoalMode(false)}
+              aria-label="Cancel: keep it in the Claude app"
+              className="shrink-0 underline-offset-2 hover:text-foreground hover:underline"
+              onClick={() => run({ action: "release" })}
+              disabled={inFlight}
             >
-              <Target /> Goal <X />
+              Cancel
             </button>
           )}
-          <PictureTray pictures={pictures.pictures} onRemove={pictures.remove} />
-          <ReferenceTray
-            refs={refs}
-            onRemove={(i) => setRefs((was) => was.filter((_, j) => j !== i))}
-          />
-          <div className="flex items-end gap-2">
-            {editor ? (
-              <PlusMenu
-                box={frame}
-                settings={chat.settings}
-                disabled={inFlight}
-                onFiles={addFiles}
-                onSelection={addSelection}
-                onPictures={(files) => void pictures.attach(files)}
-                onChange={change}
-                onGoal={startGoal}
-              />
-            ) : (
-              <AttachButton onFiles={(files) => void pictures.attach(files)} disabled={inFlight} />
-            )}
-            {editor && chat.holder === "ax" && (
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label="Hand back"
-                title={`Hand back. ${chat.note.replaceAll("`", "")}`}
-                className="chat-handback"
-                onClick={() => run({ action: "release" })}
-                disabled={inFlight || chat.busy}
-              >
-                <LogOut />
-              </Button>
-            )}
-            {editor && <ModeChips settings={chat.settings} disabled={inFlight} onChange={change} />}
-            <Textarea
-              ref={box}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onPaste={pictures.onPaste}
-              onKeyDown={onKey}
-              placeholder={placeholder}
-              aria-label="Message"
-              rows={2}
-              className="chat-input max-h-48 min-h-10 flex-1 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
-            />
-            {editor && <ModelPicker chat={chat} disabled={inFlight} onChange={change} />}
-            {mode === "busy" ? (
-              <Button
-                size="icon"
-                variant="outline"
-                aria-label="Stop"
-                className="chat-send"
-                title="Stop it"
-                onClick={() => run({ action: "stop" })}
-                disabled={inFlight}
-              >
-                <Square className="fill-current" />
-              </Button>
-            ) : (
-              <Button
-                size="icon"
-                aria-label="Send"
-                className="chat-send"
-                title="Send (Enter)"
-                onClick={send}
-                disabled={!ready || inFlight}
-              >
-                {inFlight ? <Loader2 className="animate-spin" /> : <SendIcon />}
-              </Button>
-            )}
-          </div>
         </div>
       )}
+      {mode === "busy" && chat.mid_turn && chat.mid_turn.length > 0 && (
+        // Claude reads it at its next step or as its next turn; Codex as its turn goes on.
+        <div
+          className="chat-mid-turn flex items-start gap-1.5 px-1 text-[12px] text-muted-foreground"
+          role="status"
+        >
+          <CornerDownRight className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]">
+            Sent while it works: {chat.mid_turn.map((t) => `“${t}”`).join(", ")}
+          </span>
+        </div>
+      )}
+      <ContextPicker text={text} setText={setText} cwd={session.cwd} add={add} />
+      {slash.menu}
+      {/* Under a request the box keeps one line, the room going to what waits. */}
+      <div
+        ref={frame}
+        className={cn(
+          "chat-box rounded-xl border bg-card p-2 focus-within:ring-2 focus-within:ring-ring/40",
+          request && "chat-box-compact"
+        )}
+      >
+        {goalMode && (
+          <button
+            type="button"
+            className="chat-chip chat-goal-chip"
+            aria-label="Goal: cancel"
+            title="Your message sets a goal it keeps pursuing. Click to send a plain message."
+            onClick={() => setGoalMode(false)}
+          >
+            <Target /> Goal <X />
+          </button>
+        )}
+        <PictureTray pictures={pictures.pictures} onRemove={pictures.remove} />
+        <ReferenceTray
+          refs={refs}
+          onRemove={(i) => {
+            if (refs[i]) excludedContext.current.add(referenceKey(refs[i]))
+            setRefs((was) => was.filter((_, j) => j !== i))
+          }}
+        />
+        <div className="flex items-end gap-2">
+          {look ? (
+            <PlusMenu
+              box={frame}
+              settings={chat.settings}
+              disabled={inFlight}
+              onFiles={editor ? addFiles : undefined}
+              onSelection={editor ? addSelection : undefined}
+              onPictures={(files) => void pictures.attach(files)}
+              onChange={change}
+              onGoal={startGoal}
+              modesNote={modesElsewhere(chat.holder)}
+              handBack={
+                chat.holder === "ax"
+                  ? {
+                      note: chat.note.replaceAll("`", ""),
+                      disabled: inFlight || chat.busy,
+                      onSelect: () => run({ action: "release" }),
+                    }
+                  : undefined
+              }
+            />
+          ) : (
+            <AttachButton onFiles={(files) => void pictures.attach(files)} disabled={inFlight} />
+          )}
+          {look && <ModeChips settings={chat.settings} disabled={inFlight} onChange={change} />}
+          <Textarea
+            ref={box}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onPaste={pictures.onPaste}
+            onFocus={() => {
+              if (editor && preferences.autoContext)
+                void askExtension<Reference[]>("currentContext").then(
+                  (found) =>
+                    add(found.filter((r) => !excludedContext.current.has(referenceKey(r)))),
+                  (e: Error) => setError(e.message)
+                )
+            }}
+            onKeyDown={onKey}
+            placeholder={request && !goalMode ? "Or tell it something else…" : placeholder}
+            aria-label="Message"
+            rows={request ? 1 : 2}
+            className={cn(
+              "chat-input max-h-48 flex-1 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0",
+              request ? "min-h-7" : "min-h-10"
+            )}
+          />
+          {look && (
+            <ModelPicker
+              chat={chat}
+              provider={session.provider}
+              disabled={inFlight}
+              onChange={change}
+            />
+          )}
+          {mode === "busy" && (
+            <Button
+              size="icon"
+              aria-label="Stop"
+              className="chat-send"
+              title="Stop it"
+              onClick={() => run({ action: "stop" })}
+              disabled={inFlight}
+            >
+              <span className="chat-stop-mark block size-2.5 rounded-[2px] bg-current" />
+            </Button>
+          )}
+          <Button
+            size="icon"
+            aria-label={chat.delivery?.includes("steer") === false ? "Queue" : "Send"}
+            className="chat-send"
+            title={mode === "busy" ? "Send now: it reads this as it works (Enter)" : "Send (Enter)"}
+            onClick={() => send()}
+            disabled={!ready || inFlight}
+          >
+            {inFlight ? <Loader2 className="animate-spin" /> : <SendIcon />}
+          </Button>
+        </div>
+      </div>
 
+      {draftError && <p className="text-xs text-critical">{draftError}</p>}
       {error && <p className="text-xs text-critical">{error}</p>}
-      {chat.error && !error && <p className="text-xs text-critical">{chat.error}</p>}
-      {!editor && mode !== "take-over" && mode !== "waiting" && chat.note && (
+      {handedBack && (
+        <p className="text-xs text-muted-foreground" role="status">
+          {handedBack}
+        </p>
+      )}
+      {chat.pending_settings && Object.keys(chat.pending_settings).length > 0 && (
+        <p className="text-xs text-muted-foreground" role="status">
+          Settings pending:{" "}
+          {Object.entries(chat.pending_settings)
+            .map(([key, value]) => `${key}: ${value ?? "default"}`)
+            .join(", ")}
+        </p>
+      )}
+      {
+        <p className="text-xs text-muted-foreground">
+          Context: {chat.context?.last?.totalTokens?.toLocaleString() ?? "unknown"}
+          {chat.context?.modelContextWindow
+            ? ` / ${chat.context?.modelContextWindow.toLocaleString()} tokens`
+            : " tokens; window size unknown"}
+        </p>
+      }
+      {chat.error && !error && (
+        <div className="text-xs text-critical">
+          <p>{chat.error}</p>
+          <button type="button" onClick={() => void run({ action: "retry" })}>
+            Retry connection
+          </button>
+          {/auth|sign.?in|log.?in|credential|401|403/i.test(
+            `${chat.error} ${chat.diagnostics ?? ""}`
+          ) && (
+            <details className="group my-2 text-muted-foreground">
+              <summary className="cursor-pointer">Sign-in help</summary>
+              <p>On the computer running ax, run this command, then retry the connection.</p>
+              <div className="flex items-center gap-2">
+                <code>{session.provider === "codex" ? "codex login" : "claude auth login"}</code>
+                <CopyButton
+                  text={session.provider === "codex" ? "codex login" : "claude auth login"}
+                  label="Copy sign-in command"
+                  className="!opacity-100"
+                />
+              </div>
+            </details>
+          )}
+          {chat.diagnostics && (
+            <details>
+              <summary>Diagnostic log</summary>
+              <pre className="max-h-60 overflow-auto whitespace-pre-wrap">{chat.diagnostics}</pre>
+            </details>
+          )}
+        </div>
+      )}
+      {chat.ownership === "unknown" && (
+        <p className="text-xs text-critical">
+          {chat.note}{" "}
+          <button type="button" onClick={() => hurry()}>
+            Retry status
+          </button>
+        </p>
+      )}
+      {!look && mode !== "take-over" && mode !== "waiting" && chat.note && (
         <div className="chat-hint flex items-start justify-between gap-3 text-[11.5px] text-muted-foreground">
           <span className="flex min-w-0 items-start gap-1.5">
             <Info className="mt-px size-3.5 shrink-0" aria-hidden />
@@ -348,13 +608,6 @@ export function Composer({ session, chat }: { session: Session; chat: ChatState 
           )}
         </div>
       )}
-
-      <ConfirmDialog
-        question={ask?.question ?? null}
-        busy={inFlight}
-        onCancel={() => setAsk(null)}
-        onYes={() => ask && run(ask.payload)}
-      />
     </div>
   )
 }

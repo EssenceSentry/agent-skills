@@ -83,6 +83,12 @@ export function windowName(row: { provider: string; window: string }): string {
   return `${TOOL[row.provider] ?? row.provider} ${WINDOW[row.window] ?? row.window}`
 }
 
+/** A window's name under its tool's: "Session", "Fable weekly". */
+export function windowLabel(window: string): string {
+  const name = WINDOW[window] ?? window.replace(/_/g, " ")
+  return name.charAt(0).toUpperCase() + name.slice(1)
+}
+
 /** A tool's name for people. */
 export const toolName = (provider: string): string => TOOL[provider] ?? provider
 

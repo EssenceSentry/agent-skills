@@ -2,3 +2,4 @@ node_modules/
 dist/
 media/webview/
 *.vsix
+media/ax-icons.woff

@@ -10,6 +10,7 @@ import hmac
 import html
 import json
 import mimetypes
+import secrets
 import threading
 import time
 from datetime import UTC, datetime
@@ -24,6 +25,7 @@ from ax import (
     find,
     job_eta,
     job_follow,
+    job_tunnel,
     jobs,
     live_sessions,
     runs,
@@ -38,10 +40,14 @@ from ax.store import Store
 __all__ = ["Path", "load_config"]
 
 _REFRESH_SECONDS = 5
-_USAGE_TTL = 60  # Claude's helper is a subprocess; don't run it on every refresh.
+_USAGE_TTL = 5  # seconds a reading of both tools' figures is reused: reading is cheap
 _JOBS_SHOWN = 12
 _FINISHED_SHOWN_FOR = 86400  # seconds a finished job stays on the panel
-_CLAUDE_REFRESH = 300  # seconds between fresh /usage readings from Claude
+# Seconds between fresh figures each tool is asked for, in the background; neither is a
+# model call. Codex's rate-limit read answers live in under a second. Claude's /usage
+# takes about 6 s and answers from a snapshot up to a minute old (Claude Code fetches
+# its usage at most once a minute), so asking it more often finds nothing newer.
+_ASK_EVERY = {"claude": 60, "codex": 10}
 _usage_lock = threading.RLock()
 
 
@@ -126,6 +132,92 @@ class _Server(ThreadingHTTPServer):
         super().server_close()
 
 
+class Sharing:
+    """ax through a Cloudflare quick tunnel, on demand: started and stopped from this Mac,
+    its link carrying a token that works only while sharing lasts. A dead tunnel is
+    replaced, and each new link announced (through ntfy, when it is set up)."""
+
+    def __init__(self, server, tokens: list, tunnel, announce):
+        self.server, self.tokens, self.tunnel, self.announce = server, tokens, tunnel, announce
+        self.lock = threading.Lock()
+        self.share = self.token = self.stopping = self.url = None
+        self.error: str | None = None  # why the last start had no link
+
+    @property
+    def link(self) -> str | None:
+        url, token = self.url, self.token
+        return f"{url}/?token={token}" if url and token else None
+
+    def start(self, *, wait: bool = True) -> str | None:
+        """The link, sharing first if ax isn't shared yet. Without `wait` (at login, when
+        the network may still be down) a tunnel that doesn't come up is tried again in
+        the background instead of failing."""
+        with self.lock:
+            fresh = self.share is None
+            if fresh:
+                share = self.tunnel()
+                try:
+                    url, self.error = share.start(), None
+                except RuntimeError as exc:
+                    if wait:
+                        raise
+                    url, self.error = None, str(exc)
+                if url:
+                    self.server.allow_url(url)
+                self.share, self.url, self.token = share, url, secrets.token_urlsafe(32)
+                self.tokens.append(self.token)
+                self.stopping = threading.Event()
+            # This start's own link: one that comes up later is announced by the check.
+            link = self.link
+            if fresh:
+                threading.Thread(target=keep_shared, args=(self.share, self._relinked),
+                                 kwargs={"stop": self.stopping}, daemon=True).start()  # fmt: skip
+        if fresh and link:
+            self.announce(link)
+        return link
+
+    def _relinked(self, url: str) -> None:
+        self.server.allow_url(url)
+        self.url = url
+        if self.link:
+            self.announce(self.link)
+
+    def stop(self) -> bool:
+        """Stop sharing: the tunnel closes and its link's token stops working."""
+        with self.lock:
+            share, token, stopping = self.share, self.token, self.stopping
+            self.share = self.token = self.stopping = self.url = None
+        if share is None:
+            return False
+        stopping.set()
+        share.close()
+        if token in self.tokens:
+            self.tokens.remove(token)
+        return True
+
+    def state(self) -> dict:
+        return {"shared": self.share is not None, "link": self.link}
+
+
+def _announcer(config):
+    """Send a shared link through ntfy, when it is set up; a failure is only printed."""
+    from ax import job_notify
+
+    def announce(link: str) -> None:
+        ntfy = job_notify.settings(config)
+        if ntfy is None:
+            return
+        error = job_notify.send(
+            ntfy, "ax is shared",
+            "Every session, usage and jobs: the link works while ax is shared.",
+            tags=("link",), click=link,
+        )  # fmt: skip
+        if error:
+            print(f"ntfy: {error}")
+
+    return announce
+
+
 def make_server(
     config: Config,
     *,
@@ -134,6 +226,8 @@ def make_server(
     web: Path | None = None,
     poll: float = 3.0,
     share_token: str | None = None,
+    tunnel=None,
+    announce=None,
 ) -> ThreadingHTTPServer:
     """The ax app (built pages, JSON, actions and a live stream) and the classic page.
 
@@ -260,6 +354,33 @@ def make_server(
             try:
                 if parts.path == "/api/sessions":
                     return self._json(200, live_sessions.cached_listing(config))
+                if parts.path == "/api/commands":  # a session's / menu, from its tool
+                    from ax import commands
+
+                    return self._json(200, commands.offered(
+                        config, (query.get("provider") or [""])[0], (query.get("cwd") or [None])[0]
+                    ))  # fmt: skip
+                if parts.path == "/api/session/files":
+                    return self._json(
+                        200,
+                        live_sessions.context_files(
+                            (query.get("cwd") or [""])[0], (query.get("q") or [""])[0]
+                        ),
+                    )
+                if parts.path == "/api/session/catalog":
+                    from ax import session_ops
+
+                    return self._json(
+                        200,
+                        session_ops.catalog(
+                            config,
+                            (query.get("provider") or [""])[0],
+                            (query.get("id") or [None])[0],
+                            (query.get("cwd") or [None])[0],
+                        ),
+                    )
+                if parts.path == "/api/models":  # what each tool offers a new session
+                    return self._json(200, chat.available_models(config))
                 if parts.path == "/api/session/image":  # a screenshot or a pasted image
                     data, media = live_sessions.image(
                         config, (query.get("provider") or [""])[0], (query.get("id") or [""])[0],
@@ -267,14 +388,44 @@ def make_server(
                     )  # fmt: skip
                     return self._send(200, data, media, {**_APP_HEADERS,
                                       "Cache-Control": "private, max-age=86400, immutable"})  # fmt: skip
-                if parts.path == "/api/session":
+                if parts.path in ("/api/session", "/api/session/search"):
                     provider = (query.get("provider") or [""])[0]
                     sid = (query.get("id") or [""])[0]
                     after = int((query.get("after") or ["0"])[0] or 0)
                     again = [int(i) for i in (query.get("again") or [""])[0].split(",")
                              if i.strip().isdigit()]  # fmt: skip
                     return self._json(200, live_sessions.session_view(config, provider, sid,
-                                                                      after=after, again=again))  # fmt: skip
+                                                                      after=after, again=again,
+                        before=int(query["before"][0]) if "before" in query else None,
+                        include_tools=(query.get("tools") or [""])[0] == "1",
+                        cursor=(query.get("cursor") or [None])[0], query=(query.get("q") or [None])[0]))  # fmt: skip
+                if parts.path == "/api/session/tool":
+                    provider, sid = (query.get("provider") or [""])[0], (query.get("id") or [""])[0]
+                    return self._json(
+                        200,
+                        live_sessions.tool_output(
+                            config,
+                            provider,
+                            sid,
+                            int(query["event"][0]),
+                            int((query.get("offset") or ["0"])[0]),
+                        ),
+                    )
+                if parts.path == "/api/session/diff":
+                    from ax import session_diff
+
+                    return self._json(
+                        200,
+                        session_diff.read(
+                            config,
+                            (query.get("provider") or [""])[0],
+                            (query.get("id") or [""])[0],
+                            (query.get("base") or ["turn"])[0],
+                            (query.get("cwd") or [None])[0],
+                        ),
+                    )
+                if parts.path == "/api/session/workspace":
+                    return self._json(200, session_changes.workspace((query.get("cwd") or [""])[0]))
                 if parts.path == "/api/session/changes":  # what it changed with its edit tools
                     return self._json(200, session_changes.changes(
                         config, (query.get("provider") or [""])[0], (query.get("id") or [""])[0]))  # fmt: skip
@@ -284,8 +435,14 @@ def make_server(
                         (query.get("path") or [""])[0], base=(query.get("base") or [""])[0],
                     )  # fmt: skip
                     return self._json(200, {"exists": text is not None, "text": text or ""})
+                if parts.path == "/api/share":  # sharing is seen and changed only here
+                    if how != "local":
+                        return self._json(403, {"error": "sharing changes only on this Mac"})
+                    return self._json(200, self.server.sharing.state())
                 if parts.path == "/api/find":
-                    return self._json(200, app.search(config, (query.get("q") or [""])[0]))
+                    fast = (query.get("fast") or [""])[0] == "1"  # the keyword stage
+                    return self._json(200, app.search(config, (query.get("q") or [""])[0],
+                                                      fast=fast))  # fmt: skip
                 if parts.path == "/api/file":
                     body, kind = app.file(config, (query.get("path") or [""])[0])
                     return self._send(200, body, kind, _APP_HEADERS)
@@ -375,11 +532,13 @@ def make_server(
             if not self._host_ok():
                 return self._text(403, "Unknown host name.")
             parts = urlsplit(self.path)
-            if parts.path not in ("/api/act", "/api/chat"):
+            if parts.path not in ("/api/act", "/api/chat", "/api/share"):
                 return self._text(404, "Not found.")
             how = self._authorised({})
             if not how:
                 return self._json(401, {"error": "no access token"})
+            if parts.path == "/api/share" and how != "local":
+                return self._json(403, {"error": "sharing changes only on this Mac"})
             origin = self.headers.get("Origin")
             own = f"{'https' if self._https() else 'http'}://{self.headers.get('Host')}"
             if (origin or how == "cookie") and origin != own:
@@ -393,8 +552,10 @@ def make_server(
                 payload = json.loads(self.rfile.read(size) or b"{}")
                 if not isinstance(payload, dict):
                     raise ValueError("send a JSON object")
-                if parts.path == "/api/chat":  # through a shared link, a second yes first
-                    return self._json(200, chat.act(config, payload, remote=how != "local"))
+                if parts.path == "/api/chat":
+                    return self._json(200, chat.act(config, payload))
+                if parts.path == "/api/share":
+                    return self._share(payload)
                 said = app.act(config, str(payload.pop("action", "")), payload)
             except ValueError as exc:
                 return self._json(400, {"error": str(exc)})
@@ -402,12 +563,30 @@ def make_server(
                 return self._json(500, {"error": f"{type(exc).__name__}: {exc}"})
             return self._json(200, {"ok": True, "message": said})
 
+        def _share(self, payload: dict):
+            sharing = self.server.sharing
+            if not payload.get("on"):
+                sharing.stop()
+                return self._json(200, {**sharing.state(), "message": "ax is no longer shared."})
+            try:
+                link = sharing.start()
+            except RuntimeError as exc:  # cloudflared missing, or no link in time
+                return self._json(502, {"error": f"the tunnel didn't come up: {exc}"})
+            return self._json(200, {**sharing.state(), "link": link, "message": "ax is shared."})
+
         def _refuse(self):
             self._text(405, "Not allowed.")
 
         do_PUT = do_DELETE = do_PATCH = _refuse
 
-    return _Server(("127.0.0.1", port), Handler)
+    server = _Server(("127.0.0.1", port), Handler)
+    threading.Thread(target=chat.maintain, args=(config, server.closing), daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    server.sharing = Sharing(
+        server, secrets_, tunnel or (lambda: job_tunnel.Share(base, on_url=server.allow_url)),
+        announce or _announcer(config),
+    )  # fmt: skip
+    return server
 
 
 def keep_shared(tunnel, on_new, *, stop: threading.Event, every: float = 5) -> None:
@@ -452,7 +631,7 @@ _MAX_CHAT_BODY = 40_000_000  # a message may carry pasted images
 
 
 def _fresh_usage_cache() -> dict:
-    return {"at": 0.0, "value": None, "refreshed": None, "refreshing": False}
+    return {"at": 0.0, "value": None, "asked": {}, "asking": set()}
 
 
 _usage_cache: dict = _fresh_usage_cache()
@@ -462,24 +641,31 @@ def _start(job) -> None:
     threading.Thread(target=job, daemon=True).start()
 
 
+def _ask(config: Config, tool: str) -> None:
+    """Ask one tool for fresh figures, then have the next request read them."""
+    try:
+        if tool == "claude":
+            usage.claude_windows(config, refresh=True)
+        else:
+            usage.codex_ask(config)
+    finally:
+        with _usage_lock:
+            _usage_cache["asking"].discard(tool)
+            _usage_cache.update(at=0.0, value=None)
+
+
 def _cached_usage(config: Config, *, now: float | None = None, start=_start) -> list:
-    """Both tools' windows, read again at most once a minute. Claude's figures are its own
-    cache, so every five minutes a background thread asks Claude's /usage for fresh ones
-    (a built-in command: no model call, no transcript); pages never wait for it."""
+    """Both tools' windows, read again every 5 s. Background threads ask Codex for fresh
+    figures every 10 s and Claude's /usage every minute (no model call, no transcript), so
+    neither goes stale between turns; pages never wait for them."""
     now = time.time() if now is None else now
     with _usage_lock:
-        due = _usage_cache["refreshed"] is None or now - _usage_cache["refreshed"] > _CLAUDE_REFRESH
-        if due and not _usage_cache["refreshing"]:
-            _usage_cache.update(refreshing=True, refreshed=now)
-
-            def refresh():
-                try:
-                    usage.claude_windows(config, refresh=True)
-                finally:
-                    with _usage_lock:  # read again on the next request
-                        _usage_cache.update(refreshing=False, at=0.0, value=None)
-
-            start(refresh)
+        for tool, every in _ASK_EVERY.items():
+            last = _usage_cache["asked"].get(tool)
+            if (last is None or now - last > every) and tool not in _usage_cache["asking"]:
+                _usage_cache["asking"].add(tool)
+                _usage_cache["asked"][tool] = now
+                start(lambda tool=tool: _ask(config, tool))
         if now - _usage_cache["at"] > _USAGE_TTL or _usage_cache["value"] is None:
             windows = usage.claude_windows(config, refresh=False)
             windows += usage.codex_windows(config.codex_home)

@@ -1,10 +1,15 @@
 import type { Status } from "@/blocks/primitives"
+import { shortPath } from "@/lib/paths"
 
 export type Provider = "claude" | "codex"
 export type SessionState = "working" | "waiting" | "idle"
 
 /** One live session of either tool, as `/api/sessions` lists it. */
 export type Session = {
+  pinned?: boolean
+  archived?: boolean
+  group?: string
+  order?: number
   provider: Provider
   id: string
   name: string
@@ -44,6 +49,8 @@ export type Card = {
   /** Haiku's last look: only the last one. */
   look: { summary: string; at: string } | null
   notebook: {
+    /** The notebook the run executes, which the editor can open at its cell. */
+    path?: string | null
     cell: { index: number; label: string | null } | null
     cells: { done: number; total: number }
     /** What the notebook started that still runs, such as a SageMaker job. */
@@ -84,11 +91,16 @@ export type Ask = {
 }
 
 export type TranscriptEvent = {
+  native_id?: string | null
+  call_id?: string | null
+  turn_id?: string | null
   i: number
   kind: "user" | "assistant" | "tool" | "notice" | string
   text: string
   tool: string | null
   ok: boolean | null
+  exit_code?: number | null
+  duration_ms?: number | null
   output: string
   ts: string | null
   /** Pictures the user pasted into this message. */
@@ -105,6 +117,8 @@ export type TranscriptEvent = {
  * messages came before the first one sent.
  */
 export type TranscriptPage = {
+  cursor?: string
+  reset?: boolean
   events: TranscriptEvent[]
   next: number
   first: number
@@ -155,10 +169,39 @@ export type Goal = {
  * background), "codex app", "elsewhere" (the Claude app or a terminal: take it over
  * first), or nobody yet.
  */
+export type PendingMessage = {
+  id: string
+  text: string
+  status: string
+  error?: string | null
+  delivery: "steer" | "queue"
+  attachments?: number
+}
+export type PendingRequest = Approval & {
+  kind: "approval" | "elicitation" | "question"
+  questions?: Question[]
+  via?: Ask["via"]
+  elicitation?: Record<string, unknown>
+}
 export type ChatState = {
+  delivery_paused?: boolean
+  receipts?: string[]
+  api_version?: number
+  requests?: PendingRequest[]
+  outbox?: PendingMessage[]
+  ownership?: "ax" | "open" | "closed" | "unknown"
+  delivery?: ("steer" | "queue")[]
+  pending_settings?: Partial<ChatSettings>
+  diagnostics?: string
+  context?: { last?: { totalTokens?: number }; modelContextWindow?: number | null }
+
   holder: "ax" | "codex app" | "elsewhere" | null
   can_send: boolean
   take_over: boolean
+  /** A message kept for a session another app holds, sent when ax takes it over. */
+  queued?: string | null
+  /** What the user sent while a turn ran, until the turn ends: it reads it as it goes. */
+  mid_turn?: string[]
   pending: boolean
   busy: boolean
   /** The reply streaming in. */
@@ -198,6 +241,14 @@ export const PROVIDERS: { provider: Provider; label: string }[] = [
   { provider: "claude", label: "Claude Code" },
   { provider: "codex", label: "Codex" },
 ]
+
+/** The line under a session's name: its tool, its project unless the folder already
+ * says it, and its folder from ~. */
+export function metaLine(provider: string, project: string | null, cwd: string | null): string {
+  const tool = PROVIDERS.find((p) => p.provider === provider)?.label ?? provider
+  const named = project && cwd?.split("/").filter(Boolean).at(-1) === project
+  return [tool, named ? null : project, cwd && shortPath(cwd)].filter(Boolean).join(" · ")
+}
 
 /**
  * The cards under a session's transcript: hidden while it thinks, since its own output is
@@ -260,6 +311,12 @@ export function runningNow(session: Session | null, page: TranscriptPage): Trans
   return page.running[page.running.length - 1] ?? null
 }
 
+/** A session ax holds says itself what it does: it waits while it asks, else works or rests. */
+export function heldState(chat: ChatState): SessionState {
+  if (chat.approval || chat.question) return "waiting"
+  return chat.busy ? "working" : "idle"
+}
+
 export type ComposerMode = "send" | "busy" | "take-over" | "waiting"
 
 export function composerMode(chat: ChatState): ComposerMode {
@@ -268,7 +325,7 @@ export function composerMode(chat: ChatState): ComposerMode {
 }
 
 export function canSend(chat: ChatState, text: string, images = 0): boolean {
-  return chat.can_send && !chat.busy && (text.trim().length > 0 || images > 0)
+  return chat.can_send && (text.trim().length > 0 || images > 0)
 }
 
 /** The folders the sessions work in, the most recently active first, once each. */

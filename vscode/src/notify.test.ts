@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest"
-
-import { newlyWaiting, notice } from "./notify"
-import type { Listing, Session } from "./tree"
+import type { Listing, Session } from "./listing"
+import { announcement, newlyWaiting, notice } from "./notify"
 
 function session(over: Partial<Session>): Session {
   return {
@@ -68,5 +67,29 @@ describe("what the notice says", () => {
     const said = notice(session({ state: "waiting", last: "x".repeat(300) }))
     expect(said.length).toBeLessThanOrEqual(160)
     expect(said.endsWith("…")).toBe(true)
+  })
+})
+
+describe("one notice for what starts waiting at once", () => {
+  const plan = session({ id: "a", name: "Plan: themed charts", state: "waiting" })
+  const build = session({ id: "b", name: "Rebuild the dashboard", state: "waiting" })
+
+  it("gives a session its own notice, which opens it", () => {
+    expect(announcement([plan])).toEqual({ text: notice(plan), open: plan })
+  })
+
+  it("names two or more together in one notice, which shows the panel", () => {
+    expect(announcement([plan, build])).toEqual({
+      text: "2 sessions wait for you: Plan: themed charts and Rebuild the dashboard",
+      open: null,
+    })
+    const three = announcement([plan, build, session({ id: "c", name: "Review" })])
+    expect(three?.text).toBe(
+      "3 sessions wait for you: Plan: themed charts, Rebuild the dashboard and Review"
+    )
+  })
+
+  it("says nothing when nothing starts waiting", () => {
+    expect(announcement([])).toBeNull()
   })
 })

@@ -102,9 +102,12 @@ def parse(path: Path, titles: dict[str, str] | None = None) -> Session:
     meta_seen = False
     history_start = 0
     stamps = []
+    current_turn = None
     for line, rec in iter_records(path, session.unknown, numbered=True):
+        event_start = len(session.events)
         rtype = rec.get("type")
         payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+        current_turn = payload.get("turn_id") or payload.get("turnId") or current_turn
         if rtype == "session_meta":
             # Only the first one describes this rollout; a subagent's file then
             # repeats its parent's metadata and history up to `history_start`.
@@ -131,6 +134,10 @@ def parse(path: Path, titles: dict[str, str] | None = None) -> Session:
             session.events.append(Event("notice", "context compacted", ts))
         elif rtype not in _TOP_LEVEL:
             session.unknown[str(rtype)] += 1
+
+        for event in session.events[event_start:]:
+            event.turn_id = current_turn
+            event.native_id = payload.get("id") or (payload.get("item") or {}).get("id")
 
     first_prompt = next((e.text for e in session.events if e.kind == "user"), "")
     session.title = (titles or {}).get(session.session_id) or first_line(first_prompt, 80) or None
@@ -207,6 +214,7 @@ def _item(session: Session, item: dict, ts, calls: dict, line=None) -> None:
             via = "codex" if name == "request_user_input" else "codex-async"
             event.ask = asks.ask(via, item.get("call_id"), given)
         session.events.append(event)
+        event.call_id = item.get("call_id")
         calls[item.get("call_id")] = event
     elif kind == "custom_tool_call":
         name = item.get("name") or "tool"
@@ -217,6 +225,7 @@ def _item(session: Session, item: dict, ts, calls: dict, line=None) -> None:
             text = f"ran {name} {code(first_line(raw, 80))}" if raw.strip() else f"ran {name}"
         event = Event("tool", text, ts, tool=name)
         session.events.append(event)
+        event.call_id = item.get("call_id")
         calls[item.get("call_id")] = event
     elif kind in ("function_call_output", "custom_tool_call_output"):
         event = calls.get(item.get("call_id"))
@@ -344,9 +353,13 @@ def _attach_output(event: Event, text: str) -> None:
     event.output = text[-_KEEP_OUTPUT:]
     exit_code = _EXIT.search(text)
     if exit_code:
-        event.ok = int(exit_code.group(1)) == 0
+        event.exit_code = int(exit_code.group(1))
+        event.ok = event.exit_code == 0
     elif event.tool == "apply_patch":
         event.ok = text.lstrip().startswith("Success")
+    duration = re.search(r"(?:Wall time:|wall_time_seconds[\"']?\s*:)\s*([0-9.]+)", text)
+    if duration:
+        event.duration_ms = float(duration[1]) * 1000
 
 
 def _output_text(output) -> str:

@@ -6,7 +6,8 @@ import { defineConfig } from "vite"
 import { katexWoff2Only } from "./katex-fonts.ts"
 
 // The conversation page for the VS Code extension's tabs: one script and one stylesheet
-// with fixed names, which the extension's own HTML loads, and the font files beside them.
+// with fixed names, which the extension's own HTML loads, and beside them the font files
+// and the chunks it loads when needed.
 export default defineConfig({
   plugins: [react(), tailwindcss(), atelierTheme(), katexWoff2Only()],
   base: "./",
@@ -22,10 +23,11 @@ export default defineConfig({
     rolldownOptions: {
       input: resolve(import.meta.dirname, "src/vscode-main.tsx"),
       output: {
-        // The tab runs only its one nonce-marked script, so lazily loaded code (KaTeX)
-        // is bundled into it rather than fetched as a chunk the policy would refuse.
-        codeSplitting: false,
+        // Lazily loaded code (KaTeX, Mermaid) stays in chunks of its own beside the script,
+        // which the tab's policy lets load from the extension's files, so a tab without
+        // math or diagrams doesn't parse them.
         entryFileNames: "webview.js",
+        chunkFileNames: "assets/[name]-[hash].js",
         assetFileNames: (asset) =>
           asset.names.some((n) => n.endsWith(".css")) ? "webview.css" : "assets/[name][extname]",
       },
