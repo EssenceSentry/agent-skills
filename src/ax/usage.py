@@ -1,320 +1,133 @@
-"""Remaining allowance per tool and window, with a burn-rate forecast and a guard.
-
-Claude's figures come from the delegation skill's usage helper, which asks the
-CLI's built-in /usage (no model turn) and reads the cache it refreshes. Codex
-writes its rate limits into every rollout, and answers for them when asked
-(`codex_ask`, no model turn either), so its reading is the newer of the two.
-Readings are stored, and the forecast is a range between two burn rates: since
-the window began and over the last hours.
-"""
+"""Observed allowance snapshots and explicit, reset-aware linear projections."""
 
 import contextlib
 import json
-import sqlite3
-import subprocess
-import sys
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
+import math
+import time
+from datetime import datetime
 
-from ax.config import Config
-from ax.config import load as load_config
-from ax.sources.codex import discover as codex_rollouts
-from ax.sources.common import open_text, parse_ts
-from ax.store import Store
-
-# Guard exit codes, the same as CodexBar's `codexbar guard`.
-SAFE, BELOW, UNKNOWN = 0, 1, 69
-_RECENT = timedelta(hours=3)
-# Older readings tell a guard nothing: the allowance may have been used since.
-MAX_AGE = timedelta(hours=6)
-_MIN_SPAN = timedelta(minutes=10)
-_CLAUDE_WINDOWS = {"five_hour": ("session", 300), "weekly_all": ("weekly", 10080)}
-_CLAUDE_WINDOWS["weekly_fable"] = ("weekly_fable", 10080)
-_WINDOW_NAMES = {300: "session", 10080: "weekly"}
-
-__all__ = ["load_config"]  # re-exported so the CLI can be pointed at a test config
+from ax import budget, claude_usage
+from ax.db import connect
 
 
-@dataclass
-class Window:
-    provider: str
-    name: str  # "session", "weekly" or "weekly_fable"
-    used: float | None  # percent of the window used
-    resets_at: datetime | None
-    observed_at: datetime | None  # when the tool reported it
-    status: str  # "fresh", "stale", "reset_passed", "unavailable" or "ambiguous"
-    window_minutes: int | None = None
-
-
-@dataclass
-class Forecast:
-    rate_low: float  # percent per hour
-    rate_high: float
-    projected_low: float  # percent used at reset
-    projected_high: float
-    runs_out_at: datetime | None
-    lasts: bool
-
-
-def claude_windows(config: Config, *, refresh: bool = True, timeout: int = 60) -> list[Window]:
-    script = config.claude_usage_script or _repo_root() / "skills/delegation/scripts/usage.py"
-    command = [sys.executable, str(script), "--json", "--config", str(config.claude_json)]
-    if not refresh:
-        command.append("--cached")
+def epoch(value):
+    if isinstance(value, (int, float)):
+        return float(value) if math.isfinite(value) else None
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
-        report = json.loads(result.stdout)
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return [Window("claude", "weekly", None, None, None, "unavailable", 10080)]
-    observed = _aware(parse_ts(report.get("fetched_at")))
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def forecast(points, reset, now=None):
+    now = time.time() if now is None else now
+    if len(points) < 2 or reset is None or reset <= now:
+        return None
+    first, last = points[0], points[-1]
+    elapsed = last[0] - first[0]
+    if elapsed <= 0 or last[1] < first[1] or now - last[0] > 900:
+        return None
+    rate = (last[1] - first[1]) / elapsed
+    return {
+        "estimated_used_at_reset": last[1] + rate * (reset - last[0]),
+        "estimated_exhausted_at": last[0] + (100 - last[1]) / rate if rate > 0 else None,
+        "percent_per_hour": rate * 3600,
+        "method": "linear observed pace",
+    }
+
+
+def codex_limits(config):
+    paths = []
+    for root in (config.codex_home / "sessions", config.codex_home / "archived_sessions"):
+        paths.extend(root.rglob("rollout-*.jsonl"))
+    paths = sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)[:30]
+    for path in paths:
+        with path.open("rb") as stream:
+            stream.seek(max(0, path.stat().st_size - 262144))
+            lines = stream.read().decode("utf-8", "replace").splitlines()
+        for line in reversed(lines):
+            with contextlib.suppress(ValueError, TypeError, AttributeError):
+                row = json.loads(line)
+                payload = row.get("payload", {})
+                limits = payload.get("rate_limits") or row.get("rate_limits")
+                if isinstance(limits, dict) and ("primary" in limits or "secondary" in limits):
+                    return limits, epoch(row.get("timestamp")) or path.stat().st_mtime
+    return {}, None
+
+
+def snapshot(config, refresh=False):
+    now = time.time()
+    cached = claude_usage.snapshot(config.claude_json, refresh=refresh)
     windows = []
-    for key, (name, minutes) in _CLAUDE_WINDOWS.items():
-        row = report.get("windows", {}).get(key) or {}
-        if name == "weekly_fable" and row.get("status") == "unavailable":
-            continue  # plans without a separate Fable allowance
+    for name, row in cached["windows"].items():
         windows.append(
-            Window(
-                "claude",
-                name,
-                row.get("reported_used_percent"),
-                _aware(parse_ts(row.get("resets_local") or row.get("resets_at"))),
-                observed,
-                row.get("status") or "unavailable",
-                minutes,
-            )
+            {
+                "provider": "claude",
+                "name": name,
+                "used": row["reported_used_percent"],
+                "observed": epoch(cached["fetched_at"]),
+                "resets": epoch(row["resets_at"]),
+                "status": row["status"],
+            }
         )
-    return windows
-
-
-def codex_windows(codex_home: Path, *, now: datetime | None = None) -> list[Window]:
-    """Codex's windows in its newest rate-limit report."""
-    now = now or datetime.now(UTC)
-    newest = _newest_report(codex_home)
-    if newest:
-        observed, limits = newest
-        return [
-            _codex_window(limits.get(slot), observed, now)
-            for slot in ("primary", "secondary")
-            if isinstance(limits.get(slot), dict)
-        ]
-    return [Window("codex", "weekly", None, None, None, "unavailable")]
-
-
-# Codex's own latest answer for its rate limits, by its home: (when, report).
-_asked: dict[Path, tuple[datetime, dict]] = {}
-
-
-def codex_ask(config: Config, *, server=None, now: datetime | None = None) -> bool:
-    """Ask Codex's app server for the account's rate limits now (`account/rateLimits/read`:
-    under a second, no model turn), so they are fresh between Codex's own turns. The
-    answer is kept beside its rollouts' reports, the newer of which the readers take.
-    False when Codex can't answer."""
-    from ax import live_sessions
-
-    now = now or datetime.now(UTC)
-    try:
-        server = server or live_sessions.AppServer(live_sessions.codex_command(config)).start()
-        try:
-            answer = server.request("account/rateLimits/read", {}) or {}
-        finally:
-            server.close()
-    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
-        return False
-    report = _rollout_report(answer.get("rateLimits"))
-    if not report:
-        return False
-    _asked[config.codex_home] = (now, report)
-    return True
-
-
-def _rollout_report(limits) -> dict | None:
-    """The app server's rate limits in the words Codex's rollouts use for them."""
-    if not isinstance(limits, dict):
-        return None
-    report = {}
-    for slot in ("primary", "secondary"):
-        window = limits.get(slot)
-        if isinstance(window, dict):
-            report[slot] = {"used_percent": window.get("usedPercent"),
-                            "window_minutes": window.get("windowDurationMins"),
-                            "resets_at": window.get("resetsAt")}  # fmt: skip
-    credits = limits.get("credits")
-    if isinstance(credits, dict):
-        report["credits"] = {"has_credits": credits.get("hasCredits"),
-                             "unlimited": credits.get("unlimited"),
-                             "balance": credits.get("balance")}  # fmt: skip
-    return report or None
-
-
-def _newest_report(codex_home: Path) -> tuple[datetime, dict] | None:
-    """The newer of Codex's latest answer when asked and the latest report in its rollouts."""
-    newest = _asked.get(codex_home)
-    for path in sorted(codex_rollouts(codex_home), key=_mtime, reverse=True)[:30]:
-        latest = _latest_rate_limits(path)
-        if latest:
-            return latest if not newest or latest[0] > newest[0] else newest
-    return newest
-
-
-@dataclass
-class Credits:
-    """A tool's credit balance: what is left beyond its plan's windows. It never resets."""
-
-    provider: str
-    balance: float | None
-    unlimited: bool
-    has_credits: bool
-    observed_at: datetime
-    status: str  # "fresh", or "stale" once the reading is a day old
-
-
-CREDITS_STALE = timedelta(days=1)
-
-
-def codex_credits(codex_home: Path, *, now: datetime | None = None) -> Credits | None:
-    """The credit balance in Codex's newest rate-limit report, when it carries one."""
-    now = now or datetime.now(UTC)
-    newest = _newest_report(codex_home)
-    if not newest or not isinstance(newest[1].get("credits"), dict):
-        return None
-    observed, block = newest[0], newest[1]["credits"]
-    try:
-        balance = float(block.get("balance"))
-    except (TypeError, ValueError):
-        balance = None
-    status = "stale" if now - observed > CREDITS_STALE else "fresh"
-    return Credits("codex", balance, bool(block.get("unlimited")),
-                   bool(block.get("has_credits")), observed, status)  # fmt: skip
-
-
-def forecast(
-    window: Window, history: list[tuple[datetime, float]], now: datetime
-) -> Forecast | None:
-    """Projected use at reset, from the burn since the window began and over recent hours."""
-    if window.used is None or window.resets_at is None or window.observed_at is None:
-        return None
-    rates = []
-    start = window.resets_at - timedelta(minutes=window.window_minutes or 0)
-    elapsed = (window.observed_at - start).total_seconds() / 3600
-    if window.window_minutes and elapsed > 0.25:
-        rates.append(window.used / elapsed)
-    points = sorted({(t, u) for t, u in history if t > start} | {(window.observed_at, window.used)})
-    recent = [(t, u) for t, u in points if t >= window.observed_at - _RECENT]
-    if len(recent) >= 2 and recent[-1][0] - recent[0][0] >= _MIN_SPAN:
-        hours = (recent[-1][0] - recent[0][0]).total_seconds() / 3600
-        rates.append(max(0.0, (recent[-1][1] - recent[0][1]) / hours))
-    if not rates:
-        return None
-    # Everything is projected from the reading itself, so a stale reading stays consistent.
-    hours_left = max(0.0, (window.resets_at - window.observed_at).total_seconds() / 3600)
-    low, high = min(rates), max(rates)
-    projected_high = window.used + high * hours_left
-    runs_out = None
-    if high > 0 and projected_high >= 100:
-        runs_out = window.observed_at + timedelta(hours=(100 - window.used) / high)
-    return Forecast(
-        low, high, window.used + low * hours_left, projected_high, runs_out, projected_high < 100
-    )
-
-
-def guard(
-    windows: list[Window],
-    provider: str,
-    name: str,
-    min_remaining: float,
-    *,
-    now: datetime | None = None,
-    max_age: timedelta = MAX_AGE,
-) -> int:
-    """SAFE when at least `min_remaining` percent is left, BELOW when not, UNKNOWN otherwise."""
-    now = now or datetime.now(UTC)
-    window = next((w for w in windows if w.provider == provider and w.name == name), None)
-    if not window or window.used is None or window.status not in ("fresh", "stale"):
-        return UNKNOWN
-    if window.observed_at is None or now - window.observed_at > max_age:
-        return UNKNOWN
-    return SAFE if 100 - window.used >= min_remaining else BELOW
-
-
-def record(config: Config, windows: list[Window]) -> None:
-    """Store readings for forecasts; skipped, not fatal, while a sync holds the database."""
-    with contextlib.suppress(sqlite3.Error):
-        _record(config, windows)
-
-
-def _record(config: Config, windows: list[Window]) -> None:
-    with Store(config.db_path) as store:
-        for w in windows:
-            if w.used is not None and w.observed_at is not None:
-                store.add_usage(
-                    w.provider,
-                    w.name,
-                    w.observed_at.astimezone(UTC).isoformat(),
-                    w.used,
-                    w.resets_at.isoformat() if w.resets_at else None,
-                    w.window_minutes,
+    limits, observed = codex_limits(config)
+    for name in ("primary", "secondary"):
+        row = limits.get(name) or {}
+        reset = epoch(row.get("resets_at"))
+        used = row.get("used_percent")
+        valid = isinstance(used, (int, float)) and math.isfinite(used)
+        windows.append(
+            {
+                "provider": "codex",
+                "name": name,
+                "used": used if valid else None,
+                "observed": observed,
+                "resets": reset,
+                "status": "fresh"
+                if valid and observed and now - observed <= 300 and reset and reset > now
+                else "stale"
+                if valid
+                else "unavailable",
+            }
+        )
+    with connect(config) as db:
+        for row in windows:
+            if row["used"] is not None and row["observed"] is not None:
+                db.execute(
+                    "INSERT OR IGNORE INTO samples VALUES(?,?,?,?,?)",
+                    (row["provider"], row["name"], row["observed"], row["used"], row["resets"]),
                 )
+            points = db.execute(
+                "SELECT observed,used FROM samples WHERE provider=? AND name=? AND resets=? AND observed>? ORDER BY observed",
+                (row["provider"], row["name"], row["resets"], now - 86400),
+            ).fetchall()
+            row["projection"] = (
+                forecast(points, row["resets"], now) if row["status"] == "fresh" else None
+            )
+        calls = db.execute(
+            "SELECT at,data FROM events WHERE type='model_call' ORDER BY seq DESC LIMIT 100"
+        ).fetchall()
+    return {
+        "windows": windows,
+        "model_calls": [json.loads(r["data"]) for r in calls],
+        "claude_refresh_error": cached.get("refresh_error"),
+    }
 
 
-def history(config: Config, provider: str, name: str) -> list[tuple[datetime, float]]:
-    with Store(config.db_path) as store:
-        rows = store.usage_history(provider, name)
-    return [(parse_ts(r["observed_at"]), r["used"]) for r in rows]
-
-
-def reserve_for(config: Config, provider: str, name: str, default: float = 10.0) -> float:
-    return dict(config.reserve).get(f"{provider}.{name}", default)
-
-
-def _latest_rate_limits(path: Path) -> tuple[datetime, dict] | None:
-    latest = None
-    with open_text(path) as fh:
-        for line in fh:
-            if '"rate_limits"' not in line:
-                continue
-            try:
-                record = json.loads(line)
-            except ValueError:
-                continue
-            payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
-            limits = payload.get("rate_limits")
-            observed = parse_ts(record.get("timestamp"))
-            if isinstance(limits, dict) and observed and (not latest or observed >= latest[0]):
-                latest = (observed, limits)
-    return latest
-
-
-def _codex_window(limit: dict, observed: datetime, now: datetime) -> Window:
-    minutes = limit.get("window_minutes")
-    resets = limit.get("resets_at")
-    resets_at = datetime.fromtimestamp(resets, UTC) if isinstance(resets, int | float) else None
-    status = "reset_passed" if resets_at and resets_at <= now else "fresh"
-    if status == "fresh" and now - observed > timedelta(minutes=30):
-        status = "stale"
-    used = limit.get("used_percent")
-    return Window(
-        "codex",
-        _WINDOW_NAMES.get(minutes, f"{minutes}m"),
-        float(used) if isinstance(used, int | float) else None,
-        resets_at,
-        observed,
-        status,
-        minutes if isinstance(minutes, int) else None,
-    )
-
-
-def _aware(ts: datetime | None) -> datetime | None:
-    """A time without a zone can't be placed; treat it as unknown, as the Claude helper does."""
-    return ts if ts and ts.tzinfo else None
-
-
-def _mtime(path: Path) -> float:
-    try:
-        return path.stat().st_mtime
-    except OSError:  # compressed or archived since it was listed
-        return 0.0
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+def budgets(config, name=None):
+    rows = [budget.status(config.data, name)] if name else budget.statuses(config.data)
+    for row in rows:
+        entries = budget.entries(config.data, row["name"], limit=1000)
+        additions = sorted((epoch(e["at"]), e["amount"]) for e in entries if e["kind"] == "add")
+        projection = None
+        if len(additions) >= 2 and additions[-1][0] > additions[0][0]:
+            span = additions[-1][0] - additions[0][0]
+            pace = sum(a for _, a in additions[1:]) / span
+            if pace > 0:
+                projection = {
+                    "units_per_hour": pace * 3600,
+                    "estimated_exhausted_at": time.time() + max(0, row["left"]) / pace,
+                    "method": "linear recorded spending",
+                }
+        row["projection"] = projection
+    return rows

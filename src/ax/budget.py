@@ -11,6 +11,7 @@ The ledger is SQLite in ax's data folder, so concurrent agents write safely, and
 module stays on the standard library so ax-guard and the app can read it cheaply.
 """
 
+import math
 import os
 import re
 import sqlite3
@@ -74,7 +75,7 @@ def _positive(amount, what: str) -> float:
         value = float(amount)
     except (TypeError, ValueError):
         raise BudgetError(f"{what} must be a positive number, not {amount!r}") from None
-    if not value > 0:
+    if not math.isfinite(value) or not value > 0:
         raise BudgetError(f"{what} must be a positive number, not {number(value)}")
     return value
 
@@ -303,7 +304,7 @@ def settle(data, ticket: str, actual=None, *, agent=None) -> dict:
                 if actual is None:
                     raise BudgetError(f"settling {ticket} needs what was really spent")
                 actual = float(actual)
-                if actual < 0:
+                if not math.isfinite(actual) or actual < 0:
                     raise BudgetError("what was spent can't be negative")
             when = _now()
             db.execute(

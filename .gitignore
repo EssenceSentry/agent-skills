@@ -1,36 +1,8 @@
-.DS_Store
-__pycache__/
-*.py[cod]
 .venv/
+__pycache__/
+*.pyc
 .pytest_cache/
-.coverage
-htmlcov/
-
-# Local credentials and provider state
-.env
-.env.*
-!.env.example
-.codex/
-.claude/
-auth.json
-credentials*.json
-
-# Task data and session artifacts
-runs/
-*-runs/
-outputs/
-exports/
-transcripts/
-brief.md
-answer.md
-run.json
-result.json
-*.jsonl
-*.log
-*.sqlite*
-*.db
-session.lock
-stop.request
-
-# Synthetic test fixtures are the only JSONL allowed in this public repo.
-!tests/fixtures/**/*.jsonl
+.ruff_cache/
+dist/
+*.egg-info/
+.DS_Store

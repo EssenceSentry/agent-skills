@@ -1,292 +1,244 @@
-# Agent skills
+# ax
 
-Reusable skills for working with Claude Code, Codex, and ChatGPT.
-
-## Available skills
-
-| Skill | What it provides |
-| --- | --- |
-| [ax](skills/ax/SKILL.md) | The map of every `ax` command for agents in both tools: what each is for, which focused skill has the details, and what an agent may run alone or must ask about. A test keeps it complete. |
-| [delegation](skills/delegation/SKILL.md) | Authorized Claude/Codex workers, usage and lifecycle helpers, ChatGPT Pro consultation, native conversation messaging and history retrieval, and technical infographics. |
-| [research-director](skills/research-director/SKILL.md) | How agents run research campaigns through `ax exp`: weigh each experiment by the decision it can change, re-rank after every result, stop when results change nothing. |
-| [session-recall](skills/session-recall/SKILL.md) | How agents find and build on past conversations, memories, notes and code with `ax find`, `ax recall`, `ax here` and `ax search`, and how to cite what they find. |
-| [jobs](skills/jobs/SKILL.md) | How agents register long work with `ax job`, wait on it without polling, and wake when it ends. |
-
-Each skill's references and Python helpers are part of that skill, not
-separate skills.
-
-## ax: archive agent sessions
-
-`ax` copies every Claude Code and Codex transcript into a compressed raw backup,
-indexes it in SQLite and writes one readable Markdown note per session into an
-Obsidian vault. It only reads the tools' own session folders. See
-[PLAN.md](PLAN.md) for the design and what comes next.
-
-Install it once with `uv tool install --editable .` from this checkout. Code changes
-take effect at once; after a change to the dependencies, run the same command with
-`--reinstall`, or the installed `ax` (which hooks and launchd call) keeps the old ones.
-
-| Command | What it does |
-| --- | --- |
-| `ax sync` | Archive new and changed sessions into the vault |
-| `ax doctor` | Check retention, the vault, the last sync and format drift |
-| `ax search "words" [--json]` | Find past sessions by the exact words said in them |
-| `ax find "question" [--in …] [--json]` | One search over past conversations and both tools' memories (qmd) |
-| `ax index` (`setup`, `refresh`, `eval`) | Build and refresh the index behind `ax find`, and score it on questions with known answers |
-| `ax here` / `ax recall <handle>` | This conversation's handle; an earlier conversation brought into this one, linked in both notes |
-| `ax todo` (`add`, `list`, `done`, `drop`) | To-dos, global or per project, linked to the conversation that raised them and shown in every new conversation's digest |
-| `ax budget` (`set`, `add`, `check`, `reserve`, `settle`, `release`, `show`, `close`) | Caps such as $40 of annotations or 4 GB of downloads: agents add to them or reserve before spending, a folder budget measures itself, and going over pauses the main agent until it gives a reason; subagents report back instead |
-| `ax mcp` / `ax mcp install` | `find`, `recall` and `here` for agents over MCP, and their registration in both tools |
-| `ax runs` (`watch`, `show`, `stop`) | Delegated, background and subagent runs from both tools in one list |
-| `ax exp` (`init`, `propose`, `list`, `start`, `finish`, `abandon`) | Research campaigns whose experiments must pass a value gate |
-| `ax usage` / `ax usage guard` | Allowance left per tool and window, Codex's credit balance, a forecast to reset, and a guard for scripts (exit 0 safe, 1 below, 69 unknown) |
-| `ax serve [--open] [--share cloudflare] [--notify]` | The ax app: what waits for you with its actions, every live Claude and Codex session with its transcript, a box to write to it (pasted pictures, approvals and stop included), the screenshots its tools took, and the jobs it waits on, both tools' usage and credits behind a gauge in the bar, jobs, conversations, and a reader for the vault ([ui/](ui/README.md)); the old page is at `/classic` |
-| `ax app` (`start`, `stop`, `status`, `open`, `service`) | The app served in the background at http://127.0.0.1:8765/, where a browser can install it; `service --apply` keeps it running from login with launchd, and `--share cloudflare --notify` also keeps a Cloudflare link for your phone, sending each new one by ntfy |
-| VS Code extension ([vscode/](vscode/README.md)) | The same sessions in VS Code: a panel in the right sidebar, as Codex's, listing every live session with the waiting ones first and counted on a badge, each opening as an editor tab with the app's conversation page in VS Code's colours, and a box that starts a new session in a picked folder on any model of either tool, in a tab of its own, a working line and the turn's task list as the desktop app shows them, a `+` menu for files, the editor's selection and pictures, plan mode, goals, approve for me and the model and effort, files the answers name opened in the editor or their own app, pictures in a gallery, agents' questions answered as cards, a session's changes in VS Code's diff view (since its turn began or the last commit), a notification when one starts waiting, and usage in the status bar; it reads and acts through `ax serve` and installs from a local `.vsix` |
-| `ax vault init` / `commit` / `push` | Starter Obsidian views; a commit gitleaks has scanned; a push only to a private GitHub repo |
-| `ax hooks install` | Hooks in Claude Code and Codex: sync when a session ends, and a digest of the last week's work when one starts |
-| `ax schedule install` | A launchd job that syncs every 30 minutes |
-| `ax skills link NAME…` | Link this repository's skills into both tools |
-| `ax job` (`new`, `watch`, `run`, `describe`, `ls`, `show`, `wait`, `follow`, `unfollow`, `wake`, `poll`, `service`, `eta-report`, `forget`) | Long jobs any agent can register and wait on; see below |
-| `ax profile` (`seed`, `list`, `add`, `compile`, `check`) | One set of working rules, compiled into both tools, their guard and their workers |
-| `ax brief KIND` | A brief for a delegated worker that carries those rules, and its launch plan |
-| `ax policy` (`add`, `list`, `remove`) | Limits the main agent sets for its subagents and workers, for this conversation or all; they never bind the main agent |
-| `ax learn` (`scan`, `label`, `propose`, `fixes`, `tidy`, `guards`, `list`, `accept`, `reject`, `restore`, `review`, `keep`, `retire`, `guard`, `recall`) | Rule proposals from your own corrections, for your approval, and each rule's lifecycle; decided rules keep their notes, and `restore` sends one back to the proposals |
-| `ax scorecard` | Corrections, nudges, guard blocks, worker denials, recurring errors and cost, by week |
-| `ax workshop` (`status`, `run [--dry-run]`, `stop`) | The rules workshop: on a weekly window's spare last day, the scheduled sync starts Opus 5.5 or Sol 6.1 agents, sized by the rule work and the allowance above a 3% floor, to consolidate and design the rules. They propose only rules that recur across sessions and that no skill or instruction file already states; a final agent settles one list (each waiting proposal kept, replaced or withdrawn), and warnings about instruction files that look wrong join the app. A report goes to `Workshops/` |
-| `ax lab` (`build`, `cut`, `run`) | Replay evals that test the profile as a plugin, with and without it |
-
-`hooks install`, `schedule install` and `skills link` print what they would change
-and do nothing without `--apply`.
-
-### Jobs
-
-`ax job` tracks long work wherever it was started, with nothing to import in the
-job's own environment. Agents choose almost nothing: every registration takes a
-required `--key` and `--label` (what the job does and what comes next), and the rest is
-automatic. A follower starts with every job; it wakes the session that registered it,
-has Haiku look at it every 5 minutes once it has run 10, and pushes to the phone what no
-agent hears. Options from before (`--wake`, `--expect`, `--share`, `--notify`,
-`--show-log`) are still accepted, with a note, so an old habit doesn't stop a job.
-
-- **Register:**
-  - `ax job new --key KEY --label …` prints an events file. A producer appends JSON lines to it: `{"done": 10, "total": 40}`, `{"stage": "scoring"}`, `{"status": "done"}`, `{"exit": 0}`.
-  - `ax job watch pid|sagemaker|seamless|runwatch|tools|file REF --key KEY --label …` lets ax check the job itself. It finds a SageMaker job's type by asking, and takes the AWS region and profile from the shell. `runwatch` takes a Runwatch run folder, read through `runwatch status`, `context` and `events`. A pause doesn't end the job: each new pause is a problem that ends `ax job wait` and wakes the agent with the failed cell, its error and its last output, and the same job follows `runwatch resume` or `restart` to the run's end. `--wake-at CELL` (a cell number from 0, a cell id or a section heading) makes cells checkpoints that wake the agent with their output while the run goes on; `ax job wake-at KEY` changes them. `tools` takes a Tools MCP job id and reads the job.json its worker keeps; Snowflake jobs there move only when the MCP refreshes them.
-  - `ax job run --key KEY --label … -- CMD` starts a command detached and records its exit code. A heredoc piped in is replayed to the command, and the command finds its events file in `$AX_JOB_FILE`. Until the command reports progress there itself, a tqdm-style bar in its output counts as progress, with the bar's label as the stage. A `runwatch execute` command, however wrapped (`uv run`, `env`, a credentials script), is followed as its notebook run, as `watch runwatch` follows one.
-- **Wait:** `ax job wait KEY` blocks without polling an agent. Exit codes:
-  - 0: done;
-  - 1: failed;
-  - 2: stopped or ended;
-  - 3: stalled;
-  - 4: the source check kept failing for `--error-after` seconds (10 minutes by default), as with a mistyped SageMaker name or expired credentials;
-  - 5: it is not working: Haiku sees a problem, or a Runwatch run paused (the job keeps running);
-  - 6: Haiku sees it well behind its expected pace (the job keeps running);
-  - 7: a Runwatch checkpoint cell succeeded (the run keeps going);
-  - 124: timed out;
-  - 69: no such job.
-- **Estimate:** `ax job show` and `ls` give the median time left and an 80% interval. The estimate comes from the job's own progress, plus finished runs of the same family (kind, unit, key without its numbers). `ax job eta-report` checks stored estimates against real finishes.
-- **Wake:** every job registered from a Claude or Codex session brings a short note into that conversation when it ends, fails, pauses, reaches a checkpoint or looks wrong to Haiku, with the label the agent gave. A Codex thread open in the app gets it through `codex queue`, since the app holds the thread's only writer lock and refuses `codex exec resume`; a closed thread is resumed. Claude Code resumes through `claude --bg --resume`, which runs the note in a copy when the session is still running; the copy's id is reported. `ax job wake KEY --dry-run` shows the route. While that session's own `ax job wait` runs, or once it has returned what happened, the follower skips its note, so nothing wakes the session twice.
-- **Checks and alerts:** Haiku reads the end of every failed job's log, and the note starts with its diagnosis. From 10 minutes into a job it reads the log every 5 minutes (`ax job check KEY --every 10m` changes that, `--every 0` stops it) and wakes the agent once per problem it sees. When a note can't reach the conversation, lands in a Claude copy, or no agent registered the job, the ntfy topic gets a push.
-- **Background:** `ax job service --apply` loads a launchd agent (`com.ax.jobs`) that runs `ax job poll --background` every minute. It refreshes jobs nobody follows, leaves followed jobs to their followers, and restarts a follower that died from the options in its `follower.json`, at most three times per job, without repeating messages or wake-ups already sent. It checks AWS sources only for jobs registered with `--profile`, since launchd can't see credentials exported in an agent's shell. `--remove` unloads it.
-- **Follow:** every registration starts a follower; `ax job follow KEY --share none|lan|cloudflare --notify --detach` runs one by hand. `follow`, `unfollow`, `describe`, `wake`, `poll`, `service`, `eta-report` and `forget` are left out of `ax job --help`, which lists only what agents need, but they work as before.
-  - It serves a token-protected, read-only page for the job, optionally through a Cloudflare quick tunnel.
-  - It sends ntfy messages for the start, progress, new stages, stalls and the end.
-  - It stops two minutes after the job ends.
-  - Set the ntfy topic in `[notify] topic` in `config.toml`, or in `AX_NTFY_TOPIC`. On ntfy.sh the topic name is the only password, and messages carry the dashboard link.
-
-### Profile and guard
-
-Each rule is a note in the vault's `Profile/rules/`: the rule, its scope (global or
-`repo:NAME`), the tools it applies to (`claude`, `codex`, and `workers` when delegated
-workers need it too), its level (advice, check or block) and its evidence.
-
-- `ax profile compile --apply` writes the rules into a marked block of
-  `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`, per-repo rules into a git-excluded
-  `CLAUDE.local.md`, and the worker definitions: Claude agents `~/.claude/agents/ax-*.md`
-  and Codex profiles `~/.codex/ax-*.config.toml` (`codex exec --profile ax-review`).
-- `ax profile check` finds instructions elsewhere (skills, plugins, memories) that
-  contradict a rule, and feedback memories no rule covers.
-- `ax-guard` runs before every shell command in both tools. It tells the main agent
-  (the conversation the user is in) from subagents and workers: Claude marks a
-  subagent's calls with `agent_id`, and a Codex transcript's first line names an
-  `exec` worker or a subagent.
-  - **The main agent pauses** once before what it can't undo (a reset or clean
-    that would lose work, a force push, a remote or cloud delete, a recursive `rm`
-    outside disposable folders, a dropped table) or what a `block` rule names, and is
-    told what is at stake. Run again with `AX_INTENT="why"` in front, the command goes
-    through and the reason is logged. Nothing pauses when nothing would be lost.
-  - **Subagents and workers are stopped** by the same, by the limits the main
-    agent sets with `ax policy add`, and when they try to pass a budget with
-    `AX_INTENT`, and are told to report back. Headless Claude workers run without
-    hooks, so their runner's tool list and brief carry them.
-  - **Only what runs counts:** heredoc bodies and quoted text are skipped, so a
-    command that merely mentions something passes. A guard error lets the command
-    through and logs itself. The scorecard counts pauses, stops and reasons given,
-    and a rule the agent keeps passing is flagged for review.
-  - **The stop check:** as Claude's Stop hook it also keeps Claude working, once,
-    when a reply says tests pass but no test ran in that turn.
-
-### Delegated work
-
-`ax brief implement|review|scout|continue --repo R --task "…"` writes a brief under
-`~/.local/share/ax/briefs/`: the task, owned paths, acceptance criteria, the rules marked
-for workers in that repo, the repo's `AGENTS.md`/`CLAUDE.md` as required reads, a
-permission profile and a budget halved when a Claude window is at 80% or more. It
-prints the runner command and launches nothing; the delegation skill keeps the
-approval step.
-
-### Learning from corrections
-
-`ax learn scan` collects, without a model, what you wrote in human sessions of both
-tools that may state a rule: correction phrases, the message after an interruption,
-explicit "remember"/"from now on" requests, praise for what the agent had just done
-(not praise that only moves on), frustration markers with the episode that led to
-them, the reasons you gave when refusing a Claude tool call, and the preference
-signals Codex wrote into its raw memories. `label` has Claude Haiku (through
-`claude -p`, redacted first) name each one's kind, rule and scope; a frustration
-moment is labelled from its whole episode, which confirms the frustration and names
-the lesson. `propose` writes rule notes with status `proposed` once a rule has a
-support of two, where a session counts once, an explicit request twice and a
-confirmed frustration moment three times (two projects for a global rule).
-
-`fixes` proposes a rule for each error that recurs across sessions; `tidy` folds
-near-duplicate proposals into one and notes contradictions; `guards` gives a "never"
-proposal a block-level guard pattern when one catches the commands behind its
-evidence and none of the last 30 days' other commands, tested on whole commands from
-the transcripts (Codex's `exec` code included). `accept` and `reject` settle
-proposals, and a rejected one returns only when its support doubles. At most 20
-proposals wait at once (`--max-pending`), strongest support first.
-
-After accepting, `ax sync` keeps each active rule's evidence in its note: support,
-guard blocks, recurrences (the correction came back) and overrides (you set it
-aside). Confidence halves every 90 days without new evidence and counts what goes
-against a rule four times; maturity goes new, established, proven, or doubtful.
-`ax learn review` lists them; a flag asks for a decision: `guard` after two
-recurrences, a narrower scope after an override, `retire` or `keep` after 90 silent
-days. Sync labels up to 40 new candidates with Haiku itself; `[learn] label_on_sync =
-false` turns that off.
-`recall` reports how many active rules the labels rediscover.
-
-### Conversations you can build on
-
-Every conversation has a handle: the last eight characters of its session id,
-written `ax:9fe6d7e6`, the same short id its note's file name ends with. Ask an
-agent for "the id" and it runs `ax here`. In another conversation, in either
-tool, `ax recall ax:9fe6d7e6` brings it in as an outline with no model call (the
-user's turns, where it ended, the files it changed and the note's path);
-`--card` adds a summary Haiku writes once per conversation, and `--for "task"`
-has a model return only what that task needs. Recalling from inside a
-conversation links the two, and so does mentioning `ax:<handle>` or a full
-session id: sync writes the links into the notes as `builds_on`, and Obsidian
-shows the backlinks and the graph.
-
-### Every conversation starts with recent work
-
-`ax hooks install` adds a start hook to both tools (`ax hooks start`). Each new
-conversation gets the user's own conversations of the last seven days, newest first
-and the current project's first, with their handles, plus the jobs still running,
-so "the pricing work" is something the agent recognizes and recalls. It reads the
-archive only. Claude conversations also get Codex's memory summary. In the other
-direction, sync copies each Claude memory into Codex's ad-hoc memory notes, which
-Codex merges when it consolidates (`[memory] share = false` turns this off). Codex
-runs a changed hook only after the user approves it with `/hooks`.
-
-### One search
-
-`ax find` asks qmd for conversation notes and Claude's and Codex's memories, on a
-qmd index named `ax`; it indexes no code, docs or other notes. Each hit is
-labelled conversation or memory (subagent, with `--in subagents`); conversation
-hits carry their handle, and `--project`, `--provider` and `--since` filter
-them. `--fast` uses keywords only. `ax index setup` builds the index once (qmd
-downloads about 2 GB of local models); sync refreshes it whenever it writes notes.
-`ax index serve` keeps qmd's models loaded in a daemon, so a search takes about
-five seconds instead of fifteen to thirty (`--stop` stops it).
-`ax index eval questions.yml` reports how many questions with known answers
-(`{query, expect}`, where `expect` is a handle or part of a path) come back in
-the top five. Agents get the same through the session-recall skill or `ax mcp`.
-
-### Measuring it
-
-`ax scorecard` (and `/scorecard` in `ax serve`) counts per week the corrections,
-"I said"/"again" repeats, progress nudges, confirmed frustration moments, guard
-blocks and worker denials, with cost by model and effort, and lists each rule's
-maturity and review flag, errors that recur across sessions, and skills nobody
-used. `ax lab build` packages the profile as a plugin for `claude plugin eval`, with
-starter cases; `ax lab cut` turns a past Claude session into a case; `ax lab run`
-compares both arms under a cost ceiling.
-
-Paths default to `~/.claude`, `~/.codex`, `~/Vaults/agents` and
-`~/.local/share/ax`; override them in `~/.config/ax/config.toml` (`[paths]`),
-and list working directories that must never be archived under
-`[sync] exclude`. Tests use synthetic fixtures only: this repository is public,
-so real transcripts never belong in it.
-
-## Install in Codex
-
-Ask Codex's skill installer:
-
-```text
-Use $skill-installer to install the delegation skill from
-https://github.com/EssenceSentry/agent-skills/tree/main/skills/delegation
-```
-
-Alternatively, clone this repository and copy `skills/delegation` into your
-Codex skills directory, usually `~/.codex/skills/delegation`. If a skill with
-that name is already installed, compare the versions before replacing it.
-Keep the whole folder so its relative references and helper imports work.
-
-## How delegation works
-
-- The parent keeps task ownership, consequential decisions, integration, and
-  final verification. Worker count, provider, model, and reasoning effort must
-  be authorized before launch; user and repository instructions take precedence.
-- Claude and Codex workers receive bounded assignments, explicit write ownership,
-  and a result that the parent can verify. The helpers support status, stopping
-  owned processes, and exact-session follow-up.
-- Pro consultations require approval of each concrete submission. Native app
-  messaging is preferred for an existing ChatGPT conversation with Pro selected.
-  Retrieval happens on the user's signal; Pro is not polled for completion.
-- Older ChatGPT conversations can be read without sending a new prompt.
-  [The app-tools guide](skills/delegation/references/chatgpt-app-tools.md)
-  explains active/archived lookup, pagination, Markdown export, stale reads, and
-  the boundaries between native tools, the web interface, and the CLI.
-
-## Requirements and limits
-
-The Python runtime helpers use the standard library and require Python 3.10+
-on macOS or Linux/POSIX. Install and authenticate the actual Claude Code or
-Codex CLI separately. They do not install provider tools, supply credentials,
-or silently switch subscription work to API billing.
-
-The usage helper reads Claude allowance information; Codex allowance is a
-separate surface. Token counts, cost estimates, and subscription allowance
-percentages are different measurements.
-
-Native ChatGPT features require the desktop app to expose the corresponding
-tools. They are not a public ChatGPT API and are not guaranteed to work from
-an independent terminal process. Ordinary ChatGPT chat creation/deletion and
-model selection may still need supported UI interaction.
-
-Model IDs, CLI options, entitlements, and app capabilities change. Dated
-observations in the guides are compatibility evidence, not guarantees about a
-current installation. Inspect the selected runtime and account before use.
-
-## Validate the helpers
-
-The included tests use fake CLI executables and mocks. They do not call models,
-require provider credentials, or consume subscription allowance.
+One prefix for ordinary commands, with a local daemon that keeps long work
+supervised and connects context across Claude and Codex.
 
 ```sh
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install pytest
-python -m unittest discover -s skills/delegation/scripts -p 'test_helpers.py'
-python -m pytest skills/delegation/scripts/test_codex_worker.py
+ax run -- python score.py
+ax run --detach -- python score.py
+ax detach TASK
+ax attach TASK
 ```
 
-## Repository scope
+Tasks are background-owned from creation. By default, `ax run` attaches normal
+stdin/stdout/stderr and returns the command's exit status. Detaching closes the
+connection while the same process continues; attaching again replays captured
+output and resumes live stdio. Short commands finish without a model review.
 
-This repository contains reusable instructions, references, helpers, and their
-tests. Private dataset links and local account details have been replaced with
-generic examples. Runtime briefs, worker logs, conversation exports, and
-credentials belong outside the repository and are ignored by default.
+The core provides conversation search, sourced topic handoffs, shared memories,
+task supervision, numeric progress, usage and budgets. It has no built-in UI,
+HTTP server, MCP server, Cloudflare tunnel or separate notification service.
+Enforcement hooks and graphical consumers are separate from ax.
+
+## Install
+
+Requirements: Python 3.12+, `uv`, and installed, authenticated Claude/Codex CLIs
+for the providers you use. ax uses Unix sockets and PTYs; the current validation
+was performed on macOS. `zstandard` is the only Python runtime dependency.
+
+From this checkout:
+
+```sh
+python3 scripts/install.py
+ax --version
+ax daemon status
+```
+
+The installer uses `uv`'s standard user tool directories and places `ax` in
+`~/.local/bin`; that directory must be on `PATH`. When a C compiler (`cc`) is
+available, it also builds the native command-prefix launcher. Otherwise, the
+Python entry point remains available. The CLI starts its daemon on demand;
+`daemon status` and `daemon stop` do not start one.
+
+The small agent skill is included at [skills/ax/SKILL.md](skills/ax/SKILL.md).
+For a new installation, link it into the provider's supported skills directory:
+
+```sh
+mkdir -p ~/.agents/skills ~/.claude/skills
+ln -s "$PWD/skills/ax" ~/.agents/skills/ax
+ln -s "$PWD/skills/ax" ~/.claude/skills/ax
+```
+
+Keep already-correct links in place. Reload the providers after installing or
+replacing their skill. Installing ax does not add enforcement hooks.
+
+## Commands and progress
+
+`ax --help` and each command's `--help` describe the complete interface.
+Data commands return JSON; `run` and `attach` carry the command's stdio.
+
+```sh
+# Conversation evidence and a model-written topic handoff
+ax search "calibration" --project my-project
+ax search "calibration" --provider claude
+ax handoff "calibration decisions"
+ax memory sync
+
+# Existing or externally executed work
+ax task watch "existing computation" --pid 12345
+ax task create "remote annotation job"
+ax task update TASK --done 20 --total 100 --unit videos --stage scoring
+ax task update TASK --status done
+ax task list
+ax task list --all
+ax task show TASK
+ax task events TASK --after 42 --follow
+ax task stop TASK
+
+# Provider allowance, explicit spending and reservations
+ax usage
+ax usage --refresh
+ax budget set annotations 20 --unit usd
+ax budget reserve annotations 2
+ax budget settle TICKET 1.50
+ax budget release TICKET
+ax budget add annotations 1
+ax budget show
+ax budget close annotations
+
+# Local daemon
+ax daemon start
+ax daemon status
+ax daemon stop
+```
+
+`run` infers caller identity, command, working directory and environment. The
+command itself becomes the task purpose; `--description` adds context when
+needed. Options precede `-- COMMAND ARGS`. To execute shell built-ins, pipelines
+or redirections, pass the original command to a shell:
+
+```sh
+ax run -- sh -c 'printf hello | wc -c'
+```
+
+In a terminal, Ctrl+] detaches. Attached terminal commands receive a PTY and
+terminal dimensions. Pipes retain distinct stdout/stderr and stdin. Ax-launched
+work survives daemon restarts. Process identity is checked to avoid attributing
+PID reuse to a task. `task stop` applies to an ax-launched live process.
+
+Existing watched processes have an observed end, but ax cannot infer their exit
+code. Externally reported work declares its own terminal state. A counter reaching
+its total does not imply completion, and supervision continues while the task is
+running.
+
+`task events --follow` emits durable events followed by numeric snapshot ticks.
+For example, a tick can contain these fields:
+
+```json
+{
+  "type": "tick",
+  "seq": 42,
+  "at": 1794600000,
+  "tasks": [
+    {
+      "id": "7f2c8a91b046",
+      "status": "running",
+      "done": 320,
+      "total": 1000,
+      "unit": "videos",
+      "stage": "scoring"
+    }
+  ]
+}
+```
+
+Ticks are emitted once per second. `seq` identifies the latest delivered durable
+event and can be supplied through `--after` when reconnecting. Progress stays
+separate from command output; a consumer chooses whether to render a number,
+progress bar, chat card or widget.
+
+## Mandatory supervision
+
+By default, a registered running task receives its first inspection after
+10 minutes, followed by an inspection every 10 minutes. `--every MINUTES` allows
+10–60 minutes, with no disabled setting. At registration, it sets both the first
+delay and subsequent interval; it can also be changed with `task update`.
+
+Claude callers use Haiku; Codex callers use Luna. Both use low effort and the same
+inspection prompt. Reviews examine the task purpose, elapsed time, recent
+progress, previous inspections and a bounded output tail. Suspected stalls,
+excessive duration, incorrect output or insufficient evidence raise a concern
+with evidence and uncertainty to the original calling conversation. Failed
+inspections also raise a concern. The reviewer leaves repairs, retries and
+stopping to the calling agent.
+
+Registration returns promptly; `run` attaches afterward unless `--detach` was
+selected. The launch path does not wait for indexing, memory sync or a model
+review. The search catalog uses a separate database so its writes do not block
+task registration. The native launcher submits warm `run` requests directly,
+then attaches the stdio client while the background worker starts.
+
+Caller identity comes from `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`. Outside
+an agent, or when the environment is ambiguous, supply an explicit identity:
+
+```sh
+ax --caller codex:SESSION_ID run -- python score.py
+```
+
+`AX_CALLER=provider:session` is also available when native identity variables are
+absent. The identity must refer to the intended existing conversation for
+escalation to reach it. Claude inbox credentials are captured privately from its
+inherited environment; another ax command in that conversation refreshes the
+binding. Codex escalation queues into and requests resumption of that same
+conversation. No replacement conversation is created.
+
+Delivery acceptance does not prove the caller has read or acted. Unavailable
+routes retain pending concerns for retry. Uncertain dispatches are retained
+without automatic replay to avoid duplicate actions. Their events remain visible
+through `task events`; `daemon status` reports undelivered concern counts.
+
+Provider model calls have a 90-second timeout and bounded input evidence. The
+Haiku CLI receives a $0.15 per-call budget ceiling; Luna uses low effort and the
+wall-time bound. Subscription usage is not converted into an invented dollar
+cost. `handoff` uses the same provider routing and call bounds, and invokes a model
+immediately. Ordinary monitoring does not invoke a model.
+
+## Search, memory and accounting
+
+Search uses local SQLite full-text indexing of both providers' main
+conversations, including compressed Codex rollouts. It imports the existing ax
+archive without modifying it. Results include excerpts, source paths and
+conversation handles. Handoffs summarize bounded matching evidence with source
+references; they do not transfer an entire provider conversation.
+
+The daemon refreshes the catalog and shared memories every minute. Explicit
+search refreshes before returning results. Memory sync preserves provenance,
+tracks source deletions, and reports edited-import conflicts or unreadable notes.
+Claude project notes are exported into Codex's ad-hoc notes, preferring
+`memories_v2`. Codex shared notes and its generated summary are exposed through
+an ax-owned index import in `~/.claude/CLAUDE.md`. Generated provider summaries
+remain provider-owned. Imported notes are excluded from discovery to prevent
+echo loops; provider consolidation and contextual recall remain provider behavior.
+
+Budgets record explicit spending and reservations. A pending hold counts against
+the cap; settling or releasing it updates available capacity. Existing ledgers
+and reservations are preserved. Provider allowance windows are separate from
+that ledger. Usage retains freshness information and labels unknown values.
+Projections are estimates from observed pace, require adequate observations, and
+respect allowance resets. Reported model usage/cost remains separate from
+manually recorded budget entries.
+
+## Local state and host access
+
+State defaults to `~/.local/share/ax`. `AX_CONFIG` selects a TOML file with
+optional `[paths]` entries for `data`, `claude_home`, `codex_home`, `claude_json`
+and the legacy `vault` location. State includes the task/event database,
+independent search catalog, captured task output, shared-memory notes and the
+existing budget ledger. Historical archives and artifacts remain preserved.
+
+The daemon is a trusted local executor: registered commands run with its host
+permissions. A sandboxed agent host must authorize command execution and access
+to the local socket; ax does not configure or relax host sandbox policy. The
+current Codex sandbox requires that host-access wiring before ordinary sandboxed
+tool calls can use the socket. Enforcement hooks belong to that separate layer.
+
+`daemon stop` stops supervision and maintenance until restart. It does not
+terminate registered work. Ax's only native-message delivery is task escalation
+to its caller.
+
+## Development and validation
+
+```sh
+uv sync --group dev
+uv run ruff check src tests scripts
+uv run ruff format --check src tests scripts
+uv run pytest
+uv build
+```
+
+The current 53 deterministic tests cover both launchers, binary stdio, caller
+environment and working directory, exit status, terminal input and dimensions,
+detach/reattach without restarting the process, daemon recovery, supervision
+policy, delivery state, memory conflicts, archive import and budget accounting.
+Model adapters use test doubles. Live model-backed Haiku/Luna supervision and
+escalation were not exercised by that validation.

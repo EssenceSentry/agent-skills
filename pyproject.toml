@@ -1,27 +1,16 @@
 [project]
 name = "ax-workbench"
-version = "0.2.0"
-description = "Archive, search and track Claude Code and Codex sessions in an Obsidian vault"
-readme = "PLAN.md"
+version = "0.4.0"
+description = "Local conversation search, shared memory, supervised tasks and budgets"
+readme = "README.md"
 requires-python = ">=3.12"
-dependencies = [
-    "claude-agent-sdk>=0.1.51,<0.2",
-    "jsonschema>=4",
-    "pyyaml>=6",
-    "typer>=0.12",
-    "zstandard>=0.22",
-]
+dependencies = ["zstandard>=0.22"]
 
 [project.scripts]
-ax = "ax.cli:app"
-ax-guard = "ax.guard:main"
+ax = "ax.cli:main"
 
 [dependency-groups]
-dev = [
-    "pytest>=8",
-    "pyyaml>=6",
-    "ruff>=0.6",
-]
+dev = ["pytest>=8", "ruff>=0.6"]
 
 [build-system]
 requires = ["hatchling"]
@@ -38,10 +27,5 @@ line-length = 100
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "SIM"]
-# `ruff format` owns line length; long strings and test tables are left as written.
+select = ["E", "F", "I", "B", "UP"]
 ignore = ["E501"]
-
-[tool.ruff.lint.flake8-bugbear]
-# Typer declares parameters through calls in argument defaults.
-extend-immutable-calls = ["typer.Argument", "typer.Option"]
