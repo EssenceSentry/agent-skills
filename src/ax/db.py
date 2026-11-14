@@ -28,6 +28,20 @@ CREATE TABLE IF NOT EXISTS memories (
  origin TEXT PRIMARY KEY, provider TEXT NOT NULL, digest TEXT NOT NULL,
  target TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS usage_watches (
+ id TEXT PRIMARY KEY, owner TEXT NOT NULL, provider TEXT NOT NULL, name TEXT NOT NULL,
+ threshold REAL NOT NULL CHECK(threshold BETWEEN 0 AND 100), active INTEGER NOT NULL DEFAULT 1,
+ inbox TEXT, inbox_token TEXT, created REAL NOT NULL, checked REAL,
+ data_status TEXT NOT NULL DEFAULT 'waiting', used REAL, observed REAL, resets REAL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS usage_watch_active ON usage_watches(owner,provider,name,threshold) WHERE active=1;
+CREATE TABLE IF NOT EXISTS usage_alarms (
+ id TEXT PRIMARY KEY, watch TEXT NOT NULL, threshold REAL NOT NULL, resets REAL NOT NULL,
+ used REAL NOT NULL, observed REAL NOT NULL, expires REAL NOT NULL, text TEXT NOT NULL,
+ created REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+ next_attempt REAL NOT NULL, error TEXT, UNIQUE(watch,resets)
+);
+CREATE INDEX IF NOT EXISTS usage_alarm_delivery ON usage_alarms(status,next_attempt);
 CREATE TABLE IF NOT EXISTS samples (
  provider TEXT, name TEXT, observed REAL, used REAL, resets REAL,
  PRIMARY KEY(provider,name,observed)

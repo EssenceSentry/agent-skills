@@ -78,6 +78,10 @@ ax task stop TASK
 # Provider allowance, explicit spending and reservations
 ax usage
 ax usage --refresh
+ax usage watch codex:primary --at 80
+ax usage watch claude:weekly_all --at 90
+ax usage watches
+ax usage unwatch ID
 ax budget set annotations 20 --unit usd
 ax budget reserve annotations 2
 ax budget settle TICKET 1.50
@@ -208,6 +212,56 @@ Projections are estimates from observed pace, require adequate observations, and
 respect allowance resets. Reported model usage/cost remains separate from
 manually recorded budget entries.
 
+## Usage alarms
+
+Agents can subscribe to messages when a reported usage window reaches an
+explicit percentage. For example:
+
+```sh
+ax usage watch codex:primary --at 80
+ax usage watch claude:weekly_all --at 90
+ax usage watches
+ax usage unwatch ID
+```
+
+Use the `provider:name` fields returned by `ax usage`: Claude supports
+`five_hour`, `weekly_all` and `weekly_fable`; Codex supports `primary` and
+`secondary`. `--at` is the used-percentage threshold, inclusive, from 0 to 100.
+Choose the early-warning margin through that number. Projections are reported
+as estimates when available; they do not trigger these alarms.
+
+The caller is inferred as usual and can watch either provider. Messages return
+to that same conversation through the native Claude inbox or Codex queue, which
+may resume the caller. Subscriptions, list/cancel operations and delivery are
+scoped to the caller. Outside an agent, use `--caller PROVIDER:SESSION`.
+An ax command after changing clients refreshes Claude's inbox binding.
+
+The daemon checks about once a minute. A fresh cached reading already at or
+above the threshold queues an alarm at registration. Each subscription delivers
+at most once per reported allowance window and re-arms when the reset changes.
+Repeating the same active subscription is idempotent. It stays active until
+`unwatch`; resubscribing after cancellation creates a new subscription.
+
+Only fresh observed usage with a known future reset can trigger. Unknown,
+ambiguous, invalid, future-dated or stale readings do not. While Claude watches
+are active, the daemon refreshes observations older than a minute through the
+existing zero-inference `/usage` command, at most once a minute. Codex readings
+come from the latest timestamped native usage reports; without a fresh report,
+the watch waits. Threshold evaluation itself invokes no model.
+
+An alarm includes the metric, threshold, used and remaining percentages,
+observation time, reset time and any labeled projection. Pending messages expire
+when their observation is stale or their allowance resets; new fresh evidence
+can refresh an undelivered alarm. Known unavailable routes retry. Uncertain
+dispatches are retained without replay, and acceptance does not prove the caller
+read the message. Cancellation stops future and pending delivery; an already
+dispatched message cannot be recalled.
+
+`ax usage watches` includes source freshness and the latest delivery state.
+`ax daemon status` reports active subscriptions and pending, dispatching or
+uncertain alarms. These are opt-in conversation messages, with no OS, email,
+Cloudflare or separate notification service.
+
 ## Switching Claude between VS Code and Desktop
 
 The daemon keeps eligible local Claude conversations registered for both clients.
@@ -269,8 +323,8 @@ current Codex sandbox requires that host-access wiring before ordinary sandboxed
 tool calls can use the socket. Enforcement hooks belong to that separate layer.
 
 `daemon stop` stops supervision and maintenance until restart. It does not
-terminate registered work. Ax's only native-message delivery is task escalation
-to its caller.
+terminate registered work. Ax's native-message delivery is task escalation
+and explicitly subscribed usage alarms to their requesting callers.
 
 ## Development and validation
 
@@ -282,10 +336,12 @@ uv run pytest
 uv build
 ```
 
-The current 72 deterministic tests cover both launchers, binary stdio, caller
+The current 106 deterministic tests cover both launchers, binary stdio, caller
 environment and working directory, exit status, terminal input and dimensions,
 detach/reattach without restarting the process, daemon recovery, supervision
 policy, delivery state, memory conflicts, archive import, budget accounting and
-add-only conversation registration with account, lifecycle and archive guards.
+add-only conversation registration with account, lifecycle and archive guards,
+plus caller-owned usage alarms, fresh thresholds, reset re-arming and delivery
+recovery.
 Model adapters use test doubles. Live model-backed Haiku/Luna supervision and
 escalation were not exercised by that validation.

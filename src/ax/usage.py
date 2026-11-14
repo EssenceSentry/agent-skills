@@ -11,11 +11,12 @@ from ax.db import connect
 
 
 def epoch(value):
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value) if math.isfinite(value) else None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-    except (ValueError, AttributeError, TypeError):
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return stamp.timestamp() if stamp.tzinfo else None
+    except (ValueError, AttributeError, TypeError, OverflowError, OSError):
         return None
 
 
@@ -39,20 +40,33 @@ def forecast(points, reset, now=None):
 def codex_limits(config):
     paths = []
     for root in (config.codex_home / "sessions", config.codex_home / "archived_sessions"):
-        paths.extend(root.rglob("rollout-*.jsonl"))
-    paths = sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)[:30]
-    for path in paths:
-        with path.open("rb") as stream:
-            stream.seek(max(0, path.stat().st_size - 262144))
-            lines = stream.read().decode("utf-8", "replace").splitlines()
+        for path in root.rglob("rollout-*.jsonl"):
+            with contextlib.suppress(OSError):
+                paths.append((path.stat().st_mtime, path))
+    latest, latest_at = {}, None
+    for _, path in sorted(paths, key=lambda item: item[0], reverse=True)[:30]:
+        try:
+            with path.open("rb") as stream:
+                stream.seek(max(0, path.stat().st_size - 262144))
+                lines = stream.read().decode("utf-8", "replace").splitlines()
+        except OSError:
+            continue
         for line in reversed(lines):
             with contextlib.suppress(ValueError, TypeError, AttributeError):
                 row = json.loads(line)
                 payload = row.get("payload", {})
                 limits = payload.get("rate_limits") or row.get("rate_limits")
-                if isinstance(limits, dict) and ("primary" in limits or "secondary" in limits):
-                    return limits, epoch(row.get("timestamp")) or path.stat().st_mtime
-    return {}, None
+                observed = epoch(row.get("timestamp"))
+                if (
+                    isinstance(limits, dict)
+                    and ("primary" in limits or "secondary" in limits)
+                    and observed is not None
+                    and observed <= time.time() + 60
+                ):
+                    if latest_at is None or observed > latest_at:
+                        latest, latest_at = limits, observed
+                    break
+    return latest, latest_at
 
 
 def snapshot(config, refresh=False):
@@ -75,7 +89,12 @@ def snapshot(config, refresh=False):
         row = limits.get(name) or {}
         reset = epoch(row.get("resets_at"))
         used = row.get("used_percent")
-        valid = isinstance(used, (int, float)) and math.isfinite(used)
+        valid = (
+            isinstance(used, (int, float))
+            and not isinstance(used, bool)
+            and math.isfinite(used)
+            and used >= 0
+        )
         windows.append(
             {
                 "provider": "codex",
@@ -84,7 +103,7 @@ def snapshot(config, refresh=False):
                 "observed": observed,
                 "resets": reset,
                 "status": "fresh"
-                if valid and observed and now - observed <= 300 and reset and reset > now
+                if valid and observed and -60 <= now - observed <= 300 and reset and reset > now
                 else "stale"
                 if valid
                 else "unavailable",

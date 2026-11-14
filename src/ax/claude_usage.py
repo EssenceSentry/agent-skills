@@ -2,7 +2,8 @@
 """Refresh Claude's built-in /usage, then normalize its local quota cache.
 
 Uses the authenticated CLI; never reads credentials or calls private HTTP APIs.
-Python 3.10+, standard library only. The cache schema is an observed CLI detail.
+Private ax helper; process and cache operations use the standard library.
+The cache schema is an observed CLI detail.
 """
 
 import argparse
@@ -175,8 +176,17 @@ def refresh_usage(cli, timeout):
         "json",
         "--no-session-persistence",
     ]
+    from ax.providers import clean_env
+
+    env = clean_env()
+    env.pop("CLAUDECODE", None)
     process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+        env=env,
     )
     try:
         stdout, _ = process.communicate(timeout=timeout)

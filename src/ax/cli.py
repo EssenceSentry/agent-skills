@@ -20,6 +20,12 @@ def interval(value):
     return number
 
 
+def usage_threshold(value):
+    from ax.alarms import threshold
+
+    return threshold(value)
+
+
 def parser():
     p = argparse.ArgumentParser(
         prog="ax",
@@ -88,6 +94,13 @@ def parser():
         action="store_true",
         help="refresh Claude's zero-inference built-in usage cache",
     )
+    actions = usage.add_subparsers(dest="action")
+    watch = actions.add_parser("watch", help="subscribe this caller to a used-percentage threshold")
+    watch.add_argument("metric", help="provider:window, as returned by ax usage")
+    watch.add_argument("--at", type=usage_threshold, required=True, metavar="PERCENT")
+    actions.add_parser("watches", help="list this caller's active usage subscriptions")
+    unwatch = actions.add_parser("unwatch", help="cancel this caller's subscription")
+    unwatch.add_argument("id")
     budgets = commands.add_parser("budget", help="track spending, reservations and projections")
     actions = budgets.add_subparsers(dest="action", required=True)
     setting = actions.add_parser("set")
@@ -128,6 +141,7 @@ def main(argv=None):
             if (
                 args.caller
                 or args.command in ("handoff", "run")
+                or (args.command == "usage" and args.action is not None)
                 or (args.command == "task" and args.action in ("create", "run", "watch"))
             ):
                 raise
@@ -207,6 +221,12 @@ def main(argv=None):
                     )
                     time.sleep(1)
             result = request(config, operation, values)
+        elif args.command == "usage" and args.action:
+            if args.refresh:
+                raise ValueError(
+                    "--refresh applies to the usage snapshot; watches refresh as needed"
+                )
+            result = request(config, "usage." + args.action, values)
         elif args.command in ("memory", "budget"):
             result = request(config, args.command + "." + args.action, values)
         else:

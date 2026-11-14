@@ -242,7 +242,7 @@ def test_daemon_runs_sync_only_in_maintenance_and_reports_it(desktop, monkeypatc
     config, folder = desktop
     monkeypatch.setattr("ax.daemon.catalog.refresh", lambda config: {})
     monkeypatch.setattr("ax.daemon.memory.sync", lambda config: {})
-    monkeypatch.setattr("ax.daemon.usage.snapshot", lambda config: {})
+    monkeypatch.setattr("ax.daemon.alarms.monitor", lambda config: {})
     calls = []
     monkeypatch.setattr(
         conversations, "sync", lambda config: calls.append(config) or {"created": 2, "errors": []}

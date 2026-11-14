@@ -10,7 +10,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from ax import __version__, budget, catalog, conversations, memory, tasks, usage
+from ax import __version__, alarms, budget, catalog, conversations, memory, tasks, usage
 from ax.config import load
 from ax.db import connect, events, initialize, public_task
 from ax.providers import flush_escalations
@@ -28,10 +28,15 @@ class Core:
         self.maintenance = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ax-maintain")
         self.reviews = {}
         self.maintenance_job = None
+        self.delivery_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ax-deliver")
+        self.delivery_job = None
         with connect(config) as db:
             db.execute("UPDATE tasks SET reviewing=0 WHERE reviewing=1")
             db.execute(
                 "UPDATE escalations SET status='uncertain',error='daemon restarted during dispatch' WHERE status='dispatching'"
+            )
+            db.execute(
+                "UPDATE usage_alarms SET status='uncertain',error='daemon restarted during dispatch' WHERE status='dispatching'"
             )
 
     def bind(self, args):
@@ -39,6 +44,10 @@ class Core:
             with connect(self.config) as db:
                 db.execute(
                     "UPDATE tasks SET inbox=?,inbox_token=? WHERE owner=?",
+                    (args["inbox"], args["inbox_token"], args["caller"]),
+                )
+                db.execute(
+                    "UPDATE usage_watches SET inbox=?,inbox_token=? WHERE owner=?",
                     (args["inbox"], args["inbox_token"], args["caller"]),
                 )
 
@@ -62,6 +71,7 @@ class Core:
                 "undelivered_concerns": attention,
                 "maintenance": self.errors,
                 "conversation_sync": self.conversation_sync,
+                "usage_alarms": alarms.status(config),
             }
         if operation == "daemon.stop":
             self.stopped.set()
@@ -102,6 +112,12 @@ class Core:
                 return [public_task(r) for r in db.execute(sql)]
         if operation == "task.events":
             return events(config, args.get("after", 0), args.get("id"))
+        if operation == "usage.watch":
+            return alarms.subscribe(config, args)
+        if operation == "usage.watches":
+            return alarms.watches(config, args.get("caller"))
+        if operation == "usage.unwatch":
+            return alarms.unsubscribe(config, args["id"], args.get("caller"))
         if operation == "usage":
             return usage.snapshot(config, args.get("refresh", False))
         if operation == "budget.show":
@@ -127,7 +143,7 @@ class Core:
             ("search", lambda: catalog.refresh(self.config)),
             ("conversations", lambda: conversations.sync(self.config)),
             ("memory", lambda: memory.sync(self.config)),
-            ("usage", lambda: usage.snapshot(self.config)),
+            ("usage", lambda: alarms.monitor(self.config)),
         ):
             try:
                 result = action()
@@ -162,7 +178,27 @@ class Core:
                     )
             for row in rows:
                 self.reviews[row["id"]] = self.pool.submit(tasks.inspect, self.config, row["id"])
+        if self.delivery_job is not None and self.delivery_job.done():
+            try:
+                self.delivery_job.result()
+                self.errors.pop("delivery", None)
+            except Exception as exc:
+                self.errors["delivery"] = redact(str(exc))
+            self.delivery_job = None
+        if self.delivery_job is None:
+            with connect(self.config) as db:
+                ready = db.execute(
+                    """SELECT 1 FROM escalations WHERE status='pending' AND next_attempt<=?
+                    UNION ALL SELECT 1 FROM usage_alarms a JOIN usage_watches w ON w.id=a.watch
+                    WHERE a.status='pending' AND a.next_attempt<=? AND w.active=1 LIMIT 1""",
+                    (time.time(), time.time()),
+                ).fetchone()
+            if ready:
+                self.delivery_job = self.delivery_pool.submit(self.deliver)
+
+    def deliver(self):
         flush_escalations(self.config)
+        alarms.flush(self.config)
 
 
 class Handler(socketserver.StreamRequestHandler):
@@ -223,6 +259,7 @@ def main():
         finally:
             core.pool.shutdown(wait=True)
             core.maintenance.shutdown(wait=True)
+            core.delivery_pool.shutdown(wait=True)
             with contextlib.suppress(FileNotFoundError):
                 config.socket.unlink()
 

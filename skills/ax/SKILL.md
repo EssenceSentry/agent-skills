@@ -1,6 +1,6 @@
 ---
 name: ax
-description: Search Claude/Codex conversations, prepare topic handoffs, sync memories, run supervised commands, and inspect usage or budgets with the local ax CLI.
+description: Search Claude/Codex conversations, prepare topic handoffs, sync memories, run supervised commands, inspect usage or budgets, and subscribe to usage alarms with the local ax CLI.
 ---
 
 # ax
@@ -14,7 +14,10 @@ Use `ax --help` for the complete interface.
 - Sync memories: `ax memory sync`.
 - External work, numeric progress and event streams: `ax task --help`.
 - Allowances/projections: `ax usage`; spending/reservations: `ax budget --help`.
+- Usage alarms: `ax usage watch codex:primary --at 80` (or a Claude window from `ax usage`). List/cancel: `ax usage watches`, `ax usage unwatch ID`.
 
 Caller identity is automatic. Running tasks receive mandatory Haiku/Claude or Luna/Codex supervision at low effort every 10 minutes (`--every` permits 10–60). Concerns reach the original conversation. Short commands finish without model calls; handoffs invoke a model immediately. Data commands return JSON. Enforcement hooks are separate.
 
 The daemon registers eligible Claude conversations while Desktop is closed. Switch from a closed VS Code editor tab; quit Desktop before continuing in VS Code.
+
+Alarms use fresh observed percentages, message the requesting conversation once per allowance window, and re-arm after reset. Delivery may resume the caller.
