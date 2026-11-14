@@ -13,6 +13,7 @@ class Config:
     codex_home: Path
     vault: Path
     claude_json: Path
+    claude_desktop: Path | None = None
 
     @property
     def database(self):
@@ -41,4 +42,5 @@ def load():
         location("codex_home", os.environ.get("CODEX_HOME", "~/.codex")),
         location("vault", "~/Vaults/agents"),
         location("claude_json", "~/.claude.json"),
+        location("claude_desktop", "~/Library/Application Support/Claude"),
     )

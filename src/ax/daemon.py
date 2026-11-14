@@ -10,7 +10,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from ax import __version__, budget, catalog, memory, tasks, usage
+from ax import __version__, budget, catalog, conversations, memory, tasks, usage
 from ax.config import load
 from ax.db import connect, events, initialize, public_task
 from ax.providers import flush_escalations
@@ -23,6 +23,7 @@ class Core:
         initialize(config)
         self.stopped = threading.Event()
         self.errors = {}
+        self.conversation_sync = {"available": False, "reason": "maintenance_pending"}
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ax-inspect")
         self.maintenance = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ax-maintain")
         self.reviews = {}
@@ -60,6 +61,7 @@ class Core:
                 "active_tasks": running,
                 "undelivered_concerns": attention,
                 "maintenance": self.errors,
+                "conversation_sync": self.conversation_sync,
             }
         if operation == "daemon.stop":
             self.stopped.set()
@@ -123,11 +125,14 @@ class Core:
     def maintain(self):
         for name, action in (
             ("search", lambda: catalog.refresh(self.config)),
+            ("conversations", lambda: conversations.sync(self.config)),
             ("memory", lambda: memory.sync(self.config)),
             ("usage", lambda: usage.snapshot(self.config)),
         ):
             try:
                 result = action()
+                if name == "conversations":
+                    self.conversation_sync = result
                 issues = (
                     result.get("errors", []) + result.get("conflicts", [])
                     if isinstance(result, dict)

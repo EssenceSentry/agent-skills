@@ -16,3 +16,5 @@ Use `ax --help` for the complete interface.
 - Allowances/projections: `ax usage`; spending/reservations: `ax budget --help`.
 
 Caller identity is automatic. Running tasks receive mandatory Haiku/Claude or Luna/Codex supervision at low effort every 10 minutes (`--every` permits 10–60). Concerns reach the original conversation. Short commands finish without model calls; handoffs invoke a model immediately. Data commands return JSON. Enforcement hooks are separate.
+
+The daemon registers eligible Claude conversations while Desktop is closed. Switch from a closed VS Code editor tab; quit Desktop before continuing in VS Code.

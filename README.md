@@ -208,11 +208,57 @@ Projections are estimates from observed pace, require adequate observations, and
 respect allowance resets. Reported model usage/cost remains separate from
 manually recorded budget entries.
 
+## Switching Claude between VS Code and Desktop
+
+The daemon keeps eligible local Claude conversations registered for both clients.
+Every minute, it finds interactive CLI/VS Code conversations and adds missing
+Desktop sidebar records while Desktop is **fully quit**. Desktop picks them up
+on its next launch. VS Code already discovers the shared transcripts in their
+project folders. Session IDs and transcript files stay the same; no conversation
+content is copied, no app is opened and no model is called by registration sync.
+
+Existing Desktop records, archives and deletion markers are preserved. Ax also
+remembers registrations it has seen, so removing one does not cause it to be
+recreated. Internal/background sessions, ambiguous IDs and unfamiliar metadata
+are withheld. The signed-in CLI and Desktop account must match, and the Desktop
+organization must be unambiguous. Check `ax daemon status` under
+`conversation_sync` for pending registrations, reasons and errors. Codex keeps
+using its shared native thread store.
+
+From VS Code to Desktop, close the conversation's **editor tab**, allow the next
+maintenance pass, then launch Desktop and select the conversation. For an
+immediate native handoff, run this from an interactive terminal after closing
+the editor tab:
+
+```sh
+claude --desktop --resume SESSION_ID
+```
+
+For the return trip, quit Claude Desktop completely, open the original project
+folder in VS Code, and select the conversation from Claude's history. The
+extension also accepts
+`vscode://anthropic.claude-code/open?session=SESSION_ID`; verify the project and
+session identity, because a missing session can produce a new conversation.
+An ax command in the resumed Claude conversation refreshes the inbox binding
+for its existing supervised tasks.
+
+A local trial on November 14, 2026 with Claude Code / extension 2.1.325 and Desktop
+5.11492.5 verified the same ID and latest displayed history across a full round
+trip using completed synthetic messages and no model calls. It did not test a
+model-generated continuation, attachments or artifacts. Choosing “New session”
+retained idle writers in the sidebar workflows tested, and Desktop cached
+previously viewed messages. This first version requires quitting Desktop before
+continuing the conversation in VS Code; it never forces a client to close.
+
+See the native [Desktop resume documentation](https://code.claude.com/docs/en/desktop#coming-from-the-cli)
+and [VS Code URI documentation](https://code.claude.com/docs/en/vs-code#launch-a-vs-code-tab-from-other-tools).
+
 ## Local state and host access
 
 State defaults to `~/.local/share/ax`. `AX_CONFIG` selects a TOML file with
-optional `[paths]` entries for `data`, `claude_home`, `codex_home`, `claude_json`
-and the legacy `vault` location. State includes the task/event database,
+optional `[paths]` entries for `data`, `claude_home`, `codex_home`, `claude_json`,
+`claude_desktop` (the Claude app data directory), and the legacy `vault` location.
+State includes the task/event database,
 independent search catalog, captured task output, shared-memory notes and the
 existing budget ledger. Historical archives and artifacts remain preserved.
 
@@ -236,9 +282,10 @@ uv run pytest
 uv build
 ```
 
-The current 53 deterministic tests cover both launchers, binary stdio, caller
+The current 72 deterministic tests cover both launchers, binary stdio, caller
 environment and working directory, exit status, terminal input and dimensions,
 detach/reattach without restarting the process, daemon recovery, supervision
-policy, delivery state, memory conflicts, archive import and budget accounting.
+policy, delivery state, memory conflicts, archive import, budget accounting and
+add-only conversation registration with account, lifecycle and archive guards.
 Model adapters use test doubles. Live model-backed Haiku/Luna supervision and
 escalation were not exercised by that validation.
