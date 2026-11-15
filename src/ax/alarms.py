@@ -10,6 +10,10 @@ from ax import providers, usage
 from ax.db import connect, event
 from ax.redact import redact
 
+# Native usage commands reconstruct reset times with subsecond jitter.
+# Match nearby resets instead of rounding across a timestamp boundary.
+RESET_TOLERANCE = 60
+
 WINDOWS = {
     "claude": ("five_hour", "weekly_all", "weekly_fable"),
     "codex": ("primary", "secondary"),
@@ -201,14 +205,14 @@ def evaluate(config, snapshot, now=None):
             # Suppress an older queued report after a fresh reading corrects the
             # usage downward or establishes that a different window has begun.
             db.execute(
-                "UPDATE usage_alarms SET status='cleared' WHERE watch=? AND status='pending' AND (resets<>? OR ?<threshold)",
-                (watch["id"], row["resets"], row["used"]),
+                "UPDATE usage_alarms SET status='cleared' WHERE watch=? AND status='pending' AND (ABS(resets-?)>? OR ?<threshold)",
+                (watch["id"], row["resets"], RESET_TOLERANCE, row["used"]),
             )
             if row["used"] < watch["threshold"]:
                 continue
             previous = db.execute(
-                "SELECT * FROM usage_alarms WHERE watch=? AND resets=?",
-                (watch["id"], row["resets"]),
+                "SELECT * FROM usage_alarms WHERE watch=? AND ABS(resets-?)<=? ORDER BY created DESC LIMIT 1",
+                (watch["id"], row["resets"], RESET_TOLERANCE),
             ).fetchone()
             if previous and previous["status"] not in ("pending", "expired", "cleared"):
                 continue

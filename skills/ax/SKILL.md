@@ -20,4 +20,4 @@ Caller identity is automatic. Running tasks receive mandatory Haiku/Claude or Lu
 
 The daemon registers eligible Claude conversations while Desktop is closed. Switch from a closed VS Code editor tab; quit Desktop before continuing in VS Code.
 
-Alarms use fresh observed percentages, message the requesting conversation once per allowance window, and re-arm after reset. Delivery may resume the caller.
+Alarms use fresh observed percentages, message the requesting conversation once per allowance window, and re-arm after reset. Delivery automatically steers/resumes the caller through its live native client. Without a compatible Codex Desktop/VS Code owner it stays pending; queued items alone are not delivery.

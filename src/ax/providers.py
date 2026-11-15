@@ -13,6 +13,8 @@ import time
 import uuid
 from pathlib import Path
 
+from ax import codex_delivery
+from ax.codex_delivery import Unavailable
 from ax.db import connect, event
 from ax.redact import redact
 
@@ -213,10 +215,6 @@ def model_call(config, provider, prompt, purpose):
             )
 
 
-class Unavailable(RuntimeError):
-    """Delivery has not started; a later retry is safe."""
-
-
 def deliver(task, text):
     provider, sid = task["owner"].split(":", 1)
     if provider == "claude":
@@ -239,20 +237,7 @@ def deliver(task, text):
             sock.shutdown(socket.SHUT_WR)
             sock.recv(1)
     else:
-        binary = shutil.which("codex")
-        if not binary:
-            raise Unavailable("Codex CLI is unavailable")
-        result = subprocess.run(
-            [binary, "queue", "--thread", sid, "--message", text, "--resume"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            env=clean_env(),
-        )
-        if result.returncode:
-            raise RuntimeError(
-                redact(result.stderr[-1000:]) or "Codex queue did not acknowledge delivery"
-            )
+        codex_delivery.deliver(sid, text)
 
 
 def escalate(config, task, assessment, evidence):

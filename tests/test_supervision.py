@@ -169,23 +169,6 @@ def test_crash_during_delivery_becomes_uncertain_on_restart(config):
     core.maintenance.shutdown()
 
 
-def test_codex_escalation_queues_and_resumes_original_conversation(monkeypatch):
-    monkeypatch.setattr(providers.shutil, "which", lambda name: "/fake/codex")
-    calls = []
-
-    class Result:
-        returncode = 0
-
-    def run(command, **kwargs):
-        calls.append(command)
-        return Result()
-
-    monkeypatch.setattr(providers.subprocess, "run", run)
-    providers.deliver({"owner": "codex:original-session"}, "evidence-bearing concern")
-    assert "--resume" in calls[0]
-    assert calls[0][calls[0].index("--thread") + 1] == "original-session"
-
-
 def test_provider_process_timeout_is_bounded_and_cleaned_up(tmp_path):
     import subprocess
     import sys

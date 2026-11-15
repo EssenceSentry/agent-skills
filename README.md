@@ -173,8 +173,11 @@ ax --caller codex:SESSION_ID run -- python score.py
 absent. The identity must refer to the intended existing conversation for
 escalation to reach it. Claude inbox credentials are captured privately from its
 inherited environment; another ax command in that conversation refreshes the
-binding. Codex escalation queues into and requests resumption of that same
-conversation. No replacement conversation is created.
+binding. Codex escalation goes directly to that conversation's live Desktop or
+VS Code owner, steering an active turn or starting an idle turn automatically.
+No manual queue click or replacement conversation is required. If no supported
+native client owns the conversation (including a standalone CLI without that
+channel), delivery stays pending rather than reporting a queued item as accepted.
 
 Delivery acceptance does not prove the caller has read or acted. Unavailable
 routes retain pending concerns for retry. Uncertain dispatches are retained
@@ -231,14 +234,16 @@ Choose the early-warning margin through that number. Projections are reported
 as estimates when available; they do not trigger these alarms.
 
 The caller is inferred as usual and can watch either provider. Messages return
-to that same conversation through the native Claude inbox or Codex queue, which
-may resume the caller. Subscriptions, list/cancel operations and delivery are
-scoped to the caller. Outside an agent, use `--caller PROVIDER:SESSION`.
+to that same conversation through the native Claude inbox or Codex's live-client
+input channel. Codex delivery is automatic and may resume an idle caller; it does
+not require clicking a queued follow-up. Subscriptions, list/cancel operations
+and delivery are scoped to the caller. Outside an agent, use `--caller PROVIDER:SESSION`.
 An ax command after changing clients refreshes Claude's inbox binding.
 
 The daemon checks about once a minute. A fresh cached reading already at or
 above the threshold queues an alarm at registration. Each subscription delivers
-at most once per reported allowance window and re-arms when the reset changes.
+at most once per allowance window and re-arms after reset. Reset timestamps
+within 60 seconds identify the same window, tolerating provider timestamp jitter.
 Repeating the same active subscription is idempotent. It stays active until
 `unwatch`; resubscribing after cancellation creates a new subscription.
 
@@ -336,12 +341,15 @@ uv run pytest
 uv build
 ```
 
-The current 106 deterministic tests cover both launchers, binary stdio, caller
+The current 118 deterministic tests cover both launchers, binary stdio, caller
 environment and working directory, exit status, terminal input and dimensions,
 detach/reattach without restarting the process, daemon recovery, supervision
 policy, delivery state, memory conflicts, archive import, budget accounting and
 add-only conversation registration with account, lifecycle and archive guards,
 plus caller-owned usage alarms, fresh thresholds, reset re-arming and delivery
-recovery.
+recovery, reset-time jitter and immediate Codex IPC delivery. A live diagnostic
+reached this existing Codex Desktop chat automatically without a queue click on
+November 15, 2026. Native IPC requires a compatible live Desktop/VS Code owner;
+protocol mismatches stay pending. No paused refactor conversation was resumed.
 Model adapters use test doubles. Live model-backed Haiku/Luna supervision and
 escalation were not exercised by that validation.

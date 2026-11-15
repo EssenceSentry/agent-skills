@@ -433,3 +433,59 @@ def test_usage_refresh_does_not_inherit_parent_agent_identity(monkeypatch):
         "CODEX_THREAD_ID",
         "AX_CALLER",
     }
+
+
+def test_reset_jitter_does_not_rearm_an_accepted_alarm(config, world):
+    now, frame, reads, delivered = world
+    row = frame["windows"][0]
+    row.update(used=85, resets=now[0] + 3599.7)
+    watch = subscribe(config)
+    alarms.flush(config)
+    anchor = row["resets"]
+    for jitter in (0.6, -0.4, 59.9, -59.9, 0.1):
+        advance(world, used=90)
+        row["resets"] = anchor + jitter
+        assert alarms.evaluate(config, frame) == 0
+        alarms.flush(config)
+    assert len(delivered) == 1
+    assert alarms.watches(config, "codex:caller")[0]["alarm"]["id"] == watch["alarm"]["id"]
+    now[0] = anchor + 61
+    row.update(observed=now[0], resets=anchor + 3600, used=85)
+    assert alarms.evaluate(config, frame) == 1
+    alarms.flush(config)
+    assert len(delivered) == 2
+
+
+def test_reset_jitter_refreshes_pending_alarm_without_replacing_its_identity(config, world):
+    now, frame, reads, delivered = world
+    row = frame["windows"][0]
+    row["used"] = 85
+    watch = subscribe(config)
+    advance(world, used=92)
+    row["resets"] += 0.75
+    assert alarms.evaluate(config, frame) == 0
+    alarms.flush(config)
+    assert len(delivered) == 1 and "92% used" in delivered[0][1]
+    assert delivered[0][0]["id"] == watch["alarm"]["id"]
+    with connect(config) as db:
+        assert db.execute("SELECT count(*) FROM usage_alarms").fetchone()[0] == 1
+
+
+def test_reset_jitter_cannot_replay_an_uncertain_dispatch(config, world, monkeypatch):
+    now, frame, reads, delivered = world
+    frame["windows"][0]["used"] = 85
+    subscribe(config)
+    attempts = []
+
+    def ambiguous(*args):
+        attempts.append(args)
+        raise RuntimeError("ack lost")
+
+    monkeypatch.setattr(providers, "deliver", ambiguous)
+    alarms.flush(config)
+    advance(world, used=90, seconds=61)
+    frame["windows"][0]["resets"] -= 0.5
+    alarms.evaluate(config, frame)
+    alarms.flush(config)
+    assert len(attempts) == 1
+    assert alarms.watches(config, "codex:caller")[0]["alarm"]["status"] == "uncertain"

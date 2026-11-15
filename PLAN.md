@@ -12,4 +12,4 @@ consumers are explicitly outside this repository's implementation scope.
 
 Claude client registration is automatic maintenance with an unchanged CLI. It adds missing Desktop records only while Desktop is quit, preserves native IDs/transcripts and client records, and leaves Codex native registration alone.
 
-Usage alarms are opt-in subscriptions under `ax usage`: fresh observed percentage thresholds, one native message per reported allowance window to the requesting caller, reset re-arming, and cancellation. Threshold checks invoke no model and add no external notification service.
+Usage alarms are opt-in subscriptions under `ax usage`: fresh observed percentage thresholds, one automatically delivered native message per allowance window (reset jitter tolerated) to the requesting caller, reset re-arming, and cancellation. Threshold checks invoke no model and add no external notification service.
