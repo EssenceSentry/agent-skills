@@ -32,9 +32,10 @@ CREATE TABLE IF NOT EXISTS usage_watches (
  id TEXT PRIMARY KEY, owner TEXT NOT NULL, provider TEXT NOT NULL, name TEXT NOT NULL,
  threshold REAL NOT NULL CHECK(threshold BETWEEN 0 AND 100), active INTEGER NOT NULL DEFAULT 1,
  inbox TEXT, inbox_token TEXT, created REAL NOT NULL, checked REAL,
- data_status TEXT NOT NULL DEFAULT 'waiting', used REAL, observed REAL, resets REAL
+ data_status TEXT NOT NULL DEFAULT 'waiting', used REAL, observed REAL, resets REAL,
+ kind TEXT NOT NULL DEFAULT 'threshold' CHECK(kind IN ('threshold','reset')),
+ next_reset REAL, reset_observed REAL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS usage_watch_active ON usage_watches(owner,provider,name,threshold) WHERE active=1;
 CREATE TABLE IF NOT EXISTS usage_alarms (
  id TEXT PRIMARY KEY, watch TEXT NOT NULL, threshold REAL NOT NULL, resets REAL NOT NULL,
  used REAL NOT NULL, observed REAL NOT NULL, expires REAL NOT NULL, text TEXT NOT NULL,
@@ -69,6 +70,20 @@ def initialize(config):
     with connect(config) as db:
         db.execute("PRAGMA journal_mode=WAL")
         db.executescript(SCHEMA)
+        db.execute("BEGIN IMMEDIATE")
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(usage_watches)")}
+        for name, declaration in (
+            ("kind", "TEXT NOT NULL DEFAULT 'threshold' CHECK(kind IN ('threshold','reset'))"),
+            ("next_reset", "REAL"),
+            ("reset_observed", "REAL"),
+        ):
+            if name not in columns:
+                db.execute(f"ALTER TABLE usage_watches ADD COLUMN {name} {declaration}")
+        if "kind" not in columns:
+            db.execute("DROP INDEX IF EXISTS usage_watch_active")
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS usage_watch_active ON usage_watches(owner,provider,name,kind,threshold) WHERE active=1"
+        )
     os.chmod(config.database, 0o600)
 
 

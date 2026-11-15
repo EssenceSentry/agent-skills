@@ -94,6 +94,9 @@ def public(db, watch):
             "provider",
             "name",
             "threshold",
+            "kind",
+            "next_reset",
+            "reset_observed",
             "active",
             "created",
             "checked",
@@ -104,11 +107,15 @@ def public(db, watch):
         )
     }
     result["active"] = bool(result["active"])
+    if result["kind"] == "reset":
+        result["threshold"] = None
     alarm = db.execute(
         "SELECT id,status,used,observed,resets,error FROM usage_alarms WHERE watch=? ORDER BY created DESC LIMIT 1",
         (watch["id"],),
     ).fetchone()
     result["alarm"] = dict(alarm) if alarm else None
+    if alarm and result["kind"] == "reset":
+        result["alarm"]["used"] = None
     return result
 
 
@@ -127,12 +134,16 @@ def subscribe(config, args):
     owner = args.get("caller")
     providers.infer_provider(owner)
     provider, name = metric(args["metric"])
-    at = threshold(args["at"])
+    reset = args.get("reset", False)
+    if not isinstance(reset, bool) or (args.get("at") is not None) == reset:
+        raise ValueError("choose exactly one of --at PERCENT or --reset")
+    kind = "reset" if reset else "threshold"
+    at = 0 if reset else threshold(args["at"])
     with connect(config) as db:
         proposed = uuid.uuid4().hex[:12]
         created = bool(
             db.execute(
-                "INSERT OR IGNORE INTO usage_watches(id,owner,provider,name,threshold,inbox,inbox_token,created) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT OR IGNORE INTO usage_watches(id,owner,provider,name,threshold,inbox,inbox_token,created,kind) VALUES(?,?,?,?,?,?,?,?,?)",
                 (
                     proposed,
                     owner,
@@ -142,19 +153,26 @@ def subscribe(config, args):
                     args.get("inbox"),
                     args.get("inbox_token"),
                     time.time(),
+                    kind,
                 ),
             ).rowcount
         )
         sid = db.execute(
-            "SELECT id FROM usage_watches WHERE owner=? AND provider=? AND name=? AND threshold=? AND active=1",
-            (owner, provider, name, at),
+            "SELECT id FROM usage_watches WHERE owner=? AND provider=? AND name=? AND kind=? AND threshold=? AND active=1",
+            (owner, provider, name, kind, at),
         ).fetchone()["id"]
         if created:
             event(
                 db,
                 None,
                 "usage_watch_created",
-                {"id": sid, "owner": owner, "metric": args["metric"], "threshold": at},
+                {
+                    "id": sid,
+                    "owner": owner,
+                    "metric": args["metric"],
+                    "kind": kind,
+                    "threshold": None if reset else at,
+                },
             )
     # A cached fresh reading may already cross the threshold. Never wait for a
     # provider refresh or native delivery in the registration request.
@@ -180,11 +198,78 @@ def unsubscribe(config, sid, owner):
     return {"id": sid, "active": False, "pending_canceled": canceled}
 
 
+def _fire_resets(db, now):
+    """Persist each due wake once, without requiring a provider or model call."""
+    triggered = 0
+    rows = db.execute(
+        "SELECT * FROM usage_watches WHERE active=1 AND kind='reset' AND next_reset<=?",
+        (now,),
+    ).fetchall()
+    for watch in rows:
+        due = watch["next_reset"]
+        previous = db.execute(
+            "SELECT id FROM usage_alarms WHERE watch=? AND ABS(resets-?)<=? LIMIT 1",
+            (watch["id"], due, RESET_TOLERANCE),
+        ).fetchone()
+        if previous is None:
+            alarm_id = uuid.uuid4().hex[:12]
+            text = redact(
+                f"[ax usage reset {alarm_id}; subscription {watch['id']}]\n"
+                f"Allowance: {watch['provider']}:{watch['name']}\n"
+                f"Reported reset time: {iso(due)}\n"
+                f"Reset schedule observed at: {iso(watch['reset_observed'])}\n"
+                "The reported allowance reset time has arrived. This is your requested wake-up. "
+                "Check ax usage for fresh availability before resuming work, and follow the "
+                "conversation's existing instructions. This wake-up grants no new authorization."
+            )
+            # A reset wake is a durable timer event, not a stale percentage report.
+            # Supersede older undelivered wakes when another reset becomes due.
+            db.execute(
+                "UPDATE usage_alarms SET status='cleared' WHERE watch=? AND status='pending' AND resets<?",
+                (watch["id"], due - RESET_TOLERANCE),
+            )
+            db.execute(
+                "INSERT INTO usage_alarms(id,watch,threshold,resets,used,observed,expires,text,created,next_attempt) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (alarm_id, watch["id"], 0, due, 0, watch["reset_observed"], 0, text, now, now),
+            )
+            event(
+                db,
+                None,
+                "usage_alarm_triggered",
+                {
+                    "id": alarm_id,
+                    "watch": watch["id"],
+                    "provider": watch["provider"],
+                    "name": watch["name"],
+                    "kind": "reset",
+                    "resets": due,
+                    "observed": watch["reset_observed"],
+                },
+            )
+            triggered += 1
+        db.execute("UPDATE usage_watches SET next_reset=NULL WHERE id=?", (watch["id"],))
+    return triggered
+
+
+def fire_resets(config, now=None):
+    now = time.time() if now is None else now
+    with connect(config) as db:
+        due = db.execute(
+            "SELECT 1 FROM usage_watches WHERE active=1 AND kind='reset' AND next_reset<=? LIMIT 1",
+            (now,),
+        ).fetchone()
+        if due is None:
+            return 0
+        db.execute("BEGIN IMMEDIATE")
+        return _fire_resets(db, now)
+
+
 def evaluate(config, snapshot, now=None):
     now = time.time() if now is None else now
     windows = {(row["provider"], row["name"]): row for row in snapshot["windows"]}
-    triggered = 0
     with connect(config) as db:
+        db.execute("BEGIN IMMEDIATE")
+        triggered = _fire_resets(db, now)
         rows = db.execute("SELECT * FROM usage_watches WHERE active=1").fetchall()
         for watch in rows:
             row = windows.get((watch["provider"], watch["name"]))
@@ -200,6 +285,19 @@ def evaluate(config, snapshot, now=None):
                     watch["id"],
                 ),
             )
+            if watch["kind"] == "reset":
+                if status == "fresh":
+                    target = row["resets"]
+                    if (
+                        watch["next_reset"] is not None
+                        and abs(target - watch["next_reset"]) <= RESET_TOLERANCE
+                    ):
+                        target = max(target, watch["next_reset"])
+                    db.execute(
+                        "UPDATE usage_watches SET next_reset=?,reset_observed=? WHERE id=?",
+                        (target, row["observed"], watch["id"]),
+                    )
+                continue
             if status != "fresh":
                 continue
             # Suppress an older queued report after a fresh reading corrects the
@@ -270,7 +368,8 @@ def flush(config, now=None):
     now = time.time() if now is None else now
     with connect(config) as db:
         db.execute(
-            "UPDATE usage_alarms SET status='expired' WHERE status='pending' AND expires<=?", (now,)
+            "UPDATE usage_alarms SET status='expired' WHERE status='pending' AND expires<=? AND watch IN (SELECT id FROM usage_watches WHERE kind='threshold')",
+            (now,),
         )
         rows = db.execute(
             "SELECT a.id FROM usage_alarms a JOIN usage_watches w ON w.id=a.watch WHERE a.status='pending' AND a.next_attempt<=? AND w.active=1 ORDER BY a.created LIMIT 8",
@@ -279,10 +378,12 @@ def flush(config, now=None):
     for candidate in rows:
         with connect(config) as db:
             row = db.execute(
-                "SELECT a.*,w.owner,w.inbox,w.inbox_token,w.active FROM usage_alarms a JOIN usage_watches w ON w.id=a.watch WHERE a.id=?",
+                "SELECT a.*,w.owner,w.inbox,w.inbox_token,w.active,w.kind FROM usage_alarms a JOIN usage_watches w ON w.id=a.watch WHERE a.id=?",
                 (candidate["id"],),
             ).fetchone()
-            if not row or not row["active"] or row["expires"] <= time.time():
+            if not row or not row["active"]:
+                continue
+            if row["kind"] == "threshold" and row["expires"] <= time.time():
                 continue
             claimed = db.execute(
                 "UPDATE usage_alarms SET status='dispatching' WHERE id=? AND status='pending'",
@@ -346,7 +447,7 @@ def status(config):
     with connect(config) as db:
         active = db.execute("SELECT count(*) FROM usage_watches WHERE active=1").fetchone()[0]
         states = db.execute(
-            "SELECT a.status,count(*) AS n FROM usage_alarms a JOIN usage_watches w ON w.id=a.watch WHERE w.active=1 AND a.resets>? GROUP BY a.status",
+            "SELECT a.status,count(*) AS n FROM usage_alarms a JOIN usage_watches w ON w.id=a.watch WHERE w.active=1 AND (w.kind='reset' OR a.resets>?) GROUP BY a.status",
             (time.time(),),
         ).fetchall()
     counts = {r["status"]: r["n"] for r in states}

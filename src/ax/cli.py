@@ -95,9 +95,13 @@ def parser():
         help="refresh Claude's zero-inference built-in usage cache",
     )
     actions = usage.add_subparsers(dest="action")
-    watch = actions.add_parser("watch", help="subscribe this caller to a used-percentage threshold")
+    watch = actions.add_parser("watch", help="subscribe this caller to a usage threshold or reset")
     watch.add_argument("metric", help="provider:window, as returned by ax usage")
-    watch.add_argument("--at", type=usage_threshold, required=True, metavar="PERCENT")
+    trigger = watch.add_mutually_exclusive_group(required=True)
+    trigger.add_argument("--at", type=usage_threshold, metavar="PERCENT")
+    trigger.add_argument(
+        "--reset", action="store_true", help="wake this caller when the reported reset time arrives"
+    )
     actions.add_parser("watches", help="list this caller's active usage subscriptions")
     unwatch = actions.add_parser("unwatch", help="cancel this caller's subscription")
     unwatch.add_argument("id")

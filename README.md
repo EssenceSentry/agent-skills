@@ -80,6 +80,8 @@ ax usage
 ax usage --refresh
 ax usage watch codex:primary --at 80
 ax usage watch claude:weekly_all --at 90
+ax usage watch claude:five_hour --reset
+ax usage watch claude:weekly_all --reset
 ax usage watches
 ax usage unwatch ID
 ax budget set annotations 20 --unit usd
@@ -217,12 +219,14 @@ manually recorded budget entries.
 
 ## Usage alarms
 
-Agents can subscribe to messages when a reported usage window reaches an
-explicit percentage. For example:
+Agents can subscribe to messages when usage reaches an explicit percentage or
+when an allowance reset is due. For example:
 
 ```sh
 ax usage watch codex:primary --at 80
 ax usage watch claude:weekly_all --at 90
+ax usage watch claude:five_hour --reset
+ax usage watch claude:weekly_all --reset
 ax usage watches
 ax usage unwatch ID
 ```
@@ -233,6 +237,23 @@ Use the `provider:name` fields returned by `ax usage`: Claude supports
 Choose the early-warning margin through that number. Projections are reported
 as estimates when available; they do not trigger these alarms.
 
+Use `--reset` instead of `--at` to wake the requesting conversation at the
+provider's reported reset time. The same flag works with `codex:primary` and
+`codex:secondary`. Five-hour and weekly windows can be watched independently.
+A fresh usage report arms a durable timer; the daemon checks due timers every
+tick, independently of provider refreshes. The agent can be idle and its usage
+data can become stale without losing the saved wake-up. A sleeping computer
+processes an overdue wake after the daemon resumes. Unknown reset times wait
+for fresh evidence; ax never invents the next date by adding five hours or a week.
+
+Each reset subscription wakes once per reported window, survives daemon restart,
+and learns its next deadline from a fresh report. The wake states the reported
+reset time and asks the agent to check fresh availability before resuming under
+its existing instructions. It does not assert that the provider has confirmed
+available quota. Reset wakes stay pending while the native receiver is unavailable;
+a newer due reset supersedes an older pending wake. They use the existing
+`watches` and `unwatch` commands, and remain active until canceled.
+
 The caller is inferred as usual and can watch either provider. Messages return
 to that same conversation through the native Claude inbox or Codex's live-client
 input channel. Codex delivery is automatic and may resume an idle caller; it does
@@ -240,21 +261,21 @@ not require clicking a queued follow-up. Subscriptions, list/cancel operations
 and delivery are scoped to the caller. Outside an agent, use `--caller PROVIDER:SESSION`.
 An ax command after changing clients refreshes Claude's inbox binding.
 
-The daemon checks about once a minute. A fresh cached reading already at or
+Usage observations refresh about once a minute; saved reset timers run on daemon ticks. A fresh cached reading already at or
 above the threshold queues an alarm at registration. Each subscription delivers
 at most once per allowance window and re-arms after reset. Reset timestamps
 within 60 seconds identify the same window, tolerating provider timestamp jitter.
 Repeating the same active subscription is idempotent. It stays active until
 `unwatch`; resubscribing after cancellation creates a new subscription.
 
-Only fresh observed usage with a known future reset can trigger. Unknown,
+Only fresh observed usage with a known future reset can trigger percentage alarms. Unknown,
 ambiguous, invalid, future-dated or stale readings do not. While Claude watches
 are active, the daemon refreshes observations older than a minute through the
 existing zero-inference `/usage` command, at most once a minute. Codex readings
 come from the latest timestamped native usage reports; without a fresh report,
 the watch waits. Threshold evaluation itself invokes no model.
 
-An alarm includes the metric, threshold, used and remaining percentages,
+A percentage alarm includes the metric, threshold, used and remaining percentages,
 observation time, reset time and any labeled projection. Pending messages expire
 when their observation is stale or their allowance resets; new fresh evidence
 can refresh an undelivered alarm. Known unavailable routes retry. Uncertain
@@ -262,7 +283,8 @@ dispatches are retained without replay, and acceptance does not prove the caller
 read the message. Cancellation stops future and pending delivery; an already
 dispatched message cannot be recalled.
 
-`ax usage watches` includes source freshness and the latest delivery state.
+`ax usage watches` includes the alarm kind, source freshness, saved `next_reset`
+and the latest delivery state. Reset subscriptions have no percentage threshold.
 `ax daemon status` reports active subscriptions and pending, dispatching or
 uncertain alarms. These are opt-in conversation messages, with no OS, email,
 Cloudflare or separate notification service.
@@ -341,15 +363,18 @@ uv run pytest
 uv build
 ```
 
-The current 118 deterministic tests cover both launchers, binary stdio, caller
+The current 139 deterministic tests cover both launchers, binary stdio, caller
 environment and working directory, exit status, terminal input and dimensions,
 detach/reattach without restarting the process, daemon recovery, supervision
 policy, delivery state, memory conflicts, archive import, budget accounting and
 add-only conversation registration with account, lifecycle and archive guards,
 plus caller-owned usage alarms, fresh thresholds, reset re-arming and delivery
-recovery, reset-time jitter and immediate Codex IPC delivery. A live diagnostic
+recovery, reset-time jitter, immediate Codex IPC delivery and durable reset wakes
+across provider outages, daemon restart and old-schema migration. A live diagnostic
 reached this existing Codex Desktop chat automatically without a queue click on
 November 15, 2026. Native IPC requires a compatible live Desktop/VS Code owner;
-protocol mismatches stay pending. No paused refactor conversation was resumed.
+protocol mismatches stay pending. A synthetic reset timer also reached the same
+chat through the actual daemon delivery worker, exactly once. No paused refactor
+conversation was resumed.
 Model adapters use test doubles. Live model-backed Haiku/Luna supervision and
 escalation were not exercised by that validation.

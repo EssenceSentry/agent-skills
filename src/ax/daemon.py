@@ -162,6 +162,7 @@ class Core:
                 self.errors[name] = redact(str(exc))
 
     def tick(self):
+        alarms.fire_resets(self.config)
         tasks.reconcile(self.config)
         self.reviews = {key: future for key, future in self.reviews.items() if not future.done()}
         available = 2 - len(self.reviews)
