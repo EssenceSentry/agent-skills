@@ -1,12 +1,19 @@
+![Agent Skills — Keep the decisions. Carry the context forward.](.github/assets/banner.svg)
+
 # Agent skills and ax
 
 [![Quality](https://github.com/EssenceSentry/agent-skills/actions/workflows/quality.yml/badge.svg?branch=main)](https://github.com/EssenceSentry/agent-skills/actions/workflows/quality.yml)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-2563eb?logo=python&logoColor=white)](pyproject.toml)
 
-When a coding session moves from Claude to Codex, the decisions that led to the current patch can be hard to find. The skills here let an agent search past conversations, cite the session where a decision was made, and hand the context to the next tool.
+**Give the next coding session the decisions that made the current patch make sense.** These skills and helpers let agents retrieve earlier conversations, cite their sources, and prepare context for a handoff between tools.
 
-- **Pick up an earlier conversation.** Start with the [session recall skill](skills/session-recall/SKILL.md) or jump to the [installation instructions](#install-in-codex).
-- **Keep a command running across terminals.** The [ax workbench](https://github.com/EssenceSentry/ax) has a dedicated repository. Its local daemon owns the process, so you can detach, close the terminal, and reattach later. The [recorded Mac walkthrough](https://github.com/EssenceSentry/ax/blob/main/docs/reattach.md) follows one job through reattachment.
+**[Start with session recall →](skills/session-recall/SKILL.md)** · [Browse the skills](#available-skills) · [Install in Codex](#install-in-codex)
+
+- **Recover the reasoning behind a change.** Search session evidence and link back to the conversation where a decision was made.
+- **Make a handoff usable.** Carry a bounded account of the work, its sources, and the next step into another session.
+- **Inspect the helper contracts.** Offline tests exercise fake CLI processes, session handling, and failure paths without spending model allowance.
+
+The standalone [ax workbench](https://github.com/EssenceSentry/ax) is the current home for detached commands and terminal reattachment. This repository also retains its earlier ax package and browser interface, documented below.
 
 ## Available skills
 
