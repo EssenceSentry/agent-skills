@@ -57,7 +57,8 @@ print(json.dumps(result), flush=True)
 
 class QuotaTests(unittest.TestCase):
     def fixture(self, age=0, reset_offset=3600):
-        now = time.time()
+        # Whole seconds round-trip exactly through the ISO reset timestamp.
+        now = float(int(time.time()))
         reset = dt.datetime.fromtimestamp(now + reset_offset, dt.timezone.utc).isoformat()
         rows = [
             {"kind": "session", "group": "session", "percent": 25, "resets_at": reset, "scope": None, "is_active": False},
