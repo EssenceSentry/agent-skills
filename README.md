@@ -3,7 +3,7 @@
 When a coding session moves from Claude to Codex, the decisions that led to the current patch can be hard to find. The skills here let an agent search past conversations, cite the session where a decision was made, and hand the context to the next tool.
 
 - **Pick up an earlier conversation.** Start with the [session recall skill](skills/session-recall/SKILL.md) or jump to the [installation instructions](#install-in-codex).
-- **Keep a command running across terminals.** The [ax workbench](https://github.com/EssenceSentry/agent-skills/tree/ax-workbench) lives on its own branch. Its local daemon owns the process, so you can detach, close the terminal, and reattach later. Use that branch’s installer for the workbench.
+- **Keep a command running across terminals.** The [ax workbench](https://github.com/EssenceSentry/ax) has a dedicated repository. Its local daemon owns the process, so you can detach, close the terminal, and reattach later. The [recorded Mac walkthrough](https://github.com/EssenceSentry/ax/blob/main/docs/reattach.md) follows one job through reattachment.
 
 ## Available skills
 
