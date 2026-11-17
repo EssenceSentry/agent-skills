@@ -1,5 +1,7 @@
 # ax
 
+The workbench now has a dedicated repository. [Install ax](https://github.com/EssenceSentry/ax#install) or [watch a running job reattach from AX Widget](https://github.com/EssenceSentry/ax/blob/main/docs/reattach.md).
+
 Start a command with ax, close the terminal, then come back to its output and standard input. A local daemon owns the process from the start. The same CLI can find the Claude or Codex conversation where you planned the work.
 
 **Try detaching a command.** After [installing ax](#install), run this small example:
