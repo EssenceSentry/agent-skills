@@ -1,24 +1,16 @@
 # ax
 
-One prefix for ordinary commands, with a local daemon that keeps long work
-supervised and connects context across Claude and Codex.
+Start a command with ax, close the terminal, then come back to its output and standard input. A local daemon owns the process from the start. The same CLI can find the Claude or Codex conversation where you planned the work.
+
+**Try detaching a command.** After [installing ax](#install), run this small example:
 
 ```sh
-ax run -- python score.py
-ax run --detach -- python score.py
-ax detach TASK
-ax attach TASK
+ax run --detach -- python3 -u -c 'import time; print("started"); time.sleep(30); print("finished")'
 ```
 
-Tasks are background-owned from creation. By default, `ax run` attaches normal
-stdin/stdout/stderr and returns the command's exit status. Detaching closes the
-connection while the same process continues; attaching again replays captured
-output and resumes live stdio. Short commands finish without a model review.
+The response includes an `id`. Run `ax attach <id>` with that value to see the output already captured and follow the rest live. For your own job, replace the Python example with the command you already use.
 
-The core provides conversation search, sourced topic handoffs, shared memories,
-task supervision, numeric progress, usage and budgets. It has no built-in UI,
-HTTP server, MCP server, Cloudflare tunnel or separate notification service.
-Enforcement hooks and graphical consumers are separate from ax.
+Conversation search, sourced handoffs, shared memory, usage and budgets are also available from the CLI. Short commands complete without a model review. The daemon runs locally using Unix sockets and PTYs. Graphical clients and enforcement hooks are separate components.
 
 ## Install
 
