@@ -1,6 +1,9 @@
-# Agent skills
+# Agent skills and ax
 
-Reusable skills for working with Claude Code, Codex, and ChatGPT.
+When a coding session moves from Claude to Codex, the decisions that led to the current patch can be hard to find. The skills here let an agent search past conversations, cite the session where a decision was made, and hand the context to the next tool.
+
+- **Pick up an earlier conversation.** Start with the [session recall skill](skills/session-recall/SKILL.md) or jump to the [installation instructions](#install-in-codex).
+- **Keep a command running across terminals.** The [ax workbench](https://github.com/EssenceSentry/agent-skills/tree/ax-workbench) lives on its own branch. Its local daemon owns the process, so you can detach, close the terminal, and reattach later. Use that branch’s installer for the workbench.
 
 ## Available skills
 
