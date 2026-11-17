@@ -1,5 +1,8 @@
 # Agent skills and ax
 
+[![Quality](https://github.com/EssenceSentry/agent-skills/actions/workflows/quality.yml/badge.svg?branch=main)](https://github.com/EssenceSentry/agent-skills/actions/workflows/quality.yml)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-2563eb?logo=python&logoColor=white)](pyproject.toml)
+
 When a coding session moves from Claude to Codex, the decisions that led to the current patch can be hard to find. The skills here let an agent search past conversations, cite the session where a decision was made, and hand the context to the next tool.
 
 - **Pick up an earlier conversation.** Start with the [session recall skill](skills/session-recall/SKILL.md) or jump to the [installation instructions](#install-in-codex).
@@ -267,6 +270,8 @@ observations in the guides are compatibility evidence, not guarantees about a
 current installation. Inspect the selected runtime and account before use.
 
 ## Validate the helpers
+
+GitHub Actions checks the package and helper contracts on Python 3.12 and 3.13, including synthetic fixtures and CLI documentation coverage. Run the package checks locally with `uv sync --locked`, `uv run ruff check src tests` and `uv run pytest`.
 
 The included tests use fake CLI executables and mocks. They do not call models,
 require provider credentials, or consume subscription allowance.

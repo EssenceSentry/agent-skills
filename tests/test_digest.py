@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime
+from functools import partial
 
 from typer.testing import CliRunner
 
@@ -67,8 +68,9 @@ def test_a_long_week_is_cut_with_a_count(env):
     assert "and 2 more" in text  # four recent conversations, two shown
 
 
-def test_the_start_hook_prints_context_for_the_tool_and_never_fails(env):
+def test_the_start_hook_prints_context_for_the_tool_and_never_fails(env, monkeypatch):
     synced(env)
+    monkeypatch.setattr(digest, "build", partial(digest.build, now=NOW))
     run = {"AX_CONFIG": str(env.config_path)}
     payload = json.dumps({"session_id": CODEX_SESSION, "cwd": "/Users/me/Repos/demo",
                           "hook_event_name": "SessionStart", "source": "startup"})  # fmt: skip

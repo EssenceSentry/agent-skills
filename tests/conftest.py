@@ -26,6 +26,13 @@ CODEX_GUARD = CODEX_DAY / f"rollout-2026-10-20T10-06-00-{CODEX_GUARDIAN}.jsonl"
 CODEX_FORKED = CODEX_DAY / f"rollout-2026-10-20T11-00-00-{CODEX_SESSION}_{CODEX_FORK}.jsonl"
 
 
+@pytest.fixture(autouse=True)
+def isolated_session_environment(monkeypatch):
+    """Let tests supply their own conversation identities."""
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+
+
 @pytest.fixture
 def env(tmp_path):
     """A throwaway Claude home, Codex home, vault and config built from the fixtures."""
