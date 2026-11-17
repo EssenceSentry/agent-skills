@@ -273,6 +273,8 @@ current installation. Inspect the selected runtime and account before use.
 
 GitHub Actions checks the package and helper contracts on Python 3.12 and 3.13, including synthetic fixtures and CLI documentation coverage. Run the package checks locally with `uv sync --locked`, `uv run ruff check src tests` and `uv run pytest`.
 
+The browser app also runs its lint, type, theme, unit-test, build and browser smoke checks in CI. From `ui/`, use `npm ci`, `npm run verify`, `npm run build` and `npm run check` to run the same checks locally.
+
 The included tests use fake CLI executables and mocks. They do not call models,
 require provider credentials, or consume subscription allowance.
 
