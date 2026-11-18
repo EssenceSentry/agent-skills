@@ -191,7 +191,9 @@ immediately. Ordinary monitoring does not invoke a model.
 Search uses local SQLite full-text indexing of both providers' main
 conversations, including compressed Codex rollouts. It imports the existing ax
 archive without modifying it. Results include excerpts, source paths and
-conversation handles. Handoffs summarize bounded matching evidence with source
+conversation handles. Codex search covers interactive CLI, Desktop and VS Code
+chats. Headless runs and delegated workers are excluded from search and handoff
+evidence. Handoffs summarize bounded matching evidence with source
 references; they do not transfer an entire provider conversation.
 
 The daemon refreshes the catalog and shared memories every minute. Explicit

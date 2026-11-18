@@ -7,12 +7,16 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from pathlib import Path
+
+import zstandard
 
 from ax.db import connect as state_connect
 from ax.redact import redact
 from ax.sources import claude, codex
 
 LOCK = threading.Lock()
+_CODEX_VISIBILITY = "codex_interactive_sources_v1"
 
 
 SCHEMA = """
@@ -62,17 +66,51 @@ def import_archive(config):
         db.execute(
             "INSERT OR IGNORE INTO indexed_files SELECT path,size,mtime_ns FROM legacy.files"
         )
+        db.execute("DELETE FROM metadata WHERE key=?", (_CODEX_VISIBILITY,))
         db.execute("INSERT INTO metadata VALUES('archive_imported',?)", (str(datetime.now(UTC)),))
+
+
+def reconcile_codex_sources(config, paths):
+    """Upgrade existing search rows using only their metadata. Preserve source archives."""
+    with connect(config) as db:
+        if db.execute("SELECT 1 FROM metadata WHERE key=?", (_CODEX_VISIBILITY,)).fetchone():
+            return []
+        current = {codex.session_id_from_name(p): p for p in paths}
+        hidden = []
+        errors = []
+        for row in db.execute("SELECT key,id,source FROM conversations WHERE provider='codex'"):
+            path = current.get(row["id"]) or (Path(row["source"]) if row["source"] else None)
+            if path is None:
+                continue
+            try:
+                kind = codex.header_kind(path)
+            except FileNotFoundError:
+                continue  # A preserved historical hit can outlive its original transcript.
+            except (OSError, ValueError, zstandard.ZstdError) as exc:
+                errors.append({"path": str(path), "error": str(exc)})
+                continue
+            if kind != "main":
+                hidden.append((row["key"],))
+        if hidden:
+            db.execute("CREATE TEMP TABLE hidden_codex(key TEXT PRIMARY KEY)")
+            db.executemany("INSERT INTO hidden_codex VALUES(?)", hidden)
+            db.execute("DELETE FROM dialogue WHERE key IN (SELECT key FROM hidden_codex)")
+            db.execute("DELETE FROM conversations WHERE key IN (SELECT key FROM hidden_codex)")
+        if not errors:
+            db.execute("INSERT OR REPLACE INTO metadata VALUES(?,?)", (_CODEX_VISIBILITY, "1"))
+        return errors
 
 
 def refresh(config):
     with LOCK:
         import_archive(config)
+        codex_paths = codex.discover(config.codex_home)
+        errors = reconcile_codex_sources(config, codex_paths)
         titles = codex.read_titles(config.codex_home)
-        report = {"updated": 0, "errors": []}
+        report = {"updated": 0, "errors": errors}
         for provider, paths in (
             ("claude", claude.discover(config.claude_home)),
-            ("codex", codex.discover(config.codex_home)),
+            ("codex", codex_paths),
         ):
             for path in paths:
                 try:
@@ -89,19 +127,23 @@ def refresh(config):
                     parsed = (
                         claude.parse(path) if provider == "claude" else codex.parse(path, titles)
                     )
+                    text = [
+                        (parsed.key, e.kind, redact(e.text))
+                        for e in parsed.events
+                        if parsed.kind == "main" and e.kind in ("user", "assistant") and e.text
+                    ]
                     with connect(config) as db:
                         db.execute(
                             "INSERT OR REPLACE INTO indexed_files VALUES(?,?,?)",
                             (str(path), stat.st_size, stat.st_mtime_ns),
                         )
-                    if parsed.kind != "main":
-                        continue
-                    text = [
-                        (parsed.key, e.kind, redact(e.text))
-                        for e in parsed.events
-                        if e.kind in ("user", "assistant") and e.text
-                    ]
-                    with connect(config) as db:
+                        if parsed.kind != "main":
+                            removed = db.execute(
+                                "DELETE FROM conversations WHERE key=?", (parsed.key,)
+                            )
+                            if removed.rowcount:
+                                db.execute("DELETE FROM dialogue WHERE key=?", (parsed.key,))
+                            continue
                         db.execute("DELETE FROM dialogue WHERE key=?", (parsed.key,))
                         db.executemany("INSERT INTO dialogue(key,role,text) VALUES(?,?,?)", text)
                         db.execute(
@@ -119,7 +161,7 @@ def refresh(config):
                             ),
                         )
                     report["updated"] += 1
-                except (OSError, ValueError, sqlite3.Error) as exc:
+                except (OSError, ValueError, sqlite3.Error, zstandard.ZstdError) as exc:
                     report["errors"].append({"path": str(path), "error": str(exc)})
         return report
 

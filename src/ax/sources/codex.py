@@ -2,6 +2,8 @@
 
 import json
 import re
+from collections import Counter
+from itertools import islice
 from pathlib import Path
 
 from ax.model import Event, Session
@@ -148,6 +150,26 @@ def parse(path: Path, titles: dict[str, str] | None = None) -> Session:
     return session
 
 
+def session_kind(meta: dict) -> str:
+    source = meta.get("source")
+    if meta.get("thread_source") == "guardian_review":
+        return "guardian"
+    if meta.get("thread_source") == "subagent" or isinstance(source, dict) and "subagent" in source:
+        return "subagent"
+    # The native chat list defaults to interactive sources. Early archives predate this field.
+    if source is not None and source not in ("cli", "vscode"):
+        return "background"
+    return "main"
+
+
+def header_kind(path: Path) -> str:
+    """Read only the owning rollout's header, including for compressed archives."""
+    for record in islice(iter_records(path, Counter()), 8):
+        if record.get("type") == "session_meta" and isinstance(record.get("payload"), dict):
+            return session_kind(record["payload"])
+    return "main"
+
+
 def _meta(session: Session, meta: dict, *, keep_id: bool) -> str | None:
     if not keep_id:
         session.session_id = (
@@ -159,10 +181,8 @@ def _meta(session: Session, meta: dict, *, keep_id: bool) -> str | None:
     git = meta.get("git") if isinstance(meta.get("git"), dict) else {}
     session.branch = as_text(git.get("branch")) or session.branch
     source = meta.get("source")
-    if meta.get("thread_source") == "guardian_review":
-        session.kind = "guardian"
-    elif isinstance(source, dict) and "subagent" in source:
-        session.kind = "subagent"
+    session.kind = session_kind(meta)
+    if isinstance(source, dict) and "subagent" in source:
         spawn = (
             source["subagent"].get("thread_spawn") if isinstance(source["subagent"], dict) else None
         )

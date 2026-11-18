@@ -33,7 +33,7 @@ class Event:
 class Session:
     provider: str  # "claude" or "codex"
     session_id: str
-    kind: str = "main"  # "main", "subagent" or "guardian"
+    kind: str = "main"  # "main", "subagent", "guardian" or "background"
     parent_id: str | None = None
     title: str | None = None
     cwd: str | None = None
